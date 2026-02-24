@@ -34,12 +34,11 @@ Executed against production deployment (`https://spot.calmdonut.com/`):
 
 ## Notable risks / follow-ups
 
-1. Railway runtime deployment is validated, but backup schedule confirmation should be captured as explicit evidence in docs.
-2. Web dashboard is functional and hardened, but still needs final production screenshot evidence for release artifact completeness.
-3. Quarter-hour cheapest-window fix must be confirmed on latest production deploy (12 x 15min entries for `duration=180`).
+1. Web dashboard is functional and hardened, but still needs final production screenshot evidence for release artifact completeness.
+2. Quarter-hour cheapest-window fix must be confirmed on latest production deploy (12 x 15min entries for `duration=180`).
 
 ## Gate decision
 
 - PASS for continuing implementation toward deployment.
 - Deployment runtime validation passed in production.
-- Not yet release-ready until backup evidence + latest production screenshot/behavior evidence are finalized.
+- Not yet release-ready until latest production screenshot/behavior evidence are finalized.

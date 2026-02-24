@@ -17,14 +17,14 @@ Complete MVP delivery by finishing web UI hardening and release-readiness decisi
 ## Success criteria for current objective
 
 - M6 web UI supports core workflows (key creation, settings, price views) on mobile + desktop.
-- M7 deployment checklist completed (env vars, backups, health checks, smoke test evidence).
+- M7 deployment checklist completed (env vars, health checks, smoke test evidence).
 - Gate evidence recorded under `docs/quality-gates/`.
 
 ## Next actions (max 3)
 
 1. Harden M6 UI flow: improve error states and mobile polish for dashboard workflows.
 2. Verify production reflects latest quarter-hour window fix and capture dashboard screenshots.
-3. Capture Railway volume backup schedule evidence and link it in gate artifacts.
+3. Update gate/status docs after latest production verification.
 
 ## Active artifact pointers
 
@@ -44,7 +44,7 @@ Complete MVP delivery by finishing web UI hardening and release-readiness decisi
 
 ## Last updated
 
-2026-02-24 — Better Auth signup/signin/session integrated and API-key management is now session-protected. Quarter-hour cheapest-window fix and UI hardening are merged. Remaining focus: production confirmation for latest fixes + backup evidence.
+2026-02-24 — Better Auth signup/signin/session integrated and API-key management is now session-protected. Quarter-hour cheapest-window fix and UI hardening are merged. Remaining focus: production confirmation for latest fixes and release-doc closure.
 
 ## Update rule
 

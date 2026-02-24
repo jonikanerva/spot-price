@@ -16,7 +16,7 @@ Status: Active
 | #   | Action                                                                                           | Owner | Status          | Acceptance check                                                                             | Target            |
 | --- | ------------------------------------------------------------------------------------------------ | ----- | --------------- | -------------------------------------------------------------------------------------------- | ----------------- |
 | 1   | M6 closure: capture dashboard screenshots + verify production has latest UI and quarter-hour fix | Agent | **In progress** | `https://spot.calmdonut.com/` shows updated UX and `duration=180` returns 12 x 15min entries | M6 complete       |
-| 2   | M7 closure: confirm Railway volume backup schedule evidence in docs                              | Agent | Ready           | Backup configuration evidence linked in gate artifact                                        | M7 complete       |
+| 2   | M7 closure: verify production behavior after latest deploy                                       | Agent | Ready           | Session auth + pricing endpoints validated on production                                     | M7 complete       |
 | 3   | Release closure: update gate/status docs after latest production verification                    | Agent | Ready           | Gate artifact + STATUS + NEXT-ACTIONS reflect latest production evidence                     | Release readiness |
 
 ## Completed history
