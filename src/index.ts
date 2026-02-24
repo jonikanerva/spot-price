@@ -1,6 +1,8 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { initDatabase, closeDatabase } from "./db.js";
+import { runFetchJob } from "./fetch-job.js";
+import { startScheduler } from "./scheduler.js";
 
 const DEFAULT_PORT = 3000;
 
@@ -20,9 +22,19 @@ const main = (): void => {
   const app = createApp(db);
   const port = getPort();
 
-  // Graceful shutdown: close DB on SIGTERM/SIGINT
+  // Start daily price fetch scheduler
+  const schedulerTask = startScheduler(db);
+
+  // Fetch today's prices on startup if not already in DB
+  void runFetchJob(db).catch((error: unknown) => {
+    const msg = error instanceof Error ? error.message : "unknown error";
+    console.error(`[startup] Initial price fetch failed: ${msg}`);
+  });
+
+  // Graceful shutdown: stop scheduler, close DB
   const shutdown = (): void => {
     console.log("Shutting down gracefully...");
+    void schedulerTask.stop();
     closeDatabase(db);
     process.exit(0);
   };
