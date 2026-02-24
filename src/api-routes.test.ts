@@ -136,4 +136,40 @@ describe("API routes", () => {
 
     expect(response.status).toBe(400);
   });
+
+  it("gets and updates user settings with valid API key", async () => {
+    db = initTestDatabase();
+    seedUser(db);
+    const app = createApp(db);
+
+    const getResponse = await app.request("/api/v1/settings", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(getResponse.status).toBe(200);
+
+    const updateResponse = await app.request("/api/v1/settings", {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${TEST_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ marginCentsKwh: 0.99, vatPercent: 24 }),
+    });
+    expect(updateResponse.status).toBe(200);
+    const updated = (await updateResponse.json()) as {
+      marginCentsKwh: number;
+      vatPercent: number;
+    };
+    expect(updated.marginCentsKwh).toBe(0.99);
+    expect(updated.vatPercent).toBe(24);
+  });
+
+  it("renders homepage", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+    const response = await app.request("/");
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html.includes("Spot Price")).toBe(true);
+  });
 });

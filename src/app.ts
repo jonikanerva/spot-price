@@ -9,9 +9,14 @@ import {
 import { createApiKey, deleteApiKey, listApiKeys } from "./api-keys.js";
 import { apiKeyAuth, rateLimit } from "./middleware.js";
 import { getPricesForDate } from "./price-store.js";
-import { ensureUserSettings, getUserSettings } from "./user-settings.js";
+import {
+  ensureUserSettings,
+  getUserSettings,
+  upsertUserSettings,
+} from "./user-settings.js";
 import { addDays, formatDateInTimeZone } from "./time.js";
 import type { HourlyPrice } from "./types.js";
+import { renderHomePage } from "./ui.js";
 
 export interface AppEnv {
   Variables: {
@@ -88,6 +93,8 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     }
   });
 
+  app.get("/", (c) => c.html(renderHomePage()));
+
   // Temporary key management endpoints (until Better Auth integration in M4 follow-up)
   app.post("/api/keys", async (c) => {
     const payload = await c.req.json<{ userId?: string; name?: string }>();
@@ -134,6 +141,56 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
   });
 
   app.use("/api/v1/price/*", apiKeyAuth, rateLimit);
+  app.use("/api/v1/settings", apiKeyAuth, rateLimit);
+  app.use("/api/v1/settings/*", apiKeyAuth, rateLimit);
+
+  app.get("/api/v1/settings", (c) => {
+    const userId = c.get("userId");
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    const settings = ensureUserSettings(c.get("db"), userId);
+    return c.json(settings);
+  });
+
+  app.put("/api/v1/settings", async (c) => {
+    const userId = c.get("userId");
+    if (!userId) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    const current = ensureUserSettings(c.get("db"), userId);
+    const payload = await c.req.json<
+      Partial<{
+        marginCentsKwh: number;
+        transferDayCentsKwh: number;
+        transferNightCentsKwh: number;
+        taxCentsKwh: number;
+        vatPercent: number;
+        nightStartHour: number;
+        nightEndHour: number;
+        timezone: string;
+      }>
+    >();
+
+    const next = {
+      ...current,
+      ...payload,
+      userId,
+    };
+
+    if (next.vatPercent < 0 || next.vatPercent > 100) {
+      return c.json({ error: "vatPercent must be 0-100" }, 400);
+    }
+    if (next.nightStartHour < 0 || next.nightStartHour > 23) {
+      return c.json({ error: "nightStartHour must be 0-23" }, 400);
+    }
+    if (next.nightEndHour < 0 || next.nightEndHour > 23) {
+      return c.json({ error: "nightEndHour must be 0-23" }, 400);
+    }
+
+    upsertUserSettings(c.get("db"), next);
+    return c.json(next);
+  });
 
   app.get("/api/v1/price/now", (c) => {
     const userId = c.get("userId");
