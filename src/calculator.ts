@@ -21,7 +21,10 @@ export const isNightHour = (
 };
 
 /** Extract hour (0-23) in a specific IANA timezone */
-const extractHourInTimeZone = (isoDateTime: string, timeZone: string): number => {
+const extractHourInTimeZone = (
+  isoDateTime: string,
+  timeZone: string,
+): number => {
   const date = new Date(isoDateTime);
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
