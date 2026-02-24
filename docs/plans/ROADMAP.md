@@ -10,16 +10,16 @@ Status: Active
 
 ## Milestones
 
-| #   | Milestone                           |   State    | Est. hours | Dependencies                  |
-| --- | ----------------------------------- | :--------: | :--------: | :---------------------------- |
-| M0  | Project Scaffolding                 | 🔲 Pending |    2–3     | —                             |
-| M1  | Database Schema & Migrations        | 🔲 Pending |     2      | M0                            |
-| M2  | Price Ingestion (Nord Pool)         | 🔲 Pending |     3      | M1                            |
-| M3  | Total Price Calculation Engine      | 🔲 Pending |     3      | M1 (can parallel M2, M4)      |
-| M4  | Auth & API Key System (Better Auth) | 🔲 Pending |     3      | M1 (can parallel M2, M3)      |
-| M5  | REST API Endpoints                  | 🔲 Pending |    2–3     | M3, M4                        |
-| M6  | Web UI (Minimal)                    | 🔲 Pending |    4–5     | M4, M5                        |
-| M7  | Deployment & Operations (Railway)   | 🔲 Pending |     2      | M6 (full), M0 (partial setup) |
+| #   | Milestone                           |     State      | Est. hours | Dependencies                  |
+| --- | ----------------------------------- | :------------: | :--------: | :---------------------------- |
+| M0  | Project Scaffolding                 |    ✅ Done     |    2–3     | —                             |
+| M1  | Database Schema & Migrations        |    ✅ Done     |     2      | M0                            |
+| M2  | Price Ingestion (Nord Pool)         |    ✅ Done     |     3      | M1                            |
+| M3  | Total Price Calculation Engine      |    ✅ Done     |     3      | M1 (can parallel M2, M4)      |
+| M4  | Auth & API Key System (Better Auth) |   🟡 Partial   |     3      | M1 (can parallel M2, M3)      |
+| M5  | REST API Endpoints                  |    ✅ Done     |    2–3     | M3, M4                        |
+| M6  | Web UI (Minimal)                    | 🟡 In progress |    4–5     | M4, M5                        |
+| M7  | Deployment & Operations (Railway)   |   🔲 Pending   |     2      | M6 (full), M0 (partial setup) |
 
 ## Critical path
 

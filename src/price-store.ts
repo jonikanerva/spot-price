@@ -68,3 +68,28 @@ export const countPricesForDate = (
     .get(area, `${date}%`) as { cnt: number };
   return result.cnt;
 };
+
+/** Get all prices for a specific day (YYYY-MM-DD) */
+export const getPricesForDate = (
+  db: Database.Database,
+  date: string,
+  area: string,
+): readonly HourlyPrice[] => {
+  const rows = db
+    .prepare(
+      `SELECT delivery_start, delivery_end, price_eur_mwh, area
+       FROM prices
+       WHERE area = ? AND delivery_start LIKE ?
+       ORDER BY delivery_start`,
+    )
+    .all(area, `${date}%`) as readonly PriceRow[];
+
+  return rows.map(
+    (r): HourlyPrice => ({
+      deliveryStart: r.delivery_start,
+      deliveryEnd: r.delivery_end,
+      priceEurMwh: r.price_eur_mwh,
+      area: r.area,
+    }),
+  );
+};
