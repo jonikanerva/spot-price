@@ -23,8 +23,8 @@ Complete MVP delivery by finishing web UI hardening and release-readiness decisi
 ## Next actions (max 3)
 
 1. Harden M6 UI flow: improve error states and mobile polish for dashboard workflows.
-2. Capture Railway volume backup schedule evidence and link it in gate artifacts.
-3. Decide M4 release scope: finalize Better Auth signup/session implementation now vs defer.
+2. Verify production reflects latest quarter-hour window fix and capture dashboard screenshots.
+3. Capture Railway volume backup schedule evidence and link it in gate artifacts.
 
 ## Active artifact pointers
 
@@ -44,7 +44,7 @@ Complete MVP delivery by finishing web UI hardening and release-readiness decisi
 
 ## Last updated
 
-2026-02-24 — Production deployed at `https://spot.calmdonut.com/`. Smoke checks passed for `/health`, API key creation, and `/api/v1/price/*` endpoints. Gate artifact updated with production evidence. Remaining focus: M6 UX hardening + M4 release-scope decision.
+2026-02-24 — Production deployed at `https://spot.calmdonut.com/`; smoke checks passed. Additional fixes merged for quarter-hour cheapest-window correctness and dashboard UX hardening. Remaining focus: production confirmation for latest fixes + backup evidence + M4 release-scope decision.
 
 ## Update rule
 
