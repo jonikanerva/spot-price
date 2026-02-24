@@ -20,12 +20,37 @@ export const isNightHour = (
   return hour >= nightStartHour && hour < nightEndHour;
 };
 
-/** Extract hour (0-23) from an ISO datetime string */
-const extractHour = (isoDateTime: string): number => {
+/** Extract hour (0-23) in a specific IANA timezone */
+const extractHourInTimeZone = (isoDateTime: string, timeZone: string): number => {
   const date = new Date(isoDateTime);
-  // Use UTC hours and offset to get local hour
-  // The delivery times from Nord Pool include timezone offset
-  return date.getHours();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    hour12: false,
+  });
+  const hourPart = formatter
+    .formatToParts(date)
+    .find((part) => part.type === "hour")?.value;
+
+  if (!hourPart) {
+    throw new Error(`Failed to parse hour for timezone ${timeZone}`);
+  }
+
+  const hour = Number.parseInt(hourPart, 10);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    throw new Error(`Invalid hour '${hourPart}' parsed from ${isoDateTime}`);
+  }
+  return hour;
+};
+
+const getIntervalMinutes = (startIso: string, endIso: string): number => {
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+  const minutes = (end - start) / 60000;
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    throw new Error(`Invalid interval: ${startIso} -> ${endIso}`);
+  }
+  return minutes;
 };
 
 /** Calculate total price for a single hour */
@@ -34,7 +59,7 @@ export const calculateTotalPrice = (
   settings: UserSettings,
 ): TotalPrice => {
   const spotCentsKwh = eurMwhToCentsKwh(price.priceEurMwh);
-  const hour = extractHour(price.deliveryStart);
+  const hour = extractHourInTimeZone(price.deliveryStart, settings.timezone);
   const nightRate = isNightHour(
     hour,
     settings.nightStartHour,
@@ -79,51 +104,72 @@ export const calculateTotalPrices = (
 
 /**
  * Find the cheapest contiguous window of a given duration.
- * Uses a sliding window algorithm — O(n) time complexity.
+ * Supports variable interval lengths (e.g. 60 min, 15 min).
  *
- * @param prices - Sorted array of hourly total prices
- * @param durationMinutes - Desired window length in minutes (must be multiple of 60 for hourly data)
- * @returns The cheapest window, or null if not enough prices
+ * Uses a contiguous-window scan — O(n^2), but n is small (<= 96/day).
+ *
+ * @param prices Sorted array of total prices
+ * @param durationMinutes Desired exact window length in minutes
+ * @returns The cheapest exact-duration window, or null if none exists
  */
 export const findCheapestWindow = (
   prices: readonly TotalPrice[],
   durationMinutes: number,
 ): CheapestWindow | null => {
-  const windowSize = Math.ceil(durationMinutes / 60);
-
-  if (prices.length === 0 || windowSize <= 0 || windowSize > prices.length) {
+  if (prices.length === 0 || durationMinutes <= 0) {
     return null;
   }
 
-  // Calculate initial window sum
-  let currentSum = 0;
-  for (let i = 0; i < windowSize; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    currentSum += prices[i]!.totalCentsKwh;
-  }
+  let bestAverage = Number.POSITIVE_INFINITY;
+  let bestWindow: readonly TotalPrice[] | null = null;
 
-  let bestSum = currentSum;
-  let bestStartIndex = 0;
+  for (let startIndex = 0; startIndex < prices.length; startIndex++) {
+    const window: TotalPrice[] = [];
+    let accumulatedMinutes = 0;
+    let weightedSum = 0;
+    let previousEnd: string | null = null;
 
-  // Slide the window
-  for (let i = windowSize; i < prices.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    currentSum += prices[i]!.totalCentsKwh;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    currentSum -= prices[i - windowSize]!.totalCentsKwh;
+    for (let index = startIndex; index < prices.length; index++) {
+      const entry = prices[index];
+      if (!entry) {
+        break;
+      }
 
-    if (currentSum < bestSum) {
-      bestSum = currentSum;
-      bestStartIndex = i - windowSize + 1;
+      if (previousEnd !== null && entry.deliveryStart !== previousEnd) {
+        break;
+      }
+
+      const intervalMinutes = getIntervalMinutes(
+        entry.deliveryStart,
+        entry.deliveryEnd,
+      );
+
+      window.push(entry);
+      accumulatedMinutes += intervalMinutes;
+      weightedSum += entry.totalCentsKwh * intervalMinutes;
+      previousEnd = entry.deliveryEnd;
+
+      if (accumulatedMinutes === durationMinutes) {
+        const average = weightedSum / accumulatedMinutes;
+        if (average < bestAverage) {
+          bestAverage = average;
+          bestWindow = [...window];
+        }
+        break;
+      }
+
+      if (accumulatedMinutes > durationMinutes) {
+        break;
+      }
     }
   }
 
-  const windowPrices = prices.slice(
-    bestStartIndex,
-    bestStartIndex + windowSize,
-  );
-  const firstPrice = windowPrices[0];
-  const lastPrice = windowPrices[windowPrices.length - 1];
+  if (!bestWindow || bestWindow.length === 0) {
+    return null;
+  }
+
+  const firstPrice = bestWindow[0];
+  const lastPrice = bestWindow[bestWindow.length - 1];
 
   if (!firstPrice || !lastPrice) {
     return null;
@@ -132,7 +178,7 @@ export const findCheapestWindow = (
   return {
     start: firstPrice.deliveryStart,
     end: lastPrice.deliveryEnd,
-    averageTotalCentsKwh: Math.round((bestSum / windowSize) * 1000) / 1000,
-    prices: windowPrices,
+    averageTotalCentsKwh: Math.round(bestAverage * 1000) / 1000,
+    prices: bestWindow,
   };
 };
