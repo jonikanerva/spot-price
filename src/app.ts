@@ -9,6 +9,7 @@ import {
 import { createApiKey, deleteApiKey, listApiKeys } from "./api-keys.js";
 import { apiKeyAuth, rateLimit } from "./middleware.js";
 import { getPricesForDate } from "./price-store.js";
+import { auth } from "./auth.js";
 import {
   ensureUserSettings,
   getUserSettings,
@@ -17,11 +18,14 @@ import {
 import { addDays, formatDateInTimeZone } from "./time.js";
 import type { HourlyPrice } from "./types.js";
 import { renderHomePage } from "./ui.js";
+import type { AuthSessionUser } from "./session-auth.js";
+import { sessionAuth } from "./session-auth.js";
 
 export interface AppEnv {
   Variables: {
     db: Database.Database;
     userId: string;
+    sessionUser: AuthSessionUser;
   };
 }
 
@@ -95,15 +99,82 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
 
   app.get("/", (c) => c.html(renderHomePage()));
 
-  // Temporary key management endpoints (until Better Auth integration in M4 follow-up)
-  app.post("/api/keys", async (c) => {
-    const payload = await c.req.json<{ userId?: string; name?: string }>();
-    const userId = payload.userId?.trim();
-    const name = payload.name?.trim() || "Default";
+  app.post("/api/session/sign-up", async (c) => {
+    const payload = await c.req.json<{
+      email?: string;
+      password?: string;
+      name?: string;
+    }>();
+    const email = payload.email?.trim();
+    const password = payload.password;
 
-    if (!userId) {
-      return c.json({ error: "userId is required" }, 400);
+    if (!email || !password) {
+      return c.json({ error: "email and password are required" }, 400);
     }
+
+    const name = payload.name?.trim() || email;
+
+    const response = await auth.api.signUpEmail({
+      headers: c.req.raw.headers,
+      body: {
+        email,
+        password,
+        name,
+      },
+      asResponse: true,
+    });
+
+    return response;
+  });
+
+  app.post("/api/session/sign-in", async (c) => {
+    const payload = await c.req.json<{
+      email?: string;
+      password?: string;
+      rememberMe?: boolean;
+    }>();
+    const email = payload.email?.trim();
+    const password = payload.password;
+
+    if (!email || !password) {
+      return c.json({ error: "email and password are required" }, 400);
+    }
+
+    const response = await auth.api.signInEmail({
+      headers: c.req.raw.headers,
+      body: {
+        email,
+        password,
+        rememberMe: payload.rememberMe ?? true,
+      },
+      asResponse: true,
+    });
+
+    return response;
+  });
+
+  app.post("/api/session/sign-out", async (c) => {
+    const response = await auth.api.signOut({
+      headers: c.req.raw.headers,
+      asResponse: true,
+    });
+    return response;
+  });
+
+  app.get("/api/session", async (c) => {
+    const session = await auth.api.getSession({
+      headers: c.req.raw.headers,
+    });
+    return c.json({ session });
+  });
+
+  app.use("/api/keys", sessionAuth);
+  app.use("/api/keys/*", sessionAuth);
+
+  app.post("/api/keys", async (c) => {
+    const payload = await c.req.json<{ name?: string }>();
+    const userId = c.get("sessionUser").id;
+    const name = payload.name?.trim() || "Default";
 
     ensureUserSettings(c.get("db"), userId);
     const created = createApiKey(c.get("db"), userId, name);
@@ -119,20 +190,14 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
   });
 
   app.get("/api/keys", (c) => {
-    const userId = c.req.query("userId")?.trim();
-    if (!userId) {
-      return c.json({ error: "userId query parameter is required" }, 400);
-    }
+    const userId = c.get("sessionUser").id;
     const keys = listApiKeys(c.get("db"), userId);
     return c.json({ keys });
   });
 
   app.delete("/api/keys/:id", (c) => {
     const keyId = c.req.param("id");
-    const userId = c.req.query("userId")?.trim();
-    if (!userId) {
-      return c.json({ error: "userId query parameter is required" }, 400);
-    }
+    const userId = c.get("sessionUser").id;
     const deleted = deleteApiKey(c.get("db"), keyId, userId);
     if (!deleted) {
       return c.json({ error: "API key not found" }, 404);

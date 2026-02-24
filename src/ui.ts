@@ -115,9 +115,22 @@ export const renderHomePage = (): string => `<!doctype html>
 
       <div class="grid">
         <section class="card">
-          <h2>Create API key</h2>
-          <label>User ID</label>
-          <input id="userId" value="test-user" />
+          <h2>Account</h2>
+          <label>Email</label>
+          <input id="email" value="user@example.com" />
+          <label>Password</label>
+          <input id="password" type="password" value="password1234" />
+          <label>Name</label>
+          <input id="displayName" value="Spot User" />
+          <div class="actions">
+            <button id="signUp">Sign up</button>
+            <button id="signIn">Sign in</button>
+            <button id="signOut">Sign out</button>
+          </div>
+          <div id="authStatus" class="status"></div>
+          <pre id="authOutput"></pre>
+
+          <h2 style="margin-top: 18px;">Create API key</h2>
           <label>Key name</label>
           <input id="keyName" value="Home Assistant" />
           <button id="createKey">Create key</button>
@@ -198,7 +211,10 @@ export const renderHomePage = (): string => `<!doctype html>
       }
 
       const requestJson = async (url, options = {}) => {
-        const response = await fetch(url, options)
+        const response = await fetch(url, {
+          credentials: 'include',
+          ...options
+        })
         let data = null
         try {
           data = await response.json()
@@ -213,18 +229,49 @@ export const renderHomePage = (): string => `<!doctype html>
         return apiKey ? { Authorization: 'Bearer ' + apiKey } : {}
       }
 
+      document.getElementById('signUp').onclick = async () => withLoading('signUp', async () => {
+        setStatus('authStatus', '', '')
+        const email = document.getElementById('email').value.trim()
+        const password = document.getElementById('password').value
+        const name = document.getElementById('displayName').value.trim()
+        const result = await requestJson('/api/session/sign-up', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, name })
+        })
+        setText('authOutput', result.data)
+        setStatus('authStatus', result.ok ? 'ok' : 'err', result.ok ? 'Signed up and session created' : (result.data.message || result.data.error || 'Sign up failed'))
+      })
+
+      document.getElementById('signIn').onclick = async () => withLoading('signIn', async () => {
+        setStatus('authStatus', '', '')
+        const email = document.getElementById('email').value.trim()
+        const password = document.getElementById('password').value
+        const result = await requestJson('/api/session/sign-in', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, rememberMe: true })
+        })
+        setText('authOutput', result.data)
+        setStatus('authStatus', result.ok ? 'ok' : 'err', result.ok ? 'Signed in' : (result.data.message || result.data.error || 'Sign in failed'))
+      })
+
+      document.getElementById('signOut').onclick = async () => withLoading('signOut', async () => {
+        setStatus('authStatus', '', '')
+        const result = await requestJson('/api/session/sign-out', {
+          method: 'POST'
+        })
+        setText('authOutput', result.data)
+        setStatus('authStatus', result.ok ? 'ok' : 'err', result.ok ? 'Signed out' : (result.data.message || result.data.error || 'Sign out failed'))
+      })
+
       document.getElementById('createKey').onclick = async () => withLoading('createKey', async () => {
         setStatus('keyStatus', '', '')
-        const userId = document.getElementById('userId').value.trim()
         const name = document.getElementById('keyName').value.trim()
-        if (!userId) {
-          setStatus('keyStatus', 'err', 'userId is required')
-          return
-        }
         const result = await requestJson('/api/keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, name })
+          body: JSON.stringify({ name })
         })
         const data = result.data
         setText('keyOutput', data)

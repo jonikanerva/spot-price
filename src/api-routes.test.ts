@@ -7,6 +7,33 @@ import { hashApiKey } from "./api-keys.js";
 const TEST_USER_ID = "user-1";
 const TEST_API_KEY = "sp_test_key_123";
 
+const signUpAndGetCookie = async (app: ReturnType<typeof createApp>) => {
+  const email = `test-${String(Date.now())}@example.com`;
+  const response = await app.request("/api/session/sign-up", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email,
+      password: "password1234",
+      name: "Test User",
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  const cookieHeader = response.headers.get("set-cookie");
+  expect(cookieHeader).toBeTruthy();
+  if (!cookieHeader) {
+    throw new Error("Missing session cookie");
+  }
+
+  const sessionCookie = cookieHeader.split(";")[0];
+  if (!sessionCookie) {
+    throw new Error("Invalid session cookie");
+  }
+
+  return sessionCookie;
+};
+
 const seedUser = (db: Database.Database): void => {
   db.prepare(
     `INSERT OR IGNORE INTO user_settings (
@@ -60,11 +87,15 @@ describe("API routes", () => {
   it("creates and lists API keys", async () => {
     db = initTestDatabase();
     const app = createApp(db);
+    const cookie = await signUpAndGetCookie(app);
 
     const createResponse = await app.request("/api/keys", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: TEST_USER_ID, name: "Home Assistant" }),
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ name: "Home Assistant" }),
     });
 
     expect(createResponse.status).toBe(201);
@@ -73,7 +104,11 @@ describe("API routes", () => {
     };
     expect(created.apiKey.startsWith("sp_")).toBe(true);
 
-    const listResponse = await app.request(`/api/keys?userId=${TEST_USER_ID}`);
+    const listResponse = await app.request("/api/keys", {
+      headers: {
+        Cookie: cookie,
+      },
+    });
     expect(listResponse.status).toBe(200);
     const listed = (await listResponse.json()) as {
       keys: readonly { name: string }[];
@@ -162,6 +197,38 @@ describe("API routes", () => {
     };
     expect(updated.marginCentsKwh).toBe(0.99);
     expect(updated.vatPercent).toBe(24);
+  });
+
+  it("returns 401 for key creation without session", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+
+    const response = await app.request("/api/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "No session key" }),
+    });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("returns session after sign-in", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+    const cookie = await signUpAndGetCookie(app);
+
+    const response = await app.request("/api/session", {
+      headers: {
+        Cookie: cookie,
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      session: { user: { email: string } } | null;
+    };
+    expect(body.session).not.toBeNull();
+    expect(typeof body.session?.user.email).toBe("string");
   });
 
   it("renders homepage", async () => {
