@@ -19,7 +19,7 @@ Status: Active
 | M4  | Auth & API Key System (Better Auth) |   🟡 Partial   |     3      | M1 (can parallel M2, M3)      |
 | M5  | REST API Endpoints                  |    ✅ Done     |    2–3     | M3, M4                        |
 | M6  | Web UI (Minimal)                    | 🟡 In progress |    4–5     | M4, M5                        |
-| M7  | Deployment & Operations (Railway)   |   🔲 Pending   |     2      | M6 (full), M0 (partial setup) |
+| M7  | Deployment & Operations (Railway)   |   🟡 Partial   |     2      | M6 (full), M0 (partial setup) |
 
 ## Critical path
 
