@@ -8,23 +8,23 @@ Status: Active
 
 ## Current phase
 
-Release closure (M0-M7 delivered)
+Post-release follow-up (M0-M7 delivered)
 
 ## Active objective
 
-Close release documentation loop and keep next queue focused on optional follow-ups.
+Keep optional follow-ups organized while production MVP stays stable.
 
 ## Success criteria for current objective
 
-- STATUS and NEXT-ACTIONS reflect completed milestones accurately.
-- Gate evidence includes production smoke for auth/session and price behaviors.
-- Remaining tasks are explicitly marked optional or post-release.
+- Production behavior stays validated for username-first auth + chart APIs.
+- Optional follow-ups are tracked clearly without blocking release state.
+- Documentation stays aligned if scope changes.
 
 ## Next actions (max 3)
 
 1. Optional: add screenshot artifact to docs for handoff completeness.
 2. Optional: define post-MVP backlog for next milestone.
-3. Keep release docs aligned if scope changes.
+3. Optional: polish copy and empty-state texts.
 
 ## Active artifact pointers
 
@@ -44,7 +44,7 @@ Close release documentation loop and keep next queue focused on optional follow-
 
 ## Last updated
 
-2026-02-24 — Production verification completed for health, session auth, API key protection, and quarter-hour cheapest-window behavior (`duration=180` => 12 entries). M0-M7 marked complete; moving to release-closure/optional follow-ups.
+2026-02-24 — Username-first UI/UX phase deployed and validated on production (`/api/session/login-or-signup`, `/api/public/spot`, `/api/v1/me/chart`, `/api/v1/price/cheapest?duration=180`). Release closure complete; remaining work is optional follow-up.
 
 ## Update rule
 
