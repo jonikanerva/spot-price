@@ -27,13 +27,14 @@ Executed locally on latest `main`:
 Executed against production deployment (`https://spot.calmdonut.com/`):
 
 - `GET /health` -> `200` (`{"status":"ok","db":"connected"}`)
-- `POST /api/session/sign-up` + `GET /api/session` -> `200` (session cookie + session payload)
+- `POST /api/session/login-or-signup` + `GET /api/session` -> `200` (session cookie + session payload)
 - `POST /api/keys` without session -> `401` (protected as expected)
 - `POST /api/keys` with session -> `201` (API key returned)
 - `GET /api/v1/price/now` with Bearer key -> `200`
 - `GET /api/v1/price/cheapest?duration=180` with Bearer key -> `200` and `prices.length = 12` (15-min data)
-- `GET /api/v1/price/today` with Bearer key -> `200`
-- `GET /` -> `200` and page contains `Sign up`, `Sign in`, `Create API key`, `Settings`
+- `GET /api/public/spot` -> `200` and `resolutionMinutes = 15`
+- `GET /api/v1/me/chart` with session -> `200`
+- `GET /` -> `200` and page contains `Login or Signup`, public chart, and dark dashboard UI
 
 ## Gate decision
 
