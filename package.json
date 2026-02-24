@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsup",
+    "build": "tsup && npm run copy:migrations",
     "start": "node dist/index.js",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -17,7 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "copy:migrations": "mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
