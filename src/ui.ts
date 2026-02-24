@@ -103,6 +103,23 @@ export const renderHomePage = (): string => `<!doctype html>
           <pre id="cheapestOutput"></pre>
         </section>
 
+        <section class="card">
+          <h2>Settings</h2>
+          <label>Margin (c/kWh)</label>
+          <input id="margin" value="0.45" />
+          <label>Day transfer (c/kWh)</label>
+          <input id="dayTransfer" value="3.02" />
+          <label>Night transfer (c/kWh)</label>
+          <input id="nightTransfer" value="1.55" />
+          <label>Tax (c/kWh)</label>
+          <input id="tax" value="2.79372" />
+          <label>VAT (%)</label>
+          <input id="vat" value="25.5" />
+          <button id="loadSettings">Load settings</button>
+          <button id="saveSettings">Save settings</button>
+          <pre id="settingsOutput"></pre>
+        </section>
+
         <section class="card" style="grid-column: 1 / -1;">
           <h2>Today's prices</h2>
           <button id="loadToday">Load chart</button>
@@ -168,6 +185,35 @@ export const renderHomePage = (): string => `<!doctype html>
           row.appendChild(bar)
           chart.appendChild(row)
         })
+      }
+
+      document.getElementById('loadSettings').onclick = async () => {
+        const res = await fetch('/api/v1/settings', { headers: authHeaders() })
+        const data = await res.json()
+        setText('settingsOutput', data)
+        if (data && !data.error) {
+          document.getElementById('margin').value = String(data.marginCentsKwh)
+          document.getElementById('dayTransfer').value = String(data.transferDayCentsKwh)
+          document.getElementById('nightTransfer').value = String(data.transferNightCentsKwh)
+          document.getElementById('tax').value = String(data.taxCentsKwh)
+          document.getElementById('vat').value = String(data.vatPercent)
+        }
+      }
+
+      document.getElementById('saveSettings').onclick = async () => {
+        const payload = {
+          marginCentsKwh: Number(document.getElementById('margin').value),
+          transferDayCentsKwh: Number(document.getElementById('dayTransfer').value),
+          transferNightCentsKwh: Number(document.getElementById('nightTransfer').value),
+          taxCentsKwh: Number(document.getElementById('tax').value),
+          vatPercent: Number(document.getElementById('vat').value)
+        }
+        const res = await fetch('/api/v1/settings', {
+          method: 'PUT',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+        setText('settingsOutput', await res.json())
       }
     </script>
   </body>
