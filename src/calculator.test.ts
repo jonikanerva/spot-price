@@ -104,6 +104,27 @@ describe("calculateTotalPrice", () => {
     // With 25.5% VAT: 10.81372 * 1.255 = 13.571219
     expect(result.totalCentsKwh).toBeCloseTo(13.571, 2);
   });
+
+  it("uses configured timezone for day/night selection", () => {
+    const helsinkiSettings: UserSettings = {
+      ...defaultSettings,
+      timezone: "Europe/Helsinki",
+      nightStartHour: 22,
+      nightEndHour: 7,
+    };
+    // 20:00Z = 22:00 in Helsinki during winter => night rate
+    const price: HourlyPrice = {
+      deliveryStart: "2026-02-24T20:00:00Z",
+      deliveryEnd: "2026-02-24T21:00:00Z",
+      priceEurMwh: 50,
+      area: "FI",
+    };
+
+    const result = calculateTotalPrice(price, helsinkiSettings);
+    expect(result.hour).toBe(22);
+    expect(result.isNightRate).toBe(true);
+    expect(result.transferCentsKwh).toBe(1.55);
+  });
 });
 
 describe("calculateTotalPrices", () => {
@@ -118,18 +139,48 @@ describe("calculateTotalPrices", () => {
 });
 
 describe("findCheapestWindow", () => {
-  const makeTotalPrice = (hour: number, totalCentsKwh: number): TotalPrice => ({
-    deliveryStart: `2026-02-24T${String(hour).padStart(2, "0")}:00:00+02:00`,
-    deliveryEnd: `2026-02-24T${String(hour + 1).padStart(2, "0")}:00:00+02:00`,
-    spotCentsKwh: totalCentsKwh,
-    marginCentsKwh: 0,
-    transferCentsKwh: 0,
-    taxCentsKwh: 0,
-    vatCentsKwh: 0,
-    totalCentsKwh,
-    isNightRate: false,
-    hour,
-  });
+  const makeTotalPrice = (
+    hour: number,
+    totalCentsKwh: number,
+    intervalMinutes = 60,
+  ): TotalPrice => {
+    const start = new Date(Date.UTC(2026, 1, 24, hour, 0, 0));
+    const end = new Date(start.getTime() + intervalMinutes * 60_000);
+    return {
+      deliveryStart: start.toISOString(),
+      deliveryEnd: end.toISOString(),
+      spotCentsKwh: totalCentsKwh,
+      marginCentsKwh: 0,
+      transferCentsKwh: 0,
+      taxCentsKwh: 0,
+      vatCentsKwh: 0,
+      totalCentsKwh,
+      isNightRate: false,
+      hour,
+    };
+  };
+
+  const makeQuarterHourSeries = (
+    totals: readonly number[],
+  ): readonly TotalPrice[] => {
+    const base = new Date(Date.UTC(2026, 1, 24, 0, 0, 0)).getTime();
+    return totals.map((value, index) => {
+      const start = new Date(base + index * 15 * 60_000);
+      const end = new Date(start.getTime() + 15 * 60_000);
+      return {
+        deliveryStart: start.toISOString(),
+        deliveryEnd: end.toISOString(),
+        spotCentsKwh: value,
+        marginCentsKwh: 0,
+        transferCentsKwh: 0,
+        taxCentsKwh: 0,
+        vatCentsKwh: 0,
+        totalCentsKwh: value,
+        isNightRate: false,
+        hour: start.getUTCHours(),
+      };
+    });
+  };
 
   it("finds the cheapest 3-hour window", () => {
     const prices: readonly TotalPrice[] = [
@@ -253,5 +304,28 @@ describe("findCheapestWindow", () => {
 
     const bruteForceMinRounded = Math.round(bruteForceMin * 1000) / 1000;
     expect(result?.averageTotalCentsKwh).toBe(bruteForceMinRounded);
+  });
+
+  it("supports 15-minute data for 180-minute windows", () => {
+    // 12 entries is 180 minutes at 15-minute resolution
+    const prices = makeQuarterHourSeries([
+      10, 10, 10, 10,
+      2, 2, 2, 2,
+      1, 1, 1, 1,
+      9, 9, 9, 9,
+    ]);
+
+    const result = findCheapestWindow(prices, 180);
+    expect(result).not.toBeNull();
+    expect(result?.prices.length).toBe(12);
+    // cheapest starts at index 4: four 2s + four 1s + four 9s? wait 12 entries -> indexes 4..15 includes 2,2,2,2,1,1,1,1,9,9,9,9 avg 4.0
+    // best is index 0..11 avg 4.333; index 4..15 avg 4.0 => should be lower
+    expect(result?.averageTotalCentsKwh).toBeCloseTo(4.0, 3);
+  });
+
+  it("returns null when exact duration cannot be formed", () => {
+    const prices = makeQuarterHourSeries([1, 2, 3, 4]); // only 60 min total
+    const result = findCheapestWindow(prices, 50); // not multiple of 15
+    expect(result).toBeNull();
   });
 });
