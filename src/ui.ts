@@ -6,358 +6,464 @@ export const renderHomePage = (): string => `<!doctype html>
     <title>Spot Price</title>
     <style>
       :root {
-        --bg: #f6f7f4;
-        --card: #ffffff;
-        --ink: #18221b;
-        --accent: #2f855a;
-        --muted: #5f6b62;
-        --error: #b42318;
-        --ok: #027a48;
+        --bg: #0b0f1a;
+        --bg-soft: #111729;
+        --panel: #141b2f;
+        --panel-2: #1a223a;
+        --text: #e6edf7;
+        --muted: #96a4c2;
+        --border: #2b3655;
+        --accent: #5dd5ff;
+        --accent-2: #7b6bff;
+        --ok: #41d39d;
+        --err: #ff6b8a;
       }
+
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
-        color: var(--ink);
-        background: radial-gradient(circle at 10% 10%, #ddeee2, var(--bg));
+        font-family: "JetBrains Mono", "IBM Plex Sans", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 10% 5%, #1f2a49 0%, transparent 30%),
+          radial-gradient(circle at 90% 0%, #23194a 0%, transparent 24%),
+          var(--bg);
       }
-      .wrap {
-        max-width: 980px;
-        margin: 40px auto;
-        padding: 20px;
+
+      .page {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 18px 40px;
       }
-      h1 { margin: 0 0 10px; font-size: 2rem; }
-      p { color: var(--muted); }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 16px;
-        margin-top: 18px;
-      }
+
       .card {
-        background: var(--card);
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border: 1px solid var(--border);
         border-radius: 14px;
         padding: 16px;
-        box-shadow: 0 8px 24px rgba(24, 34, 27, 0.08);
+        box-shadow: 0 16px 40px rgba(5, 8, 16, 0.45);
       }
-      .actions {
+
+      h1 { margin: 0; font-size: 1.65rem; letter-spacing: 0.2px; }
+      h2 { margin: 0 0 10px; font-size: 1rem; color: #d3def6; }
+      p { margin: 8px 0 0; color: var(--muted); font-size: 0.9rem; }
+
+      .landing {
         display: grid;
-        grid-template-columns: 1fr;
-        gap: 8px;
+        gap: 16px;
       }
-      label { display: block; font-size: 0.9rem; margin: 10px 0 6px; }
+
+      .auth-form {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
       input {
         width: 100%;
-        padding: 10px;
-        border: 1px solid #ced7cf;
+        border: 1px solid var(--border);
+        background: #0f1528;
+        color: var(--text);
         border-radius: 10px;
+        padding: 11px;
+        outline: none;
       }
+
+      input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(93, 213, 255, 0.15);
+      }
+
       button {
-        margin-top: 12px;
-        width: 100%;
-        padding: 10px 12px;
         border: 0;
         border-radius: 10px;
+        padding: 11px 14px;
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        color: #06101f;
         font-weight: 700;
-        background: var(--accent);
-        color: #fff;
         cursor: pointer;
       }
-      button[disabled] {
-        opacity: 0.65;
-        cursor: not-allowed;
+
+      button.secondary {
+        background: #0f1528;
+        color: var(--text);
+        border: 1px solid var(--border);
       }
-      .status {
-        margin-top: 8px;
-        font-size: 12px;
-        min-height: 18px;
-      }
+
+      button[disabled] { opacity: 0.65; cursor: not-allowed; }
+
+      .status { min-height: 18px; font-size: 12px; margin-top: 10px; }
       .status.ok { color: var(--ok); }
-      .status.err { color: var(--error); }
-      #chart { margin-top: 14px; display: grid; gap: 6px; }
-      .bar {
-        height: 16px;
-        border-radius: 6px;
-        background: linear-gradient(90deg, #6bbf8f, #2f855a);
-      }
-      pre {
-        white-space: pre-wrap;
-        word-break: break-word;
-        background: #f2f4ef;
-        padding: 10px;
-        border-radius: 8px;
-        max-height: 220px;
-        overflow: auto;
-      }
-      .hint {
-        color: var(--muted);
+      .status.err { color: var(--err); }
+
+      .chart-wrap { margin-top: 10px; }
+      .legend {
+        display: flex;
+        gap: 14px;
         font-size: 12px;
-        margin-top: 8px;
+        color: var(--muted);
+        margin-bottom: 10px;
       }
-      @media (max-width: 640px) {
-        .wrap {
-          margin: 20px auto;
-          padding: 12px;
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+      }
+
+      .line-chart {
+        position: relative;
+        height: 220px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #0e1426;
+        overflow: hidden;
+      }
+
+      .line {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .dashboard {
+        display: none;
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .nav { display: flex; gap: 8px; }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 340px;
+        gap: 16px;
+      }
+
+      .settings-grid { display: grid; gap: 8px; }
+      .api-panel { display: none; margin-top: 10px; }
+
+      pre {
+        background: #0d1323;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        color: #c8d6f4;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+
+      .muted { color: var(--muted); font-size: 12px; }
+
+      @media (max-width: 980px) {
+        .auth-form {
+          grid-template-columns: 1fr;
         }
-        h1 {
-          font-size: 1.5rem;
-        }
-        .card {
-          padding: 12px;
+
+        .layout {
+          grid-template-columns: 1fr;
         }
       }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <h1>Spot Price</h1>
-      <p>Generate API key, view current total price, and find cheapest charging window.</p>
-
-      <div class="grid">
-        <section class="card">
-          <h2>Account</h2>
-          <label>Email</label>
-          <input id="email" value="user@example.com" />
-          <label>Password</label>
-          <input id="password" type="password" value="password1234" />
-          <label>Name</label>
-          <input id="displayName" value="Spot User" />
-          <div class="actions">
-            <button id="signUp">Sign up</button>
-            <button id="signIn">Sign in</button>
-            <button id="signOut">Sign out</button>
+    <main class="page">
+      <section id="landing" class="landing">
+        <article class="card">
+          <h1>Spot Price</h1>
+          <p>Login with username + password. If user does not exist, it will be created automatically.</p>
+          <div class="auth-form">
+            <input id="username" placeholder="username (a-z0-9_-)">
+            <input id="password" type="password" placeholder="password">
+            <button id="loginOrSignup">Login or Signup</button>
           </div>
           <div id="authStatus" class="status"></div>
-          <pre id="authOutput"></pre>
+        </article>
 
-          <h2 style="margin-top: 18px;">Create API key</h2>
-          <label>Key name</label>
-          <input id="keyName" value="Home Assistant" />
-          <button id="createKey">Create key</button>
-          <div id="keyStatus" class="status"></div>
-          <pre id="keyOutput"></pre>
-        </section>
-
-        <section class="card">
-          <h2>Price now</h2>
-          <label>API key</label>
-          <input id="apiKey" placeholder="sp_..." />
-          <div class="hint">API key is generated once and should be stored safely.</div>
-          <button id="loadNow">Load current price</button>
-          <div id="nowStatus" class="status"></div>
-          <pre id="nowOutput"></pre>
-        </section>
-
-        <section class="card">
-          <h2>Cheapest window</h2>
-          <label>Duration (minutes)</label>
-          <input id="duration" value="180" />
-          <button id="loadCheapest">Find cheapest window</button>
-          <div id="cheapestStatus" class="status"></div>
-          <pre id="cheapestOutput"></pre>
-        </section>
-
-        <section class="card">
-          <h2>Settings</h2>
-          <label>Margin (c/kWh)</label>
-          <input id="margin" value="0.45" />
-          <label>Day transfer (c/kWh)</label>
-          <input id="dayTransfer" value="3.02" />
-          <label>Night transfer (c/kWh)</label>
-          <input id="nightTransfer" value="1.55" />
-          <label>Tax (c/kWh)</label>
-          <input id="tax" value="2.79372" />
-          <label>VAT (%)</label>
-          <input id="vat" value="25.5" />
-          <div class="actions">
-            <button id="loadSettings">Load settings</button>
-            <button id="saveSettings">Save settings</button>
+        <article class="card">
+          <h2>Spot price (today + tomorrow)</h2>
+          <p>Public view, 15-min intervals, c/kWh.</p>
+          <div class="chart-wrap">
+            <div class="legend">
+              <span><span class="dot" style="background:#5dd5ff"></span>Today</span>
+              <span><span class="dot" style="background:#8a7dff"></span>Tomorrow</span>
+            </div>
+            <div class="line-chart"><svg id="publicChart" class="line"></svg></div>
           </div>
-          <div id="settingsStatus" class="status"></div>
-          <pre id="settingsOutput"></pre>
-        </section>
+          <div id="publicStatus" class="status"></div>
+        </article>
+      </section>
 
-        <section class="card" style="grid-column: 1 / -1;">
-          <h2>Today's prices</h2>
-          <button id="loadToday">Load chart</button>
-          <div id="todayStatus" class="status"></div>
-          <div id="chart"></div>
-        </section>
-      </div>
-    </div>
+      <section id="dashboard" class="dashboard">
+        <div class="topbar">
+          <div>
+            <h1>Dashboard</h1>
+            <p id="sessionLabel">Logged in</p>
+          </div>
+          <div class="nav">
+            <button id="navDashboard" class="secondary">Dashboard</button>
+            <button id="navApi" class="secondary">API</button>
+            <button id="logout" class="secondary">Logout</button>
+          </div>
+        </div>
+
+        <div class="layout">
+          <article class="card">
+            <h2>Total price chart (by your settings)</h2>
+            <p class="muted">15-min intervals in c/kWh</p>
+            <div class="line-chart"><svg id="totalChart" class="line"></svg></div>
+            <div id="totalStatus" class="status"></div>
+
+            <section id="apiPanel" class="api-panel">
+              <h2 style="margin-top:14px">API</h2>
+              <p class="muted">Generate key and call REST API from Home Assistant or scripts.</p>
+              <div style="display:flex; gap:8px; margin:8px 0">
+                <input id="apiKeyName" placeholder="API key name" value="Home Assistant" />
+                <button id="createKey">Create key</button>
+              </div>
+              <div id="apiStatus" class="status"></div>
+              <pre id="apiOutput"></pre>
+              <pre id="apiExamples"></pre>
+            </section>
+          </article>
+
+          <aside class="card">
+            <h2>Settings</h2>
+            <div class="settings-grid">
+              <input id="margin" placeholder="Margin c/kWh" />
+              <input id="dayTransfer" placeholder="Day transfer c/kWh" />
+              <input id="nightTransfer" placeholder="Night transfer c/kWh" />
+              <input id="tax" placeholder="Tax c/kWh" />
+              <input id="vat" placeholder="VAT %" />
+              <input id="nightStart" placeholder="Night start hour" />
+              <input id="nightEnd" placeholder="Night end hour" />
+              <button id="saveSettings">Save settings</button>
+              <div id="settingsStatus" class="status"></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
 
     <script>
-      const setText = (id, value) => {
-        document.getElementById(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+      const $ = (id) => document.getElementById(id)
+
+      const state = {
+        apiKey: '',
+        session: null,
       }
 
-      const setStatus = (id, kind, message) => {
-        const el = document.getElementById(id)
-        el.className = 'status ' + (kind || '')
-        el.textContent = message || ''
-      }
-
-      const withLoading = async (buttonId, fn) => {
-        const button = document.getElementById(buttonId)
-        const original = button.textContent
-        button.disabled = true
-        button.textContent = 'Loading...'
-        try {
-          await fn()
-        } finally {
-          button.disabled = false
-          button.textContent = original
-        }
+      const setStatus = (id, type, msg) => {
+        const el = $(id)
+        el.className = 'status ' + (type || '')
+        el.textContent = msg || ''
       }
 
       const requestJson = async (url, options = {}) => {
-        const response = await fetch(url, {
-          credentials: 'include',
-          ...options
-        })
+        const res = await fetch(url, { credentials: 'include', ...options })
         let data = null
-        try {
-          data = await response.json()
-        } catch {
-          data = { error: 'Invalid JSON response' }
+        try { data = await res.json() } catch { data = { error: 'Invalid JSON' } }
+        return { ok: res.ok, status: res.status, data }
+      }
+
+      const withLoading = async (buttonId, fn) => {
+        const button = $(buttonId)
+        const txt = button.textContent
+        button.disabled = true
+        button.textContent = '...'
+        try { await fn() } finally { button.disabled = false; button.textContent = txt }
+      }
+
+      const linePath = (points, width, height, min, max) => {
+        if (!points.length) return ''
+        const safeRange = Math.max(0.0001, max - min)
+        return points.map((v, i) => {
+          const x = (i / Math.max(1, points.length - 1)) * width
+          const y = height - ((v - min) / safeRange) * height
+          return (i === 0 ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2)
+        }).join(' ')
+      }
+
+      const drawChart = (svgId, todayValues, tomorrowValues) => {
+        const svg = $(svgId)
+        const width = svg.clientWidth || 800
+        const height = svg.clientHeight || 220
+        const all = [...todayValues, ...tomorrowValues]
+        if (!all.length) {
+          svg.innerHTML = ''
+          return
         }
-        return { ok: response.ok, status: response.status, data }
+        const min = Math.min(...all)
+        const max = Math.max(...all)
+        const tPath = linePath(todayValues, width, height, min, max)
+        const tmPath = linePath(tomorrowValues, width, height, min, max)
+
+        svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height)
+        svg.innerHTML = [
+          '<path d="' + tPath + '" fill="none" stroke="#5dd5ff" stroke-width="2"/>',
+          tmPath ? '<path d="' + tmPath + '" fill="none" stroke="#8a7dff" stroke-width="2"/>' : ''
+        ].join('')
       }
 
-      const authHeaders = () => {
-        const apiKey = document.getElementById('apiKey').value.trim()
-        return apiKey ? { Authorization: 'Bearer ' + apiKey } : {}
+      const loadPublicChart = async () => {
+        const result = await requestJson('/api/public/spot')
+        if (!result.ok) {
+          setStatus('publicStatus', 'err', result.data.error || 'Failed to load public chart')
+          return
+        }
+        const today = (result.data.today || []).map(p => p.spotCentsKwh)
+        const tomorrow = (result.data.tomorrow || []).map(p => p.spotCentsKwh)
+        drawChart('publicChart', today, tomorrow)
+        setStatus('publicStatus', 'ok', result.data.tomorrowAvailable ? 'Today + tomorrow loaded' : 'Tomorrow not available yet')
       }
 
-      document.getElementById('signUp').onclick = async () => withLoading('signUp', async () => {
-        setStatus('authStatus', '', '')
-        const email = document.getElementById('email').value.trim()
-        const password = document.getElementById('password').value
-        const name = document.getElementById('displayName').value.trim()
-        const result = await requestJson('/api/session/sign-up', {
+      const loadSession = async () => {
+        const result = await requestJson('/api/session')
+        if (!result.ok || !result.data.session) {
+          state.session = null
+          return false
+        }
+        state.session = result.data.session
+        const username = result.data.username || result.data.session.user.name || 'user'
+        $('sessionLabel').textContent = 'Logged in as ' + username
+        return true
+      }
+
+      const loadSettings = async () => {
+        const result = await requestJson('/api/v1/me/settings')
+        if (!result.ok) {
+          setStatus('settingsStatus', 'err', result.data.error || 'Failed to load settings')
+          return
+        }
+        const s = result.data
+        $('margin').value = s.marginCentsKwh
+        $('dayTransfer').value = s.transferDayCentsKwh
+        $('nightTransfer').value = s.transferNightCentsKwh
+        $('tax').value = s.taxCentsKwh
+        $('vat').value = s.vatPercent
+        $('nightStart').value = s.nightStartHour
+        $('nightEnd').value = s.nightEndHour
+        setStatus('settingsStatus', 'ok', 'Settings loaded')
+      }
+
+      const loadTotalChart = async () => {
+        const result = await requestJson('/api/v1/me/chart')
+        if (!result.ok) {
+          setStatus('totalStatus', 'err', result.data.error || 'Failed to load total chart')
+          return
+        }
+        const today = (result.data.today || []).map(p => p.totalCentsKwh)
+        const tomorrow = (result.data.tomorrow || []).map(p => p.totalCentsKwh)
+        drawChart('totalChart', today, tomorrow)
+        setStatus('totalStatus', 'ok', result.data.tomorrowAvailable ? 'Today + tomorrow loaded' : 'Tomorrow not available yet')
+      }
+
+      const renderApiExamples = () => {
+        if (!state.apiKey) return
+        $('apiExamples').textContent = [
+          'curl -sS "https://spot.calmdonut.com/api/v1/price/now" -H "Authorization: Bearer ' + state.apiKey + '"',
+          'curl -sS "https://spot.calmdonut.com/api/v1/price/cheapest?duration=180" -H "Authorization: Bearer ' + state.apiKey + '"',
+          'curl -sS "https://spot.calmdonut.com/api/v1/price/today" -H "Authorization: Bearer ' + state.apiKey + '"'
+        ].join('\n\n')
+      }
+
+      const showDashboard = async () => {
+        $('landing').style.display = 'none'
+        $('dashboard').style.display = 'block'
+        await loadSettings()
+        await loadTotalChart()
+      }
+
+      $('loginOrSignup').onclick = async () => withLoading('loginOrSignup', async () => {
+        const username = $('username').value.trim().toLowerCase()
+        const password = $('password').value
+        const result = await requestJson('/api/session/login-or-signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, name })
+          body: JSON.stringify({ username, password })
         })
-        setText('authOutput', result.data)
-        setStatus('authStatus', result.ok ? 'ok' : 'err', result.ok ? 'Signed up and session created' : (result.data.message || result.data.error || 'Sign up failed'))
+
+        if (!result.ok) {
+          setStatus('authStatus', 'err', result.data.message || result.data.error || 'Login failed')
+          return
+        }
+        setStatus('authStatus', 'ok', 'Authenticated')
+        await loadSession()
+        await showDashboard()
       })
 
-      document.getElementById('signIn').onclick = async () => withLoading('signIn', async () => {
-        setStatus('authStatus', '', '')
-        const email = document.getElementById('email').value.trim()
-        const password = document.getElementById('password').value
-        const result = await requestJson('/api/session/sign-in', {
-          method: 'POST',
+      $('logout').onclick = async () => withLoading('logout', async () => {
+        await requestJson('/api/session/sign-out', { method: 'POST' })
+        state.session = null
+        state.apiKey = ''
+        $('dashboard').style.display = 'none'
+        $('landing').style.display = 'grid'
+      })
+
+      $('saveSettings').onclick = async () => withLoading('saveSettings', async () => {
+        const payload = {
+          marginCentsKwh: Number($('margin').value),
+          transferDayCentsKwh: Number($('dayTransfer').value),
+          transferNightCentsKwh: Number($('nightTransfer').value),
+          taxCentsKwh: Number($('tax').value),
+          vatPercent: Number($('vat').value),
+          nightStartHour: Number($('nightStart').value),
+          nightEndHour: Number($('nightEnd').value)
+        }
+        const result = await requestJson('/api/v1/me/settings', {
+          method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, rememberMe: true })
+          body: JSON.stringify(payload)
         })
-        setText('authOutput', result.data)
-        setStatus('authStatus', result.ok ? 'ok' : 'err', result.ok ? 'Signed in' : (result.data.message || result.data.error || 'Sign in failed'))
+        if (!result.ok) {
+          setStatus('settingsStatus', 'err', result.data.error || 'Failed to save')
+          return
+        }
+        setStatus('settingsStatus', 'ok', 'Settings saved')
+        await loadTotalChart()
       })
 
-      document.getElementById('signOut').onclick = async () => withLoading('signOut', async () => {
-        setStatus('authStatus', '', '')
-        const result = await requestJson('/api/session/sign-out', {
-          method: 'POST'
-        })
-        setText('authOutput', result.data)
-        setStatus('authStatus', result.ok ? 'ok' : 'err', result.ok ? 'Signed out' : (result.data.message || result.data.error || 'Sign out failed'))
-      })
+      $('navDashboard').onclick = () => {
+        $('apiPanel').style.display = 'none'
+      }
 
-      document.getElementById('createKey').onclick = async () => withLoading('createKey', async () => {
-        setStatus('keyStatus', '', '')
-        const name = document.getElementById('keyName').value.trim()
+      $('navApi').onclick = () => {
+        $('apiPanel').style.display = 'block'
+      }
+
+      $('createKey').onclick = async () => withLoading('createKey', async () => {
+        const name = $('apiKeyName').value.trim() || 'Default'
         const result = await requestJson('/api/keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name })
         })
-        const data = result.data
-        setText('keyOutput', data)
-        if (result.ok && data.apiKey) {
-          document.getElementById('apiKey').value = data.apiKey
-          setStatus('keyStatus', 'ok', 'API key created successfully')
-        } else {
-          setStatus('keyStatus', 'err', data.error || 'Failed to create API key')
-        }
-      })
-
-      document.getElementById('loadNow').onclick = async () => withLoading('loadNow', async () => {
-        setStatus('nowStatus', '', '')
-        const result = await requestJson('/api/v1/price/now', { headers: authHeaders() })
-        setText('nowOutput', result.data)
-        setStatus('nowStatus', result.ok ? 'ok' : 'err', result.ok ? 'Current price loaded' : (result.data.error || 'Failed to load price'))
-      })
-
-      document.getElementById('loadCheapest').onclick = async () => withLoading('loadCheapest', async () => {
-        setStatus('cheapestStatus', '', '')
-        const duration = document.getElementById('duration').value.trim()
-        const result = await requestJson('/api/v1/price/cheapest?duration=' + encodeURIComponent(duration), {
-          headers: authHeaders()
-        })
-        setText('cheapestOutput', result.data)
-        setStatus('cheapestStatus', result.ok ? 'ok' : 'err', result.ok ? 'Cheapest window loaded' : (result.data.error || 'Failed to load cheapest window'))
-      })
-
-      document.getElementById('loadToday').onclick = async () => withLoading('loadToday', async () => {
-        setStatus('todayStatus', '', '')
-        const chart = document.getElementById('chart')
-        chart.innerHTML = ''
-        const result = await requestJson('/api/v1/price/today', { headers: authHeaders() })
-        const data = result.data
-        if (!data.prices || !Array.isArray(data.prices)) {
-          chart.textContent = data.error || 'No prices available'
-          setStatus('todayStatus', 'err', data.error || 'No prices available')
+        $('apiOutput').textContent = JSON.stringify(result.data, null, 2)
+        if (!result.ok) {
+          setStatus('apiStatus', 'err', result.data.error || 'Failed to create key')
           return
         }
-        const max = Math.max(...data.prices.map(p => p.totalCentsKwh), 1)
-        data.prices.forEach((p) => {
-          const row = document.createElement('div')
-          row.innerHTML = '<div style="font-size:12px;margin-bottom:4px">' + p.deliveryStart.slice(11, 16) + ' - ' + p.totalCentsKwh.toFixed(2) + ' c/kWh</div>'
-          const bar = document.createElement('div')
-          bar.className = 'bar'
-          bar.style.width = Math.max(4, (p.totalCentsKwh / max) * 100) + '%'
-          row.appendChild(bar)
-          chart.appendChild(row)
-        })
-        setStatus('todayStatus', 'ok', 'Chart loaded')
+        state.apiKey = result.data.apiKey || ''
+        setStatus('apiStatus', 'ok', 'API key created')
+        renderApiExamples()
       })
 
-      document.getElementById('loadSettings').onclick = async () => withLoading('loadSettings', async () => {
-        setStatus('settingsStatus', '', '')
-        const result = await requestJson('/api/v1/settings', { headers: authHeaders() })
-        const data = result.data
-        setText('settingsOutput', data)
-        if (data && !data.error) {
-          document.getElementById('margin').value = String(data.marginCentsKwh)
-          document.getElementById('dayTransfer').value = String(data.transferDayCentsKwh)
-          document.getElementById('nightTransfer').value = String(data.transferNightCentsKwh)
-          document.getElementById('tax').value = String(data.taxCentsKwh)
-          document.getElementById('vat').value = String(data.vatPercent)
-          setStatus('settingsStatus', 'ok', 'Settings loaded')
-        } else {
-          setStatus('settingsStatus', 'err', data.error || 'Failed to load settings')
+      ;(async () => {
+        await loadPublicChart()
+        const hasSession = await loadSession()
+        if (hasSession) {
+          await showDashboard()
         }
-      })
-
-      document.getElementById('saveSettings').onclick = async () => withLoading('saveSettings', async () => {
-        setStatus('settingsStatus', '', '')
-        const payload = {
-          marginCentsKwh: Number(document.getElementById('margin').value),
-          transferDayCentsKwh: Number(document.getElementById('dayTransfer').value),
-          transferNightCentsKwh: Number(document.getElementById('nightTransfer').value),
-          taxCentsKwh: Number(document.getElementById('tax').value),
-          vatPercent: Number(document.getElementById('vat').value)
-        }
-        const result = await requestJson('/api/v1/settings', {
-          method: 'PUT',
-          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        })
-        setText('settingsOutput', result.data)
-        setStatus('settingsStatus', result.ok ? 'ok' : 'err', result.ok ? 'Settings saved' : (result.data.error || 'Failed to save settings'))
-      })
+      })()
     </script>
   </body>
 </html>`;
