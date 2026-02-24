@@ -309,10 +309,7 @@ describe("findCheapestWindow", () => {
   it("supports 15-minute data for 180-minute windows", () => {
     // 12 entries is 180 minutes at 15-minute resolution
     const prices = makeQuarterHourSeries([
-      10, 10, 10, 10,
-      2, 2, 2, 2,
-      1, 1, 1, 1,
-      9, 9, 9, 9,
+      10, 10, 10, 10, 2, 2, 2, 2, 1, 1, 1, 1, 9, 9, 9, 9,
     ]);
 
     const result = findCheapestWindow(prices, 180);

@@ -11,6 +11,8 @@ export const renderHomePage = (): string => `<!doctype html>
         --ink: #18221b;
         --accent: #2f855a;
         --muted: #5f6b62;
+        --error: #b42318;
+        --ok: #027a48;
       }
       * { box-sizing: border-box; }
       body {
@@ -38,6 +40,11 @@ export const renderHomePage = (): string => `<!doctype html>
         padding: 16px;
         box-shadow: 0 8px 24px rgba(24, 34, 27, 0.08);
       }
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
       label { display: block; font-size: 0.9rem; margin: 10px 0 6px; }
       input {
         width: 100%;
@@ -56,6 +63,17 @@ export const renderHomePage = (): string => `<!doctype html>
         color: #fff;
         cursor: pointer;
       }
+      button[disabled] {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+      .status {
+        margin-top: 8px;
+        font-size: 12px;
+        min-height: 18px;
+      }
+      .status.ok { color: var(--ok); }
+      .status.err { color: var(--error); }
       #chart { margin-top: 14px; display: grid; gap: 6px; }
       .bar {
         height: 16px;
@@ -68,6 +86,25 @@ export const renderHomePage = (): string => `<!doctype html>
         background: #f2f4ef;
         padding: 10px;
         border-radius: 8px;
+        max-height: 220px;
+        overflow: auto;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      @media (max-width: 640px) {
+        .wrap {
+          margin: 20px auto;
+          padding: 12px;
+        }
+        h1 {
+          font-size: 1.5rem;
+        }
+        .card {
+          padding: 12px;
+        }
       }
     </style>
   </head>
@@ -84,6 +121,7 @@ export const renderHomePage = (): string => `<!doctype html>
           <label>Key name</label>
           <input id="keyName" value="Home Assistant" />
           <button id="createKey">Create key</button>
+          <div id="keyStatus" class="status"></div>
           <pre id="keyOutput"></pre>
         </section>
 
@@ -91,7 +129,9 @@ export const renderHomePage = (): string => `<!doctype html>
           <h2>Price now</h2>
           <label>API key</label>
           <input id="apiKey" placeholder="sp_..." />
+          <div class="hint">API key is generated once and should be stored safely.</div>
           <button id="loadNow">Load current price</button>
+          <div id="nowStatus" class="status"></div>
           <pre id="nowOutput"></pre>
         </section>
 
@@ -100,6 +140,7 @@ export const renderHomePage = (): string => `<!doctype html>
           <label>Duration (minutes)</label>
           <input id="duration" value="180" />
           <button id="loadCheapest">Find cheapest window</button>
+          <div id="cheapestStatus" class="status"></div>
           <pre id="cheapestOutput"></pre>
         </section>
 
@@ -115,14 +156,18 @@ export const renderHomePage = (): string => `<!doctype html>
           <input id="tax" value="2.79372" />
           <label>VAT (%)</label>
           <input id="vat" value="25.5" />
-          <button id="loadSettings">Load settings</button>
-          <button id="saveSettings">Save settings</button>
+          <div class="actions">
+            <button id="loadSettings">Load settings</button>
+            <button id="saveSettings">Save settings</button>
+          </div>
+          <div id="settingsStatus" class="status"></div>
           <pre id="settingsOutput"></pre>
         </section>
 
         <section class="card" style="grid-column: 1 / -1;">
           <h2>Today's prices</h2>
           <button id="loadToday">Load chart</button>
+          <div id="todayStatus" class="status"></div>
           <div id="chart"></div>
         </section>
       </div>
@@ -133,46 +178,90 @@ export const renderHomePage = (): string => `<!doctype html>
         document.getElementById(id).textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
       }
 
+      const setStatus = (id, kind, message) => {
+        const el = document.getElementById(id)
+        el.className = 'status ' + (kind || '')
+        el.textContent = message || ''
+      }
+
+      const withLoading = async (buttonId, fn) => {
+        const button = document.getElementById(buttonId)
+        const original = button.textContent
+        button.disabled = true
+        button.textContent = 'Loading...'
+        try {
+          await fn()
+        } finally {
+          button.disabled = false
+          button.textContent = original
+        }
+      }
+
+      const requestJson = async (url, options = {}) => {
+        const response = await fetch(url, options)
+        let data = null
+        try {
+          data = await response.json()
+        } catch {
+          data = { error: 'Invalid JSON response' }
+        }
+        return { ok: response.ok, status: response.status, data }
+      }
+
       const authHeaders = () => {
         const apiKey = document.getElementById('apiKey').value.trim()
         return apiKey ? { Authorization: 'Bearer ' + apiKey } : {}
       }
 
-      document.getElementById('createKey').onclick = async () => {
+      document.getElementById('createKey').onclick = async () => withLoading('createKey', async () => {
+        setStatus('keyStatus', '', '')
         const userId = document.getElementById('userId').value.trim()
         const name = document.getElementById('keyName').value.trim()
-        const res = await fetch('/api/keys', {
+        if (!userId) {
+          setStatus('keyStatus', 'err', 'userId is required')
+          return
+        }
+        const result = await requestJson('/api/keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId, name })
         })
-        const data = await res.json()
+        const data = result.data
         setText('keyOutput', data)
-        if (data.apiKey) {
+        if (result.ok && data.apiKey) {
           document.getElementById('apiKey').value = data.apiKey
+          setStatus('keyStatus', 'ok', 'API key created successfully')
+        } else {
+          setStatus('keyStatus', 'err', data.error || 'Failed to create API key')
         }
-      }
+      })
 
-      document.getElementById('loadNow').onclick = async () => {
-        const res = await fetch('/api/v1/price/now', { headers: authHeaders() })
-        setText('nowOutput', await res.json())
-      }
+      document.getElementById('loadNow').onclick = async () => withLoading('loadNow', async () => {
+        setStatus('nowStatus', '', '')
+        const result = await requestJson('/api/v1/price/now', { headers: authHeaders() })
+        setText('nowOutput', result.data)
+        setStatus('nowStatus', result.ok ? 'ok' : 'err', result.ok ? 'Current price loaded' : (result.data.error || 'Failed to load price'))
+      })
 
-      document.getElementById('loadCheapest').onclick = async () => {
+      document.getElementById('loadCheapest').onclick = async () => withLoading('loadCheapest', async () => {
+        setStatus('cheapestStatus', '', '')
         const duration = document.getElementById('duration').value.trim()
-        const res = await fetch('/api/v1/price/cheapest?duration=' + encodeURIComponent(duration), {
+        const result = await requestJson('/api/v1/price/cheapest?duration=' + encodeURIComponent(duration), {
           headers: authHeaders()
         })
-        setText('cheapestOutput', await res.json())
-      }
+        setText('cheapestOutput', result.data)
+        setStatus('cheapestStatus', result.ok ? 'ok' : 'err', result.ok ? 'Cheapest window loaded' : (result.data.error || 'Failed to load cheapest window'))
+      })
 
-      document.getElementById('loadToday').onclick = async () => {
+      document.getElementById('loadToday').onclick = async () => withLoading('loadToday', async () => {
+        setStatus('todayStatus', '', '')
         const chart = document.getElementById('chart')
         chart.innerHTML = ''
-        const res = await fetch('/api/v1/price/today', { headers: authHeaders() })
-        const data = await res.json()
+        const result = await requestJson('/api/v1/price/today', { headers: authHeaders() })
+        const data = result.data
         if (!data.prices || !Array.isArray(data.prices)) {
-          chart.textContent = 'No prices available'
+          chart.textContent = data.error || 'No prices available'
+          setStatus('todayStatus', 'err', data.error || 'No prices available')
           return
         }
         const max = Math.max(...data.prices.map(p => p.totalCentsKwh), 1)
@@ -185,11 +274,13 @@ export const renderHomePage = (): string => `<!doctype html>
           row.appendChild(bar)
           chart.appendChild(row)
         })
-      }
+        setStatus('todayStatus', 'ok', 'Chart loaded')
+      })
 
-      document.getElementById('loadSettings').onclick = async () => {
-        const res = await fetch('/api/v1/settings', { headers: authHeaders() })
-        const data = await res.json()
+      document.getElementById('loadSettings').onclick = async () => withLoading('loadSettings', async () => {
+        setStatus('settingsStatus', '', '')
+        const result = await requestJson('/api/v1/settings', { headers: authHeaders() })
+        const data = result.data
         setText('settingsOutput', data)
         if (data && !data.error) {
           document.getElementById('margin').value = String(data.marginCentsKwh)
@@ -197,10 +288,14 @@ export const renderHomePage = (): string => `<!doctype html>
           document.getElementById('nightTransfer').value = String(data.transferNightCentsKwh)
           document.getElementById('tax').value = String(data.taxCentsKwh)
           document.getElementById('vat').value = String(data.vatPercent)
+          setStatus('settingsStatus', 'ok', 'Settings loaded')
+        } else {
+          setStatus('settingsStatus', 'err', data.error || 'Failed to load settings')
         }
-      }
+      })
 
-      document.getElementById('saveSettings').onclick = async () => {
+      document.getElementById('saveSettings').onclick = async () => withLoading('saveSettings', async () => {
+        setStatus('settingsStatus', '', '')
         const payload = {
           marginCentsKwh: Number(document.getElementById('margin').value),
           transferDayCentsKwh: Number(document.getElementById('dayTransfer').value),
@@ -208,13 +303,14 @@ export const renderHomePage = (): string => `<!doctype html>
           taxCentsKwh: Number(document.getElementById('tax').value),
           vatPercent: Number(document.getElementById('vat').value)
         }
-        const res = await fetch('/api/v1/settings', {
+        const result = await requestJson('/api/v1/settings', {
           method: 'PUT',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         })
-        setText('settingsOutput', await res.json())
-      }
+        setText('settingsOutput', result.data)
+        setStatus('settingsStatus', result.ok ? 'ok' : 'err', result.ok ? 'Settings saved' : (result.data.error || 'Failed to save settings'))
+      })
     </script>
   </body>
 </html>`;
