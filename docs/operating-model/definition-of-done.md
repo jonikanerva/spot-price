@@ -12,13 +12,21 @@ Status: Active draft
 ## Quality and verification
 
 - Relevant formatter/lint/test/smoke checks pass for touched scope.
+- **No check skipping**: run required lint, format, type-check, and test commands before every commit — even for small or "trivial" edits.
 - If tests are missing, a reproducible verification command is documented.
 - Evidence for claims is included (logs, artifacts, or links).
+
+## Code quality standards
+
+- **Functional programming by default**: prefer pure functions, avoid side effects, maintain immutability.
+- **Strong types always**: no `any`, `unknown` as bypass, or similar catch-all types. Every parameter and return value has an explicit type.
+- **No code duplication**: refactor to reuse existing logic instead of copying. DRY applies to logic, not just strings.
 
 ## Git and review readiness
 
 - Work is on a non-protected branch.
 - Commits are single-purpose, readable, and follow commit convention.
+- **Holistic commits**: each commit contains exactly one logical change — no mixed fixes, features, or refactors.
 - PR description includes verification steps, risks, and assumptions.
 
 ## Safety and compliance
