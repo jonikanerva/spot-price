@@ -54,6 +54,7 @@ describe("migration system", () => {
     expect(tables).toContain("session");
     expect(tables).toContain("account");
     expect(tables).toContain("verification");
+    expect(tables).toContain("usernames");
   });
 
   it("records migration versions", () => {
@@ -62,7 +63,7 @@ describe("migration system", () => {
       .prepare("SELECT version, name FROM _migrations ORDER BY version")
       .all() as readonly MigrationRecord[];
 
-    expect(migrations.length).toBe(4);
+    expect(migrations.length).toBe(5);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("create_prices");
     expect(migrations[1]?.version).toBe(2);
@@ -71,6 +72,8 @@ describe("migration system", () => {
     expect(migrations[2]?.name).toBe("create_api_keys");
     expect(migrations[3]?.version).toBe(4);
     expect(migrations[3]?.name).toBe("create_better_auth_tables");
+    expect(migrations[4]?.version).toBe(5);
+    expect(migrations[4]?.name).toBe("create_usernames");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -81,7 +84,7 @@ describe("migration system", () => {
     const result = runMigrations(db);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(4);
+    expect(result.total).toBe(5);
   });
 });
 

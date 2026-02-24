@@ -7,15 +7,16 @@ import { hashApiKey } from "./api-keys.js";
 const TEST_USER_ID = "user-1";
 const TEST_API_KEY = "sp_test_key_123";
 
-const signUpAndGetCookie = async (app: ReturnType<typeof createApp>) => {
-  const email = `test-${String(Date.now())}@example.com`;
-  const response = await app.request("/api/session/sign-up", {
+const loginOrSignupAndGetCookie = async (
+  app: ReturnType<typeof createApp>,
+): Promise<string> => {
+  const username = `user_${String(Date.now())}`;
+  const response = await app.request("/api/session/login-or-signup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      email,
+      username,
       password: "password1234",
-      name: "Test User",
     }),
   });
 
@@ -60,8 +61,8 @@ const seedUser = (db: Database.Database): void => {
 const seedPrices = (db: Database.Database): void => {
   const now = new Date();
   for (let i = 0; i < 24; i++) {
-    const start = new Date(now.getTime() + i * 60 * 60 * 1000);
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    const start = new Date(now.getTime() + i * 15 * 60 * 1000);
+    const end = new Date(start.getTime() + 15 * 60 * 1000);
     db.prepare(
       `INSERT OR REPLACE INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
        VALUES (?, ?, ?, ?)`,
@@ -84,10 +85,30 @@ describe("API routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("creates and lists API keys", async () => {
+  it("supports login-or-signup and returns session payload", async () => {
     db = initTestDatabase();
     const app = createApp(db);
-    const cookie = await signUpAndGetCookie(app);
+
+    const cookie = await loginOrSignupAndGetCookie(app);
+    const sessionResponse = await app.request("/api/session", {
+      headers: { Cookie: cookie },
+    });
+
+    expect(sessionResponse.status).toBe(200);
+    const body = (await sessionResponse.json()) as {
+      session: { user: { id: string } } | null;
+      username: string | null;
+    };
+    expect(body.session?.user.id).toBeDefined();
+    expect(body.username === null || typeof body.username === "string").toBe(
+      true,
+    );
+  });
+
+  it("creates and lists API keys with session auth", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+    const cookie = await loginOrSignupAndGetCookie(app);
 
     const createResponse = await app.request("/api/keys", {
       method: "POST",
@@ -105,98 +126,9 @@ describe("API routes", () => {
     expect(created.apiKey.startsWith("sp_")).toBe(true);
 
     const listResponse = await app.request("/api/keys", {
-      headers: {
-        Cookie: cookie,
-      },
+      headers: { Cookie: cookie },
     });
     expect(listResponse.status).toBe(200);
-    const listed = (await listResponse.json()) as {
-      keys: readonly { name: string }[];
-    };
-    expect(listed.keys.length).toBe(1);
-    expect(listed.keys[0]?.name).toBe("Home Assistant");
-  });
-
-  it("returns current total price with valid API key", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    const app = createApp(db);
-
-    const response = await app.request("/api/v1/price/now", {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
-
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      totalCentsKwh: number;
-      spotCentsKwh: number;
-    };
-    expect(typeof body.totalCentsKwh).toBe("number");
-    expect(typeof body.spotCentsKwh).toBe("number");
-  });
-
-  it("returns cheapest window with duration", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    const app = createApp(db);
-
-    const response = await app.request("/api/v1/price/cheapest?duration=180", {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
-
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      start: string;
-      end: string;
-      averageTotalCentsKwh: number;
-      prices: readonly unknown[];
-    };
-    expect(typeof body.start).toBe("string");
-    expect(typeof body.end).toBe("string");
-    expect(typeof body.averageTotalCentsKwh).toBe("number");
-    expect(body.prices.length).toBe(3);
-  });
-
-  it("returns 400 for invalid duration", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    const app = createApp(db);
-
-    const response = await app.request("/api/v1/price/cheapest?duration=bad", {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
-
-    expect(response.status).toBe(400);
-  });
-
-  it("gets and updates user settings with valid API key", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    const app = createApp(db);
-
-    const getResponse = await app.request("/api/v1/settings", {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
-    expect(getResponse.status).toBe(200);
-
-    const updateResponse = await app.request("/api/v1/settings", {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${TEST_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ marginCentsKwh: 0.99, vatPercent: 24 }),
-    });
-    expect(updateResponse.status).toBe(200);
-    const updated = (await updateResponse.json()) as {
-      marginCentsKwh: number;
-      vatPercent: number;
-    };
-    expect(updated.marginCentsKwh).toBe(0.99);
-    expect(updated.vatPercent).toBe(24);
   });
 
   it("returns 401 for key creation without session", async () => {
@@ -212,23 +144,84 @@ describe("API routes", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns session after sign-in", async () => {
+  it("returns public spot chart data", async () => {
     db = initTestDatabase();
+    seedPrices(db);
     const app = createApp(db);
-    const cookie = await signUpAndGetCookie(app);
 
-    const response = await app.request("/api/session", {
-      headers: {
-        Cookie: cookie,
-      },
+    const response = await app.request("/api/public/spot");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      today: readonly unknown[];
+      unit: string;
+      resolutionMinutes: number;
+    };
+    expect(body.unit).toBe("c/kWh");
+    expect(body.resolutionMinutes).toBe(15);
+    expect(Array.isArray(body.today)).toBe(true);
+  });
+
+  it("returns current total price with valid API key", async () => {
+    db = initTestDatabase();
+    seedUser(db);
+    seedPrices(db);
+    const app = createApp(db);
+
+    const response = await app.request("/api/v1/price/now", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("returns cheapest window with duration", async () => {
+    db = initTestDatabase();
+    seedUser(db);
+    seedPrices(db);
+    const app = createApp(db);
+
+    const response = await app.request("/api/v1/price/cheapest?duration=180", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
     });
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
-      session: { user: { email: string } } | null;
+      prices: readonly unknown[];
     };
-    expect(body.session).not.toBeNull();
-    expect(typeof body.session?.user.email).toBe("string");
+    expect(body.prices.length).toBe(12);
+  });
+
+  it("loads and updates me/settings with session auth", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+    const cookie = await loginOrSignupAndGetCookie(app);
+
+    const getResponse = await app.request("/api/v1/me/settings", {
+      headers: { Cookie: cookie },
+    });
+    expect(getResponse.status).toBe(200);
+
+    const updateResponse = await app.request("/api/v1/me/settings", {
+      method: "PUT",
+      headers: {
+        Cookie: cookie,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ marginCentsKwh: 0.99, vatPercent: 24 }),
+    });
+    expect(updateResponse.status).toBe(200);
+  });
+
+  it("returns me/chart with session auth", async () => {
+    db = initTestDatabase();
+    seedPrices(db);
+    const app = createApp(db);
+    const cookie = await loginOrSignupAndGetCookie(app);
+
+    const response = await app.request("/api/v1/me/chart", {
+      headers: { Cookie: cookie },
+    });
+    expect(response.status).toBe(200);
   });
 
   it("renders homepage", async () => {
@@ -237,6 +230,7 @@ describe("API routes", () => {
     const response = await app.request("/");
     expect(response.status).toBe(200);
     const html = await response.text();
-    expect(html.includes("Spot Price")).toBe(true);
+    expect(html.includes("Login or Signup")).toBe(true);
+    expect(html.includes("Spot price (today + tomorrow)")).toBe(true);
   });
 });

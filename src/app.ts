@@ -10,6 +10,7 @@ import { createApiKey, deleteApiKey, listApiKeys } from "./api-keys.js";
 import { apiKeyAuth, rateLimit } from "./middleware.js";
 import { getPricesForDate } from "./price-store.js";
 import { auth } from "./auth.js";
+import { eurMwhToCentsKwh } from "./nordpool.js";
 import {
   ensureUserSettings,
   getUserSettings,
@@ -20,6 +21,14 @@ import type { HourlyPrice } from "./types.js";
 import { renderHomePage } from "./ui.js";
 import type { AuthSessionUser } from "./session-auth.js";
 import { sessionAuth } from "./session-auth.js";
+import {
+  assignUsername,
+  getUserIdByUsername,
+  getUsernameByUserId,
+  normalizeUsername,
+  toInternalEmail,
+  validateUsername,
+} from "./usernames.js";
 
 export interface AppEnv {
   Variables: {
@@ -99,58 +108,62 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
 
   app.get("/", (c) => c.html(renderHomePage()));
 
-  app.post("/api/session/sign-up", async (c) => {
+  app.post("/api/session/login-or-signup", async (c) => {
     const payload = await c.req.json<{
-      email?: string;
+      username?: string;
       password?: string;
-      name?: string;
     }>();
-    const email = payload.email?.trim();
+    const username = normalizeUsername(payload.username ?? "");
     const password = payload.password;
 
-    if (!email || !password) {
-      return c.json({ error: "email and password are required" }, 400);
+    if (!validateUsername(username) || !password) {
+      return c.json(
+        {
+          error:
+            "username must match [a-z0-9_-] and be 3-32 chars; password is required",
+        },
+        400,
+      );
     }
 
-    const name = payload.name?.trim() || email;
+    const existingUserId = getUserIdByUsername(c.get("db"), username);
+    const email = toInternalEmail(username);
 
-    const response = await auth.api.signUpEmail({
+    if (existingUserId) {
+      const signInResponse = await auth.api.signInEmail({
+        headers: c.req.raw.headers,
+        body: {
+          email,
+          password,
+          rememberMe: true,
+        },
+        asResponse: true,
+      });
+      return signInResponse;
+    }
+
+    const signUpResponse = await auth.api.signUpEmail({
       headers: c.req.raw.headers,
       body: {
         email,
         password,
-        name,
+        name: username,
       },
       asResponse: true,
     });
 
-    return response;
-  });
-
-  app.post("/api/session/sign-in", async (c) => {
-    const payload = await c.req.json<{
-      email?: string;
-      password?: string;
-      rememberMe?: boolean;
-    }>();
-    const email = payload.email?.trim();
-    const password = payload.password;
-
-    if (!email || !password) {
-      return c.json({ error: "email and password are required" }, 400);
+    if (signUpResponse.ok) {
+      const userRow = c
+        .get("db")
+        .prepare('SELECT id FROM "user" WHERE email = ?')
+        .get(email) as { id: string } | undefined;
+      if (userRow?.id) {
+        assignUsername(c.get("db"), userRow.id, username);
+        ensureUserSettings(c.get("db"), userRow.id);
+      }
     }
 
-    const response = await auth.api.signInEmail({
-      headers: c.req.raw.headers,
-      body: {
-        email,
-        password,
-        rememberMe: payload.rememberMe ?? true,
-      },
-      asResponse: true,
-    });
-
-    return response;
+    return signUpResponse;
   });
 
   app.post("/api/session/sign-out", async (c) => {
@@ -165,7 +178,10 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     const session = await auth.api.getSession({
       headers: c.req.raw.headers,
     });
-    return c.json({ session });
+    const userId =
+      (session as { user?: { id?: string } } | null)?.user?.id ?? null;
+    const username = userId ? getUsernameByUserId(c.get("db"), userId) : null;
+    return c.json({ session, username });
   });
 
   app.use("/api/keys", sessionAuth);
@@ -205,24 +221,39 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     return c.json({ deleted: true });
   });
 
-  app.use("/api/v1/price/*", apiKeyAuth, rateLimit);
-  app.use("/api/v1/settings", apiKeyAuth, rateLimit);
-  app.use("/api/v1/settings/*", apiKeyAuth, rateLimit);
+  app.get("/api/public/spot", (c) => {
+    const { today, tomorrow } = getCurrentAndNextDate(HELSINKI_TZ);
+    const todayPrices = getPricesForDate(c.get("db"), today, AREA).map((p) => ({
+      ...p,
+      spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
+    }));
+    const tomorrowPrices = getPricesForDate(c.get("db"), tomorrow, AREA).map(
+      (p) => ({
+        ...p,
+        spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
+      }),
+    );
 
-  app.get("/api/v1/settings", (c) => {
-    const userId = c.get("userId");
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
+    return c.json({
+      today: todayPrices,
+      tomorrow: tomorrowPrices,
+      tomorrowAvailable: tomorrowPrices.length > 0,
+      unit: "c/kWh",
+      resolutionMinutes: 15,
+    });
+  });
+
+  app.use("/api/v1/price/*", apiKeyAuth, rateLimit);
+  app.use("/api/v1/me/*", sessionAuth);
+
+  app.get("/api/v1/me/settings", (c) => {
+    const userId = c.get("sessionUser").id;
     const settings = ensureUserSettings(c.get("db"), userId);
     return c.json(settings);
   });
 
-  app.put("/api/v1/settings", async (c) => {
-    const userId = c.get("userId");
-    if (!userId) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
+  app.put("/api/v1/me/settings", async (c) => {
+    const userId = c.get("sessionUser").id;
     const current = ensureUserSettings(c.get("db"), userId);
     const payload = await c.req.json<
       Partial<{
@@ -255,6 +286,25 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
 
     upsertUserSettings(c.get("db"), next);
     return c.json(next);
+  });
+
+  app.get("/api/v1/me/chart", (c) => {
+    const userId = c.get("sessionUser").id;
+    const settings = ensureUserSettings(c.get("db"), userId);
+
+    const { today, tomorrow } = getCurrentAndNextDate(
+      settings.timezone || HELSINKI_TZ,
+    );
+    const todaySpot = getPricesForDate(c.get("db"), today, AREA);
+    const tomorrowSpot = getPricesForDate(c.get("db"), tomorrow, AREA);
+
+    return c.json({
+      today: calculateTotalPrices(todaySpot, settings),
+      tomorrow: calculateTotalPrices(tomorrowSpot, settings),
+      tomorrowAvailable: tomorrowSpot.length > 0,
+      unit: "c/kWh",
+      resolutionMinutes: 15,
+    });
   });
 
   app.get("/api/v1/price/now", (c) => {
