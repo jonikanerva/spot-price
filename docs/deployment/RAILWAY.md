@@ -23,10 +23,9 @@ Optional:
 - Path: `/health`
 - Expected: `200` with `{ "status": "ok", "db": "connected" }`
 
-## Backup checklist
+## Backup checklist (optional)
 
-- Enable daily volume backups in Railway dashboard.
-- Keep at least daily + weekly retention.
+For this hobby project, backups are optional because runtime data is non-critical and can be recreated.
 
 ## Smoke test after deploy
 
