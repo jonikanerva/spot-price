@@ -44,7 +44,7 @@ Complete MVP delivery by finishing web UI hardening and release-readiness decisi
 
 ## Last updated
 
-2026-02-24 — Production deployed at `https://spot.calmdonut.com/`; smoke checks passed. Additional fixes merged for quarter-hour cheapest-window correctness and dashboard UX hardening. Remaining focus: production confirmation for latest fixes + backup evidence + M4 release-scope decision.
+2026-02-24 — Better Auth signup/signin/session integrated and API-key management is now session-protected. Quarter-hour cheapest-window fix and UI hardening are merged. Remaining focus: production confirmation for latest fixes + backup evidence.
 
 ## Update rule
 

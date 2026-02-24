@@ -10,7 +10,7 @@ Status: PASS (implementation slice)
 - M1 schema + migrations
 - M2 ingestion
 - M3 calculation engine
-- M4 API key auth (partial; Better Auth full integration pending)
+- M4 Better Auth session/signup + API key auth
 - M5 REST API endpoints
 - M6 minimal web dashboard (initial pass)
 
@@ -21,7 +21,7 @@ Executed locally on latest `main`:
 - `npm run typecheck` -> pass
 - `npm run lint` -> pass
 - `npm run format:check` -> pass
-- `npm test` -> pass (40 tests)
+- `npm test` -> pass (45 tests)
 - `npm run build` -> pass
 
 Executed against production deployment (`https://spot.calmdonut.com/`):
@@ -34,12 +34,12 @@ Executed against production deployment (`https://spot.calmdonut.com/`):
 
 ## Notable risks / follow-ups
 
-1. Better Auth full session-based signup/login is still pending (M4 partial).
-2. Railway runtime deployment is validated, but backup schedule confirmation should be captured as explicit evidence in docs.
-3. Web dashboard is functional but still needs UX hardening pass for release readiness.
+1. Railway runtime deployment is validated, but backup schedule confirmation should be captured as explicit evidence in docs.
+2. Web dashboard is functional and hardened, but still needs final production screenshot evidence for release artifact completeness.
+3. Quarter-hour cheapest-window fix must be confirmed on latest production deploy (12 x 15min entries for `duration=180`).
 
 ## Gate decision
 
 - PASS for continuing implementation toward deployment.
 - Deployment runtime validation passed in production.
-- Not yet release-ready until Better Auth completion decision + M6 UX hardening are finalized.
+- Not yet release-ready until backup evidence + latest production screenshot/behavior evidence are finalized.
