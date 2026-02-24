@@ -11,6 +11,8 @@
 - `NODE_ENV=production`
 - `PORT=3000`
 - `DATABASE_PATH=/app/data/spot-price.db`
+- `BETTER_AUTH_SECRET=<32+ char random secret>`
+- `BETTER_AUTH_URL=https://spot.calmdonut.com`
 
 Optional:
 
