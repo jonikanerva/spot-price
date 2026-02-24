@@ -13,16 +13,16 @@ Status: Active
 
 ## Active queue
 
-| # | Action | Owner | Status | Acceptance check | Target |
-|---|--------|-------|--------|-----------------|--------|
-| 1 | Owner reviews implementation plan (`docs/plans/2026-02-24-foundation-plan.md`) | Owner | **Ready** | GO/NO-GO decision recorded | Before implementation |
-| 2 | M0: Project Scaffolding — init TypeScript, Hono, SQLite, tooling | Agent | Ready | `tsc --noEmit`, `npm test`, `npm run lint` all pass | M0 complete |
-| 3 | M1: Database Schema & Migrations | Agent | Ready | All tables exist, migrations idempotent | M1 complete |
+| #   | Action                                                                         | Owner | Status    | Acceptance check                                    | Target                |
+| --- | ------------------------------------------------------------------------------ | ----- | --------- | --------------------------------------------------- | --------------------- |
+| 1   | Owner reviews implementation plan (`docs/plans/2026-02-24-foundation-plan.md`) | Owner | **Ready** | GO/NO-GO decision recorded                          | Before implementation |
+| 2   | M0: Project Scaffolding — init TypeScript, Hono, SQLite, tooling               | Agent | Ready     | `tsc --noEmit`, `npm test`, `npm run lint` all pass | M0 complete           |
+| 3   | M1: Database Schema & Migrations                                               | Agent | Ready     | All tables exist, migrations idempotent             | M1 complete           |
 
 ## Completed history
 
-| Date | Action | Evidence |
-|------|--------|---------|
+| Date       | Action                               | Evidence                                                     |
+| ---------- | ------------------------------------ | ------------------------------------------------------------ |
 | 2026-02-24 | Foundation research dossier approved | `docs/research/2026-02-24-foundation-research.md` — owner GO |
 
 ## Update cadence

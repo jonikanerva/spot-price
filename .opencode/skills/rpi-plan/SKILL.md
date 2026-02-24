@@ -4,9 +4,11 @@ description: Build a concrete implementation plan from an approved research doss
 ---
 
 ## Objective
+
 Translate approved research into an execution-ready plan.
 
 ## Required Sections
+
 - Goal and scope boundaries
 - Milestones and dependency order
 - Task breakdown
@@ -15,6 +17,7 @@ Translate approved research into an execution-ready plan.
 - Quality gate checks
 
 ## Rules
+
 - Preserve research intent and constraints.
 - Keep tasks testable and sequence-aware.
 - Flag blockers that require human decision.

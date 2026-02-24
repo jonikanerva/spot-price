@@ -9,6 +9,7 @@ Capture working agreements for team-plus-agent execution.
 3. Treat `docs/operating-model/` as mandatory policy, not optional guidance.
 
 Status and execution navigation:
+
 - `docs/STATUS.md` is the operational single source of truth for current phase, objective, and next actions.
 - `docs/plans/ROADMAP.md` tracks milestone-level progress.
 - `docs/plans/NEXT-ACTIONS.md` tracks the active execution queue.
@@ -25,6 +26,7 @@ Status and execution navigation:
 - Team policy and execution rules: `docs/operating-model/`
 
 Recommended docs:
+
 - `decision-rights.md`
 - `cadence.md`
 - `handoff-protocol.md`
