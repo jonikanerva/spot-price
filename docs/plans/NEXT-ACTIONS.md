@@ -13,11 +13,11 @@ Status: Active
 
 ## Active queue
 
-| #   | Action                                                                                           | Owner | Status          | Acceptance check                                                                             | Target            |
-| --- | ------------------------------------------------------------------------------------------------ | ----- | --------------- | -------------------------------------------------------------------------------------------- | ----------------- |
-| 1   | M6 closure: capture dashboard screenshots + verify production has latest UI and quarter-hour fix | Agent | **In progress** | `https://spot.calmdonut.com/` shows updated UX and `duration=180` returns 12 x 15min entries | M6 complete       |
-| 2   | M7 closure: verify production behavior after latest deploy                                       | Agent | Ready           | Session auth + pricing endpoints validated on production                                     | M7 complete       |
-| 3   | Release closure: update gate/status docs after latest production verification                    | Agent | Ready           | Gate artifact + STATUS + NEXT-ACTIONS reflect latest production evidence                     | Release readiness |
+| #   | Action                                                                 | Owner | Status          | Acceptance check                                                | Target            |
+| --- | ---------------------------------------------------------------------- | ----- | --------------- | --------------------------------------------------------------- | ----------------- |
+| 1   | Release closure: align STATUS/NEXT-ACTIONS after production validation | Agent | **In progress** | STATUS + queue reflect M0-M7 completion and production evidence | Release readiness |
+| 2   | Optional follow-up: add screenshot artifact to docs                    | Agent | Ready           | Screenshot file/link added for UI handoff completeness          | Optional          |
+| 3   | Optional follow-up: define post-MVP backlog for next milestone         | Owner | Ready           | New backlog item(s) documented after release closure            | Post-release      |
 
 ## Completed history
 
@@ -30,6 +30,9 @@ Status: Active
 | 2026-02-24 | Quarter-hour cheapest-window fix merged | `src/calculator.ts` + `src/calculator.test.ts`                               |
 | 2026-02-24 | Dashboard UX hardening merged           | `src/ui.ts`                                                                  |
 | 2026-02-24 | Better Auth session flow merged         | `src/auth.ts`, `src/session-auth.ts`, `src/app.ts`, `src/api-routes.test.ts` |
+| 2026-02-24 | Production auth/session smoke passed    | `POST /api/session/sign-up` + `GET /api/session` validated on production     |
+| 2026-02-24 | Production quarter-hour fix verified    | `/api/v1/price/cheapest?duration=180` returned `prices.length = 12`          |
+| 2026-02-24 | M6 and M7 marked complete               | `docs/plans/ROADMAP.md` + gate artifact updated                              |
 
 ## Update cadence
 

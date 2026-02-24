@@ -8,23 +8,23 @@ Status: Active
 
 ## Current phase
 
-Implementation (M0-M5 delivered, M6-M7 in progress)
+Release closure (M0-M7 delivered)
 
 ## Active objective
 
-Complete MVP delivery by finishing web UI hardening and release-readiness decisions.
+Close release documentation loop and keep next queue focused on optional follow-ups.
 
 ## Success criteria for current objective
 
-- M6 web UI supports core workflows (key creation, settings, price views) on mobile + desktop.
-- M7 deployment checklist completed (env vars, health checks, smoke test evidence).
-- Gate evidence recorded under `docs/quality-gates/`.
+- STATUS and NEXT-ACTIONS reflect completed milestones accurately.
+- Gate evidence includes production smoke for auth/session and price behaviors.
+- Remaining tasks are explicitly marked optional or post-release.
 
 ## Next actions (max 3)
 
-1. Harden M6 UI flow: improve error states and mobile polish for dashboard workflows.
-2. Verify production reflects latest quarter-hour window fix and capture dashboard screenshots.
-3. Update gate/status docs after latest production verification.
+1. Optional: add screenshot artifact to docs for handoff completeness.
+2. Optional: define post-MVP backlog for next milestone.
+3. Keep release docs aligned if scope changes.
 
 ## Active artifact pointers
 
@@ -44,7 +44,7 @@ Complete MVP delivery by finishing web UI hardening and release-readiness decisi
 
 ## Last updated
 
-2026-02-24 — Better Auth signup/signin/session integrated and API-key management is now session-protected. Quarter-hour cheapest-window fix and UI hardening are merged. Remaining focus: production confirmation for latest fixes and release-doc closure.
+2026-02-24 — Production verification completed for health, session auth, API key protection, and quarter-hour cheapest-window behavior (`duration=180` => 12 entries). M0-M7 marked complete; moving to release-closure/optional follow-ups.
 
 ## Update rule
 

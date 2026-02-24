@@ -27,18 +27,16 @@ Executed locally on latest `main`:
 Executed against production deployment (`https://spot.calmdonut.com/`):
 
 - `GET /health` -> `200` (`{"status":"ok","db":"connected"}`)
-- `POST /api/keys` -> `201` (API key returned)
+- `POST /api/session/sign-up` + `GET /api/session` -> `200` (session cookie + session payload)
+- `POST /api/keys` without session -> `401` (protected as expected)
+- `POST /api/keys` with session -> `201` (API key returned)
 - `GET /api/v1/price/now` with Bearer key -> `200`
-- `GET /api/v1/price/cheapest?duration=180` with Bearer key -> `200`
+- `GET /api/v1/price/cheapest?duration=180` with Bearer key -> `200` and `prices.length = 12` (15-min data)
 - `GET /api/v1/price/today` with Bearer key -> `200`
-
-## Notable risks / follow-ups
-
-1. Web dashboard is functional and hardened, but still needs final production screenshot evidence for release artifact completeness.
-2. Quarter-hour cheapest-window fix must be confirmed on latest production deploy (12 x 15min entries for `duration=180`).
+- `GET /` -> `200` and page contains `Sign up`, `Sign in`, `Create API key`, `Settings`
 
 ## Gate decision
 
-- PASS for continuing implementation toward deployment.
+- PASS for release-readiness on current MVP scope.
 - Deployment runtime validation passed in production.
-- Not yet release-ready until latest production screenshot/behavior evidence are finalized.
+- Auth/session behavior, API protection, and quarter-hour cheapest-window correctness verified on production.
