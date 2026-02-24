@@ -8,29 +8,29 @@ Status: Active
 
 ## Current phase
 
-Planning (implementation plan drafted, awaiting owner review)
+Implementation (M0-M5 delivered, M6-M7 in progress)
 
 ## Active objective
 
-Owner reviews and approves the implementation plan so implementation can begin.
+Complete MVP delivery by finishing web UI hardening and Railway deployment operations.
 
 ## Success criteria for current objective
 
-- Implementation plan reviewed and approved (GO/NO-GO).
-- Plan milestones, dependencies, and acceptance criteria are clear.
-- Quality gate checklist is defined before implementation starts.
+- M6 web UI supports core workflows (key creation, settings, price views) on mobile + desktop.
+- M7 deployment checklist completed (env vars, backups, health checks, smoke test).
+- Gate evidence recorded under `docs/quality-gates/`.
 
 ## Next actions (max 3)
 
-1. **Owner reviews implementation plan** (`docs/plans/2026-02-24-foundation-plan.md`) — GO/NO-GO
-2. On GO: begin M0 (Project Scaffolding) — init TypeScript, Hono, SQLite, tooling
-3. On GO: begin M1 (Database Schema & Migrations) after M0 completes
+1. Harden M6 UI flow: add settings editor UX + robust error states + mobile polish.
+2. Execute M7 Railway deployment setup and run first production smoke test.
+3. Record quality gate result with verification evidence in `docs/quality-gates/`.
 
 ## Active artifact pointers
 
 - Vision: `docs/vision/VISION.md`
 - Research: `docs/research/2026-02-24-foundation-research.md` (Approved)
-- Plan: `docs/plans/2026-02-24-foundation-plan.md` (Draft — awaiting review)
+- Plan: `docs/plans/2026-02-24-foundation-plan.md` (Approved for execution)
 - Roadmap: `docs/plans/ROADMAP.md`
 - Next actions: `docs/plans/NEXT-ACTIONS.md`
 - Gate: `docs/quality-gates/README.md`
@@ -44,7 +44,7 @@ Owner reviews and approves the implementation plan so implementation can begin.
 
 ## Last updated
 
-2026-02-24 — Research approved (owner GO). Implementation plan drafted with 8 milestones (M0–M7), ~21–25 hours estimated effort, 6–7 sessions on critical path. Awaiting owner plan review.
+2026-02-24 — Implemented M0-M5: scaffolding, schema+migrations, Nord Pool ingestion, pricing engine, API key auth, price endpoints, and minimal web dashboard. 40 automated tests passing. Remaining focus: M6 hardening + M7 deployment/gates.
 
 ## Update rule
 
