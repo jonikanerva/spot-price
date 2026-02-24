@@ -8,7 +8,8 @@ Use skill `product-vision`.
 Input context: $ARGUMENTS
 
 Produce:
-1) Problem framing
-2) User outcomes
-3) Success metrics
-4) Assumptions and open questions
+
+1. Problem framing
+2. User outcomes
+3. Success metrics
+4. Assumptions and open questions
