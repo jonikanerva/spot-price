@@ -1,22 +1,17 @@
 import { describe, it, expect, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { createApp } from "./app.js";
-
-const createTestDb = (): Database.Database => {
-  const db = new Database(":memory:");
-  db.pragma("journal_mode = WAL");
-  return db;
-};
+import { initTestDatabase, closeDatabase } from "./db.js";
 
 describe("health endpoint", () => {
   let db: Database.Database;
 
   afterEach(() => {
-    db.close();
+    closeDatabase(db);
   });
 
   it("returns 200 with ok status when DB is healthy", async () => {
-    db = createTestDb();
+    db = initTestDatabase();
     const app = createApp(db);
 
     const res = await app.request("/health");
@@ -28,7 +23,7 @@ describe("health endpoint", () => {
   });
 
   it("returns 503 when DB is closed", async () => {
-    db = createTestDb();
+    db = new Database(":memory:");
     const app = createApp(db);
     db.close();
 
