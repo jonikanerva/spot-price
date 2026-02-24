@@ -12,19 +12,19 @@ Implementation (M0-M5 delivered, M6-M7 in progress)
 
 ## Active objective
 
-Complete MVP delivery by finishing web UI hardening and Railway deployment operations.
+Complete MVP delivery by finishing web UI hardening and release-readiness decisions.
 
 ## Success criteria for current objective
 
 - M6 web UI supports core workflows (key creation, settings, price views) on mobile + desktop.
-- M7 deployment checklist completed (env vars, backups, health checks, smoke test).
+- M7 deployment checklist completed (env vars, backups, health checks, smoke test evidence).
 - Gate evidence recorded under `docs/quality-gates/`.
 
 ## Next actions (max 3)
 
-1. Harden M6 UI flow: add settings editor UX + robust error states + mobile polish.
-2. Execute M7 Railway deployment setup and run first production smoke test.
-3. Record quality gate result with verification evidence in `docs/quality-gates/`.
+1. Harden M6 UI flow: improve error states and mobile polish for dashboard workflows.
+2. Capture Railway volume backup schedule evidence and link it in gate artifacts.
+3. Decide M4 release scope: finalize Better Auth signup/session implementation now vs defer.
 
 ## Active artifact pointers
 
@@ -44,7 +44,7 @@ Complete MVP delivery by finishing web UI hardening and Railway deployment opera
 
 ## Last updated
 
-2026-02-24 — Implemented M0-M5: scaffolding, schema+migrations, Nord Pool ingestion, pricing engine, API key auth, price endpoints, and minimal web dashboard. 40 automated tests passing. Remaining focus: M6 hardening + M7 deployment/gates.
+2026-02-24 — Production deployed at `https://spot.calmdonut.com/`. Smoke checks passed for `/health`, API key creation, and `/api/v1/price/*` endpoints. Gate artifact updated with production evidence. Remaining focus: M6 UX hardening + M4 release-scope decision.
 
 ## Update rule
 
