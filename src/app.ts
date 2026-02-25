@@ -6,7 +6,7 @@ import {
   calculateTotalPrices,
   findCheapestWindow,
 } from "./calculator.js";
-import { createApiKey, deleteApiKey, listApiKeys } from "./api-keys.js";
+import { getCurrentApiKey, regenerateApiKey } from "./api-keys.js";
 import { apiKeyAuth, rateLimit } from "./middleware.js";
 import { getPricesForDate } from "./price-store.js";
 import { auth } from "./auth.js";
@@ -187,38 +187,24 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
   app.use("/api/keys", sessionAuth);
   app.use("/api/keys/*", sessionAuth);
 
-  app.post("/api/keys", async (c) => {
-    const payload = await c.req.json<{ name?: string }>();
-    const userId = c.get("sessionUser").id;
-    const name = payload.name?.trim() || "Default";
-
-    ensureUserSettings(c.get("db"), userId);
-    const created = createApiKey(c.get("db"), userId, name);
-
-    return c.json(
-      {
-        apiKey: created.rawKey,
-        key: created.keyInfo,
-        note: "Store this API key now. It will not be shown again.",
-      },
-      201,
-    );
-  });
-
+  /** Get current API key (auto-creates one if none exists) */
   app.get("/api/keys", (c) => {
     const userId = c.get("sessionUser").id;
-    const keys = listApiKeys(c.get("db"), userId);
-    return c.json({ keys });
+    ensureUserSettings(c.get("db"), userId);
+    const existing = getCurrentApiKey(c.get("db"), userId);
+    if (existing) {
+      return c.json({ apiKey: existing.key, createdAt: existing.createdAt });
+    }
+    const created = regenerateApiKey(c.get("db"), userId);
+    return c.json({ apiKey: created.key, createdAt: created.createdAt }, 201);
   });
 
-  app.delete("/api/keys/:id", (c) => {
-    const keyId = c.req.param("id");
+  /** Regenerate API key (deletes old, creates new) */
+  app.post("/api/keys/regenerate", (c) => {
     const userId = c.get("sessionUser").id;
-    const deleted = deleteApiKey(c.get("db"), keyId, userId);
-    if (!deleted) {
-      return c.json({ error: "API key not found" }, 404);
-    }
-    return c.json({ deleted: true });
+    ensureUserSettings(c.get("db"), userId);
+    const created = regenerateApiKey(c.get("db"), userId);
+    return c.json({ apiKey: created.key, createdAt: created.createdAt });
   });
 
   app.get("/api/public/spot", (c) => {
