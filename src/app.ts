@@ -376,6 +376,27 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       );
     }
 
+    const startTimeParam = c.req.query("startTime");
+    const endTimeParam = c.req.query("endTime");
+    const startBound = startTimeParam ? new Date(startTimeParam) : null;
+    const endBound = endTimeParam ? new Date(endTimeParam) : null;
+
+    if (
+      startTimeParam &&
+      (!startBound || !Number.isFinite(startBound.getTime()))
+    ) {
+      return c.json(
+        { error: "startTime must be a valid ISO 8601 timestamp" },
+        400,
+      );
+    }
+    if (endTimeParam && (!endBound || !Number.isFinite(endBound.getTime()))) {
+      return c.json(
+        { error: "endTime must be a valid ISO 8601 timestamp" },
+        400,
+      );
+    }
+
     const now = new Date();
     const { today, tomorrow } = getCurrentAndNextDate(
       settings.timezone || HELSINKI_TZ,
@@ -384,9 +405,19 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       ...getPricesForDate(c.get("db"), today, AREA),
       ...getPricesForDate(c.get("db"), tomorrow, AREA),
     ];
-    const futurePrices = prices.filter(
-      (p) => new Date(p.deliveryStart).getTime() >= now.getTime(),
-    );
+
+    const effectiveStart = startBound ?? now;
+    const futurePrices = prices.filter((p) => {
+      const pStart = new Date(p.deliveryStart).getTime();
+      const pEnd = new Date(p.deliveryEnd).getTime();
+      if (pStart < effectiveStart.getTime()) {
+        return false;
+      }
+      if (endBound && pEnd > endBound.getTime()) {
+        return false;
+      }
+      return true;
+    });
 
     const totals = calculateTotalPrices(futurePrices, settings);
     const window = findCheapestWindow(totals, durationMinutes);
