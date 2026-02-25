@@ -49,6 +49,18 @@ const fetchForDate = async (
   return { date, stored: count, skipped: false };
 };
 
+const logFetchResult = (date: string, result: FetchResult): void => {
+  if (result.skipped) {
+    console.log(`[fetch-job] ${date}: already in DB, skipped`);
+  } else if (result.stored === 0) {
+    console.log(
+      `[fetch-job] ${date}: not available yet (published ~14:00 EET)`,
+    );
+  } else {
+    console.log(`[fetch-job] ${date}: stored ${String(result.stored)} prices`);
+  }
+};
+
 /** Run the daily price fetch job: fetch today + tomorrow */
 export const runFetchJob = async (
   db: Database.Database,
@@ -61,34 +73,16 @@ export const runFetchJob = async (
   const todayResult = await fetchForDate(db, today, DEFAULT_AREA);
   results.push(todayResult);
 
-  if (todayResult.skipped) {
-    console.log(`[fetch-job] ${today}: already in DB, skipped`);
-  } else {
-    console.log(
-      `[fetch-job] ${today}: stored ${String(todayResult.stored)} prices`,
-    );
-  }
+  logFetchResult(today, todayResult);
 
   try {
     const tomorrowResult = await fetchForDate(db, tomorrow, DEFAULT_AREA);
     results.push(tomorrowResult);
-
-    if (tomorrowResult.skipped) {
-      console.log(`[fetch-job] ${tomorrow}: already in DB, skipped`);
-    } else if (tomorrowResult.stored === 0) {
-      console.log(
-        `[fetch-job] ${tomorrow}: no prices available yet (published ~14:00 EET)`,
-      );
-    } else {
-      console.log(
-        `[fetch-job] ${tomorrow}: stored ${String(tomorrowResult.stored)} prices`,
-      );
-    }
+    logFetchResult(tomorrow, tomorrowResult);
   } catch (error) {
-    // Tomorrow's prices may not be published yet — this is expected before ~14:00 EET
-    console.log(
-      `[fetch-job] ${tomorrow}: not available yet (${error instanceof Error ? error.message : "unknown error"})`,
-    );
+    // Network errors are not expected — log as warning
+    const msg = error instanceof Error ? error.message : "unknown error";
+    console.warn(`[fetch-job] ${tomorrow}: fetch failed (${msg})`);
   }
 
   return results;
