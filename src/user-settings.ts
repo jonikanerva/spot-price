@@ -64,6 +64,18 @@ export const upsertUserSettings = (
   );
 };
 
+/** Default settings for new Finnish spot-price users */
+const DEFAULT_SETTINGS: Omit<UserSettings, "userId"> = {
+  marginCentsKwh: 0.49,
+  transferDayCentsKwh: 2.92,
+  transferNightCentsKwh: 1.37,
+  taxCentsKwh: 2.82752,
+  vatPercent: 25.5,
+  nightStartHour: 22,
+  nightEndHour: 7,
+  timezone: "Europe/Helsinki",
+};
+
 /** Ensure a user has default settings (create if missing) */
 export const ensureUserSettings = (
   db: Database.Database,
@@ -74,11 +86,9 @@ export const ensureUserSettings = (
     return existing;
   }
 
-  db.prepare(`INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)`).run(
-    userId,
-  );
+  const settings: UserSettings = { userId, ...DEFAULT_SETTINGS };
+  upsertUserSettings(db, settings);
 
-  // Re-read to get the defaults applied by the DB
   const created = getUserSettings(db, userId);
   if (!created) {
     throw new Error("Failed to create default user settings");
