@@ -63,7 +63,7 @@ describe("migration system", () => {
       .prepare("SELECT version, name FROM _migrations ORDER BY version")
       .all() as readonly MigrationRecord[];
 
-    expect(migrations.length).toBe(6);
+    expect(migrations.length).toBe(7);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("create_prices");
     expect(migrations[1]?.version).toBe(2);
@@ -76,6 +76,8 @@ describe("migration system", () => {
     expect(migrations[4]?.name).toBe("create_usernames");
     expect(migrations[5]?.version).toBe(6);
     expect(migrations[5]?.name).toBe("api_keys_plaintext");
+    expect(migrations[6]?.version).toBe(7);
+    expect(migrations[6]?.name).toBe("update_default_settings");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -86,7 +88,7 @@ describe("migration system", () => {
     const result = runMigrations(db);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(6);
+    expect(result.total).toBe(7);
   });
 });
 
@@ -181,10 +183,10 @@ describe("user_settings table", () => {
       .prepare("SELECT * FROM user_settings WHERE user_id = ?")
       .get("test-user-1") as Record<string, unknown>;
 
-    expect(row["margin_cents_kwh"]).toBe(0.0);
-    expect(row["transfer_day_cents_kwh"]).toBe(0.0);
-    expect(row["transfer_night_cents_kwh"]).toBe(0.0);
-    expect(row["tax_cents_kwh"]).toBe(2.79372);
+    expect(row["margin_cents_kwh"]).toBe(0.49);
+    expect(row["transfer_day_cents_kwh"]).toBe(2.92);
+    expect(row["transfer_night_cents_kwh"]).toBe(1.37);
+    expect(row["tax_cents_kwh"]).toBe(2.82752);
     expect(row["vat_percent"]).toBe(25.5);
     expect(row["night_start_hour"]).toBe(22);
     expect(row["night_end_hour"]).toBe(7);
