@@ -234,6 +234,32 @@ export const renderHomePage = (): string => `<!doctype html>
       }
       pre .comment { color: #5a6a8a; }
 
+      /* ---- example blocks with copy ---- */
+      .example-block {
+        position: relative;
+        margin-top: 12px;
+      }
+      .example-block pre {
+        margin-top: 0;
+        padding-right: 70px;
+      }
+      .copy-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-family: inherit;
+        font-size: 11px;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+      .copy-btn.copied { color: var(--ok); border-color: var(--ok); }
+
       /* ---- responsive ---- */
       @media (max-width: 980px) {
         .grid-2 { grid-template-columns: 1fr; }
@@ -334,7 +360,7 @@ export const renderHomePage = (): string => `<!doctype html>
             <div id="apiStatus" class="status"></div>
 
             <h2 style="margin-top:20px">Usage examples</h2>
-            <pre id="apiExamples"></pre>
+            <div id="apiExamples"></div>
           </article>
         </div>
       </section>
@@ -546,31 +572,43 @@ export const renderHomePage = (): string => `<!doctype html>
         renderExamples()
       }
 
+      const makeExample = (comment, cmd) => {
+        const id = 'ex_' + Math.random().toString(36).slice(2, 8)
+        return '<div class="example-block">' +
+          '<pre><span class="comment"># ' + comment + '</span>\\n' + cmd + '</pre>' +
+          '<button class="copy-btn" data-copy-target="' + id + '" data-cmd="' + cmd.replace(/"/g, '&quot;') + '">Copy</button>' +
+          '</div>'
+      }
+
       const renderExamples = () => {
         if (!state.apiKey) return
         const k = state.apiKey
         const base = location.origin
-        $('apiExamples').innerHTML = [
-          '<span class="comment"># Current total price</span>',
-          'curl -sS \\\\',
-          '  -H "Authorization: Bearer ' + k + '" \\\\',
-          '  ' + base + '/api/v1/price/now',
-          '',
-          '<span class="comment"># Cheapest 3-hour window</span>',
-          'curl -sS \\\\',
-          '  -H "Authorization: Bearer ' + k + '" \\\\',
-          '  ' + base + '/api/v1/price/cheapest?duration=180',
-          '',
-          '<span class="comment"># Today\\u2019s hourly prices</span>',
-          'curl -sS \\\\',
-          '  -H "Authorization: Bearer ' + k + '" \\\\',
-          '  ' + base + '/api/v1/price/today',
-          '',
-          '<span class="comment"># Tomorrow\\u2019s prices (available after ~14:00 EET)</span>',
-          'curl -sS \\\\',
-          '  -H "Authorization: Bearer ' + k + '" \\\\',
-          '  ' + base + '/api/v1/price/tomorrow'
-        ].join('\\n')
+        const h = '-H "Authorization: Bearer ' + k + '"'
+        const examples = [
+          makeExample('Current total price',
+            'curl -sS ' + h + ' \\\\\\n  ' + base + '/api/v1/price/now'),
+          makeExample('Cheapest 3-hour window',
+            'curl -sS ' + h + ' \\\\\\n  ' + base + '/api/v1/price/cheapest?duration=180'),
+          makeExample('Cheapest 1h between 4pm\\u20139pm today',
+            'curl -sS ' + h + ' \\\\\\n  "' + base + '/api/v1/price/cheapest?duration=60&startTime=2026-02-25T16:00:00Z&endTime=2026-02-25T21:00:00Z"'),
+          makeExample('Today\\u2019s hourly prices',
+            'curl -sS ' + h + ' \\\\\\n  ' + base + '/api/v1/price/today'),
+          makeExample('Tomorrow\\u2019s prices (after ~14:00 EET)',
+            'curl -sS ' + h + ' \\\\\\n  ' + base + '/api/v1/price/tomorrow'),
+        ]
+        $('apiExamples').innerHTML = examples.join('')
+
+        // attach copy handlers
+        $('apiExamples').querySelectorAll('.copy-btn').forEach(btn => {
+          btn.onclick = async () => {
+            const text = btn.getAttribute('data-cmd').replace(/&quot;/g, '"').replace(/\\\\n/g, '\\n')
+            await navigator.clipboard.writeText(text)
+            btn.textContent = 'Copied!'
+            btn.classList.add('copied')
+            setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied') }, 1500)
+          }
+        })
       }
 
       /* ---- navigation ---- */
