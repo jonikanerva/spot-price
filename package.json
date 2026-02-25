@@ -16,6 +16,7 @@
     "smoke": "bash ./scripts/smoke-local.sh",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "seed": "tsx src/seed.ts",
     "copy:migrations": "mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/"
@@ -30,6 +31,7 @@
   "devDependencies": {
     "@better-auth/cli": "^1.4.19",
     "@eslint/js": "^9.20.0",
+    "@playwright/test": "^1.58.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.13.0",
     "@types/node-cron": "^3.0.11",

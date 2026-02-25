@@ -54,8 +54,14 @@ const seedUser = (db: Database.Database): void => {
   );
 
   db.prepare(
-    `INSERT INTO api_keys (id, user_id, key_hash, name) VALUES (?, ?, ?, ?)`,
-  ).run("key-1", TEST_USER_ID, hashApiKey(TEST_API_KEY), "Test key");
+    `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name) VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    "key-1",
+    TEST_USER_ID,
+    hashApiKey(TEST_API_KEY),
+    TEST_API_KEY,
+    "default",
+  );
 };
 
 const seedPrices = (db: Database.Database): void => {
@@ -105,42 +111,58 @@ describe("API routes", () => {
     );
   });
 
-  it("creates and lists API keys with session auth", async () => {
+  it("gets or auto-creates a single API key with session auth", async () => {
     db = initTestDatabase();
     const app = createApp(db);
     const cookie = await loginOrSignupAndGetCookie(app);
 
-    const createResponse = await app.request("/api/keys", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ name: "Home Assistant" }),
-    });
-
-    expect(createResponse.status).toBe(201);
-    const created = (await createResponse.json()) as {
-      apiKey: string;
-    };
-    expect(created.apiKey.startsWith("sp_")).toBe(true);
-
-    const listResponse = await app.request("/api/keys", {
+    // First GET auto-creates a key
+    const getResponse = await app.request("/api/keys", {
       headers: { Cookie: cookie },
     });
-    expect(listResponse.status).toBe(200);
+    expect(getResponse.status).toBe(201);
+    const created = (await getResponse.json()) as { apiKey: string };
+    expect(created.apiKey.startsWith("sp_")).toBe(true);
+
+    // Second GET returns the same key
+    const getResponse2 = await app.request("/api/keys", {
+      headers: { Cookie: cookie },
+    });
+    expect(getResponse2.status).toBe(200);
+    const existing = (await getResponse2.json()) as { apiKey: string };
+    expect(existing.apiKey).toBe(created.apiKey);
   });
 
-  it("returns 401 for key creation without session", async () => {
+  it("regenerates API key (new key, old invalidated)", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+    const cookie = await loginOrSignupAndGetCookie(app);
+
+    // Create initial key
+    const r1 = await app.request("/api/keys", { headers: { Cookie: cookie } });
+    const k1 = (await r1.json()) as { apiKey: string };
+
+    // Regenerate
+    const r2 = await app.request("/api/keys/regenerate", {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(r2.status).toBe(200);
+    const k2 = (await r2.json()) as { apiKey: string };
+    expect(k2.apiKey.startsWith("sp_")).toBe(true);
+    expect(k2.apiKey).not.toBe(k1.apiKey);
+
+    // GET returns new key
+    const r3 = await app.request("/api/keys", { headers: { Cookie: cookie } });
+    const k3 = (await r3.json()) as { apiKey: string };
+    expect(k3.apiKey).toBe(k2.apiKey);
+  });
+
+  it("returns 401 for key access without session", async () => {
     db = initTestDatabase();
     const app = createApp(db);
 
-    const response = await app.request("/api/keys", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "No session key" }),
-    });
-
+    const response = await app.request("/api/keys");
     expect(response.status).toBe(401);
   });
 
@@ -224,13 +246,14 @@ describe("API routes", () => {
     expect(response.status).toBe(200);
   });
 
-  it("renders homepage", async () => {
+  it("renders homepage with login and chart elements", async () => {
     db = initTestDatabase();
     const app = createApp(db);
     const response = await app.request("/");
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html.includes("Login or Signup")).toBe(true);
-    expect(html.includes("Spot price (today + tomorrow)")).toBe(true);
+    expect(html.includes("Spot price")).toBe(true);
+    expect(html.includes("publicChart")).toBe(true);
   });
 });
