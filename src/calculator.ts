@@ -5,6 +5,7 @@ import type {
   CheapestWindow,
 } from "./types.js";
 import { eurMwhToCentsKwh } from "./nordpool.js";
+import { formatDateTimeInTimeZone } from "./time.js";
 
 /** Determine if a given hour falls within the night rate window */
 export const isNightHour = (
@@ -88,6 +89,11 @@ export const calculateTotalPrice = (
   return {
     deliveryStart: price.deliveryStart,
     deliveryEnd: price.deliveryEnd,
+    localStart: formatDateTimeInTimeZone(
+      price.deliveryStart,
+      settings.timezone,
+    ),
+    localEnd: formatDateTimeInTimeZone(price.deliveryEnd, settings.timezone),
     spotCentsKwh,
     marginCentsKwh: settings.marginCentsKwh,
     transferCentsKwh,
@@ -95,7 +101,6 @@ export const calculateTotalPrice = (
     vatCentsKwh,
     totalCentsKwh,
     isNightRate: nightRate,
-    hour,
   };
 };
 
