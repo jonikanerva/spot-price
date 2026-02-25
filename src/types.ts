@@ -57,6 +57,8 @@ export interface TotalPrice {
 export interface CheapestWindow {
   readonly start: string;
   readonly end: string;
+  readonly startLocal: string;
+  readonly endLocal: string;
   readonly averageTotalCentsKwh: number;
   readonly prices: readonly TotalPrice[];
 }

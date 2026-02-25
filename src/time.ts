@@ -32,20 +32,41 @@ export const addDays = (date: Date, days: number): Date => {
   return next;
 };
 
-/** Format an ISO datetime string as "YYYY-MM-DD HH:MM" in a specific timezone */
+/**
+ * Format an ISO datetime string as a valid ISO 8601 timestamp with timezone offset.
+ * Example: "2026-02-24T14:00:00+02:00"
+ */
 export const formatDateTimeInTimeZone = (
   isoDateTime: string,
   timeZone: string,
 ): string => {
   const date = new Date(isoDateTime);
-  const formatter = new Intl.DateTimeFormat("sv-SE", {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
+    timeZoneName: "longOffset",
   });
-  return formatter.format(date);
+
+  const parts = formatter.formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((p) => p.type === type)?.value ?? "";
+
+  const year = get("year");
+  const month = get("month");
+  const day = get("day");
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  const minute = get("minute");
+  const second = get("second");
+  const tzName = get("timeZoneName"); // "GMT+02:00" or "GMT"
+
+  // "GMT+02:00" → "+02:00", "GMT" (= UTC) → "+00:00"
+  const offset = tzName === "GMT" ? "+00:00" : tzName.replace("GMT", "");
+
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}${offset}`;
 };
