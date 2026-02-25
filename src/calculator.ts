@@ -186,6 +186,8 @@ export const findCheapestWindow = (
   return {
     start: firstPrice.deliveryStart,
     end: lastPrice.deliveryEnd,
+    startLocal: firstPrice.localStart,
+    endLocal: lastPrice.localEnd,
     averageTotalCentsKwh: Math.round(bestAverage * 1000) / 1000,
     prices: bestWindow,
   };

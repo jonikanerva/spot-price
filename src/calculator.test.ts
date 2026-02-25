@@ -62,8 +62,8 @@ describe("calculateTotalPrice", () => {
     expect(result.transferCentsKwh).toBe(3.02); // day rate
     expect(result.taxCentsKwh).toBe(2.79372);
     expect(result.isNightRate).toBe(false);
-    expect(result.localStart).toBe("2026-02-24 12:00");
-    expect(result.localEnd).toBe("2026-02-24 13:00");
+    expect(result.localStart).toBe("2026-02-24T12:00:00+02:00");
+    expect(result.localEnd).toBe("2026-02-24T13:00:00+02:00");
 
     // Before VAT: 5.0 + 0.45 + 3.02 + 2.79372 = 11.26372
     // With 25.5% VAT: 11.26372 * 1.255 = 14.135969
@@ -78,8 +78,8 @@ describe("calculateTotalPrice", () => {
     expect(result.spotCentsKwh).toBe(3.0);
     expect(result.transferCentsKwh).toBe(1.55); // night rate
     expect(result.isNightRate).toBe(true);
-    expect(result.localStart).toBe("2026-02-24 02:00");
-    expect(result.localEnd).toBe("2026-02-24 03:00");
+    expect(result.localStart).toBe("2026-02-24T02:00:00+02:00");
+    expect(result.localEnd).toBe("2026-02-24T03:00:00+02:00");
 
     // Before VAT: 3.0 + 0.45 + 1.55 + 2.79372 = 7.79372
     // With 25.5% VAT: 7.79372 * 1.255 = 9.781119
@@ -123,8 +123,8 @@ describe("calculateTotalPrice", () => {
     };
 
     const result = calculateTotalPrice(price, helsinkiSettings);
-    expect(result.localStart).toBe("2026-02-24 22:00");
-    expect(result.localEnd).toBe("2026-02-24 23:00");
+    expect(result.localStart).toBe("2026-02-24T22:00:00+02:00");
+    expect(result.localEnd).toBe("2026-02-24T23:00:00+02:00");
     expect(result.isNightRate).toBe(true);
     expect(result.transferCentsKwh).toBe(1.55);
   });
