@@ -12,16 +12,16 @@ Redesign the Spot Price web UI into a polished, developer-friendly dark-mode int
 
 ## Decisions Made
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Chart library | Vanilla SVG (extend current) | Zero dependencies, full control, Railway aesthetic |
-| Frontend architecture | Single HTML template (`renderHomePage()`) | Simplest, no build step for frontend |
-| Chart interactivity | Hover tooltip (time + price) | Better UX for price inspection |
-| Chart axes | X (hours) + Y (c/kWh) labels | Professional appearance |
-| Settings UX | Always-editable input fields | Simplest, no view/edit mode toggle |
-| API key model | Single key per user, always visible | Eliminates name, list, hide/reveal complexity |
-| Visual style | Railway.com-inspired dark mode only | Developer-friendly aesthetic |
-| UI regression prevention | Playwright E2E smoke tests | Catches broken buttons, missing charts |
+| Decision                 | Choice                                    | Rationale                                          |
+| ------------------------ | ----------------------------------------- | -------------------------------------------------- |
+| Chart library            | Vanilla SVG (extend current)              | Zero dependencies, full control, Railway aesthetic |
+| Frontend architecture    | Single HTML template (`renderHomePage()`) | Simplest, no build step for frontend               |
+| Chart interactivity      | Hover tooltip (time + price)              | Better UX for price inspection                     |
+| Chart axes               | X (hours) + Y (c/kWh) labels              | Professional appearance                            |
+| Settings UX              | Always-editable input fields              | Simplest, no view/edit mode toggle                 |
+| API key model            | Single key per user, always visible       | Eliminates name, list, hide/reveal complexity      |
+| Visual style             | Railway.com-inspired dark mode only       | Developer-friendly aesthetic                       |
+| UI regression prevention | Playwright E2E smoke tests                | Catches broken buttons, missing charts             |
 
 ---
 
@@ -54,7 +54,7 @@ Redesign the Spot Price web UI into a polished, developer-friendly dark-mode int
 
 ### Behavior
 
-- Login fields: `username` (a-z0-9_-) + `password` + one button "Login or Signup"
+- Login fields: `username` (a-z0-9\_-) + `password` + one button "Login or Signup"
 - If username exists: sign in. If not: create account, then sign in.
 - No email collected — username maps to internal `username@spot.internal` for Better Auth.
 - Public chart: 15-min spot prices from `/api/public/spot`, c/kWh.
@@ -136,18 +136,19 @@ Redesign the Spot Price web UI into a polished, developer-friendly dark-mode int
 
 ### API Key Model (simplified)
 
-| Rule | Detail |
-|------|--------|
-| Keys per user | Exactly 1 at a time |
-| Visibility | Always shown in API panel (stored retrievably in DB) |
-| Creation | Auto-created on first visit to API panel (if none exists) |
-| Regeneration | "Regenerate API key" button: deletes old, creates new |
-| Name field | None — removed entirely |
-| List/delete UI | None — just the one key + regenerate |
+| Rule           | Detail                                                    |
+| -------------- | --------------------------------------------------------- |
+| Keys per user  | Exactly 1 at a time                                       |
+| Visibility     | Always shown in API panel (stored retrievably in DB)      |
+| Creation       | Auto-created on first visit to API panel (if none exists) |
+| Regeneration   | "Regenerate API key" button: deletes old, creates new     |
+| Name field     | None — removed entirely                                   |
+| List/delete UI | None — just the one key + regenerate                      |
 
 ### Backend Changes Required
 
 Current implementation hashes API keys (one-way). New model needs:
+
 - Store key **encrypted** (AES-256-GCM with server secret) instead of hashed, so it can be decrypted and shown.
 - OR store key **plaintext** in DB (simpler; acceptable for hobby project where DB is server-local SQLite).
 - Single-key constraint: `api_keys` table gets `UNIQUE(user_id)` or we delete old before inserting new.
@@ -165,17 +166,13 @@ The curl examples use the user's **actual API key** (not a placeholder), so they
 ### Color System
 
 ```css
---bg:       #0b0f1a    /* page background */
---bg-soft:  #111729    /* elevated surfaces */
---panel:    #141b2f    /* card backgrounds */
---panel-2:  #1a223a    /* card gradient end */
---text:     #e6edf7    /* primary text */
---muted:    #96a4c2    /* secondary text */
---border:   #2b3655    /* borders */
---accent:   #5dd5ff    /* primary accent (cyan) */
---accent-2: #7b6bff    /* secondary accent (violet) */
---ok:       #41d39d    /* success */
---err:      #ff6b8a    /* error */
+--bg: #0b0f1a /* page background */ --bg-soft: #111729 /* elevated surfaces */
+  --panel: #141b2f /* card backgrounds */ --panel-2: #1a223a
+  /* card gradient end */ --text: #e6edf7 /* primary text */ --muted: #96a4c2
+  /* secondary text */ --border: #2b3655 /* borders */ --accent: #5dd5ff
+  /* primary accent (cyan) */ --accent-2: #7b6bff
+  /* secondary accent (violet) */ --ok: #41d39d /* success */ --err: #ff6b8a
+  /* error */;
 ```
 
 ### Typography
@@ -203,18 +200,18 @@ The curl examples use the user's **actual API key** (not a placeholder), so they
 
 ### Features
 
-| Feature | Detail |
-|---------|--------|
-| Type | Line chart (polyline path) |
-| Resolution | 15-minute intervals |
-| X-axis | Hour labels: 00, 06, 12, 18, 00 (tomorrow boundary marked) |
-| Y-axis | Price labels in c/kWh (auto-scaled, 3-5 ticks) |
-| Today line | Cyan (`#5dd5ff`), 2px stroke |
-| Tomorrow line | Violet (`#7b6bff`), 2px stroke (when available) |
-| Hover tooltip | Vertical crosshair line + floating label: "14:15 — 8.42 c/kWh" |
-| Padding | 40px left (Y-axis labels), 20px bottom (X-axis labels), 10px top/right |
-| Background | `#0e1426` with grid lines at Y-tick positions |
-| Legend | Below chart: colored dots + "Today" / "Tomorrow" |
+| Feature       | Detail                                                                 |
+| ------------- | ---------------------------------------------------------------------- |
+| Type          | Line chart (polyline path)                                             |
+| Resolution    | 15-minute intervals                                                    |
+| X-axis        | Hour labels: 00, 06, 12, 18, 00 (tomorrow boundary marked)             |
+| Y-axis        | Price labels in c/kWh (auto-scaled, 3-5 ticks)                         |
+| Today line    | Cyan (`#5dd5ff`), 2px stroke                                           |
+| Tomorrow line | Violet (`#7b6bff`), 2px stroke (when available)                        |
+| Hover tooltip | Vertical crosshair line + floating label: "14:15 — 8.42 c/kWh"         |
+| Padding       | 40px left (Y-axis labels), 20px bottom (X-axis labels), 10px top/right |
+| Background    | `#0e1426` with grid lines at Y-tick positions                          |
+| Legend        | Below chart: colored dots + "Today" / "Tomorrow"                       |
 
 ### Tooltip Behavior
 
@@ -234,16 +231,16 @@ Prevent UI regressions where interactive elements silently break (like buttons n
 
 ### Test Scenarios
 
-| # | Test | Assertion |
-|---|------|-----------|
-| 1 | Landing loads | Page title contains "Spot Price" |
-| 2 | Public chart renders | SVG contains at least one `<path>` element |
-| 3 | Login flow | Enter username + password → click button → dashboard appears |
-| 4 | Dashboard chart loads | Total chart SVG contains `<path>` elements |
-| 5 | Settings save | Change a value → Save → status shows "saved" |
-| 6 | API panel navigation | Click API → API key is visible |
-| 7 | Regenerate key | Click Regenerate → key value changes |
-| 8 | Logout | Click Logout → landing page reappears |
+| #   | Test                  | Assertion                                                    |
+| --- | --------------------- | ------------------------------------------------------------ |
+| 1   | Landing loads         | Page title contains "Spot Price"                             |
+| 2   | Public chart renders  | SVG contains at least one `<path>` element                   |
+| 3   | Login flow            | Enter username + password → click button → dashboard appears |
+| 4   | Dashboard chart loads | Total chart SVG contains `<path>` elements                   |
+| 5   | Settings save         | Change a value → Save → status shows "saved"                 |
+| 6   | API panel navigation  | Click API → API key is visible                               |
+| 7   | Regenerate key        | Click Regenerate → key value changes                         |
+| 8   | Logout                | Click Logout → landing page reappears                        |
 
 ### Implementation
 
