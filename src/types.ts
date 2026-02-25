@@ -38,10 +38,12 @@ export interface UserSettings {
   readonly timezone: string;
 }
 
-/** Total price breakdown for a single hour */
+/** Total price breakdown for a single delivery interval */
 export interface TotalPrice {
   readonly deliveryStart: string;
   readonly deliveryEnd: string;
+  readonly localStart: string;
+  readonly localEnd: string;
   readonly spotCentsKwh: number;
   readonly marginCentsKwh: number;
   readonly transferCentsKwh: number;
@@ -49,7 +51,6 @@ export interface TotalPrice {
   readonly vatCentsKwh: number;
   readonly totalCentsKwh: number;
   readonly isNightRate: boolean;
-  readonly hour: number;
 }
 
 /** Cheapest contiguous window result */

@@ -31,3 +31,21 @@ export const addDays = (date: Date, days: number): Date => {
   next.setUTCDate(next.getUTCDate() + days);
   return next;
 };
+
+/** Format an ISO datetime string as "YYYY-MM-DD HH:MM" in a specific timezone */
+export const formatDateTimeInTimeZone = (
+  isoDateTime: string,
+  timeZone: string,
+): string => {
+  const date = new Date(isoDateTime);
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return formatter.format(date);
+};

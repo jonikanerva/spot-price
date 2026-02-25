@@ -62,7 +62,8 @@ describe("calculateTotalPrice", () => {
     expect(result.transferCentsKwh).toBe(3.02); // day rate
     expect(result.taxCentsKwh).toBe(2.79372);
     expect(result.isNightRate).toBe(false);
-    expect(result.hour).toBe(12);
+    expect(result.localStart).toBe("2026-02-24 12:00");
+    expect(result.localEnd).toBe("2026-02-24 13:00");
 
     // Before VAT: 5.0 + 0.45 + 3.02 + 2.79372 = 11.26372
     // With 25.5% VAT: 11.26372 * 1.255 = 14.135969
@@ -77,7 +78,8 @@ describe("calculateTotalPrice", () => {
     expect(result.spotCentsKwh).toBe(3.0);
     expect(result.transferCentsKwh).toBe(1.55); // night rate
     expect(result.isNightRate).toBe(true);
-    expect(result.hour).toBe(2);
+    expect(result.localStart).toBe("2026-02-24 02:00");
+    expect(result.localEnd).toBe("2026-02-24 03:00");
 
     // Before VAT: 3.0 + 0.45 + 1.55 + 2.79372 = 7.79372
     // With 25.5% VAT: 7.79372 * 1.255 = 9.781119
@@ -121,7 +123,8 @@ describe("calculateTotalPrice", () => {
     };
 
     const result = calculateTotalPrice(price, helsinkiSettings);
-    expect(result.hour).toBe(22);
+    expect(result.localStart).toBe("2026-02-24 22:00");
+    expect(result.localEnd).toBe("2026-02-24 23:00");
     expect(result.isNightRate).toBe(true);
     expect(result.transferCentsKwh).toBe(1.55);
   });
@@ -149,6 +152,8 @@ describe("findCheapestWindow", () => {
     return {
       deliveryStart: start.toISOString(),
       deliveryEnd: end.toISOString(),
+      localStart: "",
+      localEnd: "",
       spotCentsKwh: totalCentsKwh,
       marginCentsKwh: 0,
       transferCentsKwh: 0,
@@ -156,7 +161,6 @@ describe("findCheapestWindow", () => {
       vatCentsKwh: 0,
       totalCentsKwh,
       isNightRate: false,
-      hour,
     };
   };
 
@@ -170,6 +174,8 @@ describe("findCheapestWindow", () => {
       return {
         deliveryStart: start.toISOString(),
         deliveryEnd: end.toISOString(),
+        localStart: "",
+        localEnd: "",
         spotCentsKwh: value,
         marginCentsKwh: 0,
         transferCentsKwh: 0,
@@ -177,7 +183,6 @@ describe("findCheapestWindow", () => {
         vatCentsKwh: 0,
         totalCentsKwh: value,
         isNightRate: false,
-        hour: start.getUTCHours(),
       };
     });
   };
