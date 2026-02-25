@@ -25,6 +25,7 @@ export default tseslint.config(
       "node_modules/",
       ".opencode/",
       ".worktrees/",
+      "e2e/",
       "*.config.js",
       "*.config.ts",
     ],
