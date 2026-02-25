@@ -46,6 +46,27 @@ const RETRY_DELAY_MS = 7000;
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+/** HTTP status codes that indicate "no data" rather than a transient error */
+const NO_DATA_STATUSES = new Set([404, 204]);
+
+/**
+ * Parse JSON response body safely.
+ * Returns null if the body is empty or not valid JSON (indicates no data).
+ */
+const parseJsonBody = async (
+  response: Response,
+): Promise<NordPoolResponse | null> => {
+  const text = await response.text();
+  if (text.length === 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as NordPoolResponse;
+  } catch {
+    return null;
+  }
+};
+
 /** Fetch day-ahead prices from Nord Pool Data Portal API */
 export const fetchDayAheadPrices = async (
   params: FetchPricesParams,
@@ -56,13 +77,23 @@ export const fetchDayAheadPrices = async (
     try {
       const response = await fetch(url);
 
+      // "No data" responses — return empty array immediately, no retry
+      if (NO_DATA_STATUSES.has(response.status)) {
+        return [];
+      }
+
       if (!response.ok) {
         throw new Error(
           `Nord Pool API returned ${String(response.status)}: ${response.statusText}`,
         );
       }
 
-      const data = (await response.json()) as NordPoolResponse;
+      const data = await parseJsonBody(response);
+      if (!data) {
+        // Empty or unparseable body — no data available, not a transient error
+        return [];
+      }
+
       return parseResponse(data, params.area);
     } catch (error) {
       const isLastAttempt = attempt === MAX_RETRIES;
@@ -70,7 +101,7 @@ export const fetchDayAheadPrices = async (
         throw error;
       }
       console.warn(
-        `Nord Pool fetch attempt ${String(attempt)}/${String(MAX_RETRIES)} failed, retrying in ${String(RETRY_DELAY_MS / 1000)}s...`,
+        `[nordpool] Fetch attempt ${String(attempt)}/${String(MAX_RETRIES)} failed, retrying in ${String(RETRY_DELAY_MS / 1000)}s...`,
       );
       await delay(RETRY_DELAY_MS);
     }
