@@ -651,13 +651,18 @@ export const renderHomePage = (): string => `<!doctype html>
         const k = state.apiKey
         const base = location.origin
         const h = '-H "Authorization: Bearer ' + k + '"'
+        const today = new Date()
+        const yyyy = today.getFullYear()
+        const mm = String(today.getMonth() + 1).padStart(2, '0')
+        const dd = String(today.getDate()).padStart(2, '0')
+        const todayDate = yyyy + '-' + mm + '-' + dd
         const examples = [
           makeExample('Current total price',
             'curl -sS ' + h + ' \\\\\\n  ' + base + '/api/v1/price/now'),
           makeExample('Cheapest 3-hour window',
             'curl -sS ' + h + ' \\\\\\n  ' + base + '/api/v1/price/cheapest?duration=180'),
           makeExample('Cheapest 1h between 4pm\\u20139pm today',
-            'curl -sS ' + h + ' \\\\\\n  "' + base + '/api/v1/price/cheapest?duration=60&startTime=2026-02-25T16:00:00Z&endTime=2026-02-25T21:00:00Z"'),
+            'curl -sS ' + h + ' \\\\\\n  "' + base + '/api/v1/price/cheapest?duration=60&startTime=' + todayDate + 'T16:00:00Z&endTime=' + todayDate + 'T21:00:00Z"'),
           makeExample('Today\\u2019s hourly prices',
             'curl -sS ' + h + ' \\\\\\n  ' + base + '/api/v1/price/today'),
           makeExample('Tomorrow\\u2019s prices (after ~14:00 EET)',
