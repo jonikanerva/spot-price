@@ -1,5 +1,11 @@
 # Agentic Product Delivery Rules
 
+## Language Policy
+
+- **All project artifacts must be in English** — regardless of the language used in conversation.
+- This applies to: source code, comments, commit messages, branch names, PR titles and descriptions, documentation, skill definitions, agent prompts, variable names, error messages, log output, and any other project-related text.
+- Conversations with the user may happen in any language, but every artifact that enters the repository or agent configuration must be English.
+
 ## Operating Default
 
 - Enforce RPI workflow: **Research -> Plan -> Implement** for every meaningful change.

@@ -35,6 +35,7 @@ permission:
     "roadmap-planner": allow
     "quality-gatekeeper": allow
     "integration-operator": allow
+    "code-reviewer": allow
 tools:
   skill: true
 ---
@@ -54,6 +55,7 @@ Automatic dispatch rules:
 - If prompt includes milestones, dependencies, sequencing, estimates, or roadmap -> invoke `roadmap-planner`.
 - If prompt includes acceptance criteria, quality checks, release readiness, or pass/fail -> invoke `quality-gatekeeper`.
 - If prompt includes MCP, integrations, auth, permissions, hooks, plugins, or operations -> invoke `integration-operator`.
+- If prompt includes code review, PR review, merge readiness, or pull request quality check -> invoke `code-reviewer`.
 
 RPI guardrails:
 
