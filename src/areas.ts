@@ -101,11 +101,6 @@ export const VALID_AREA_CODES: ReadonlySet<string> = new Set(
   DELIVERY_AREAS.map((a) => a.code),
 );
 
-/** All valid area codes as a comma-separated string (for API calls) */
-export const ALL_AREA_CODES_CSV: string = DELIVERY_AREAS.map(
-  (a) => a.code,
-).join(",");
-
 /** Unique supported timezones derived from delivery areas */
 export const SUPPORTED_TIMEZONES: readonly string[] = [
   ...new Set(DELIVERY_AREAS.map((a) => a.timezone)),

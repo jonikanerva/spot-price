@@ -35,7 +35,11 @@ import {
   toInternalEmail,
   validateUsername,
 } from "./usernames.js";
-import { isValidAreaCode, isValidTimezone } from "./areas.js";
+import {
+  isValidAreaCode,
+  isValidTimezone,
+  getDefaultTimezone,
+} from "./areas.js";
 
 export interface AppEnv {
   Variables: {
@@ -229,7 +233,7 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       return c.json({ error: "Invalid area code" }, 400);
     }
 
-    const { today, tomorrow } = getCurrentAndNextDate(HELSINKI_TZ);
+    const { today, tomorrow } = getCurrentAndNextDate(getDefaultTimezone(area));
     const todayPrices = getPricesForDate(c.get("db"), today, area).map((p) => ({
       ...p,
       spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
