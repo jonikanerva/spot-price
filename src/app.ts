@@ -7,7 +7,13 @@ import {
   findCheapestWindow,
 } from "./calculator.js";
 import { getCurrentApiKey, regenerateApiKey } from "./api-keys.js";
-import { apiKeyAuth, rateLimit } from "./middleware.js";
+import {
+  apiKeyAuth,
+  apiKeyRateLimit,
+  globalRateLimit,
+  isRegistrationOpen,
+  loginRateLimit,
+} from "./middleware.js";
 import { getPricesForDate } from "./price-store.js";
 import { auth } from "./auth.js";
 import { eurMwhToCentsKwh } from "./nordpool.js";
@@ -89,6 +95,9 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     await next();
   });
 
+  // Global rate limit: 120 req/min per IP (skips /health)
+  app.use(globalRateLimit);
+
   // Health check — verifies DB is accessible
   app.get("/health", (c) => {
     try {
@@ -108,7 +117,8 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
 
   app.get("/", (c) => c.html(renderHomePage()));
 
-  app.post("/api/session/login-or-signup", async (c) => {
+  // Login/signup rate limit: 10 req/15min per IP (POST only)
+  app.post("/api/session/login-or-signup", loginRateLimit, async (c) => {
     const payload = await c.req.json<{
       username?: string;
       password?: string;
@@ -140,6 +150,11 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
         asResponse: true,
       });
       return signInResponse;
+    }
+
+    // User cap: reject signup if at maximum
+    if (!isRegistrationOpen(c.get("db"))) {
+      return c.json({ error: "Registration is currently closed." }, 403);
     }
 
     const signUpResponse = await auth.api.signUpEmail({
@@ -229,7 +244,7 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     });
   });
 
-  app.use("/api/v1/price/*", apiKeyAuth, rateLimit);
+  app.use("/api/v1/price/*", apiKeyAuth, apiKeyRateLimit);
   app.use("/api/v1/me/*", sessionAuth);
 
   app.get("/api/v1/me/settings", (c) => {
