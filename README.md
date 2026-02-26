@@ -60,10 +60,10 @@ All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <k
 
 ```json
 {
-  "deliveryStart": "2026-02-26T10:00:00+01:00",
-  "deliveryEnd": "2026-02-26T10:15:00+01:00",
-  "localStart": "2026-02-26T11:00:00+02:00",
-  "localEnd": "2026-02-26T11:15:00+02:00",
+  "deliveryStart": "2026-02-26T10:00:00Z",
+  "deliveryEnd": "2026-02-26T10:15:00Z",
+  "localStart": "2026-02-26T12:00:00+02:00",
+  "localEnd": "2026-02-26T12:15:00+02:00",
   "spotCentsKwh": 5.23,
   "marginCentsKwh": 0.5,
   "transferCentsKwh": 2.5,
@@ -111,10 +111,10 @@ All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <k
 
 ```json
 {
-  "start": "2026-02-26T01:00:00+01:00",
-  "end": "2026-02-26T04:00:00+01:00",
-  "startLocal": "2026-02-26T02:00:00+02:00",
-  "endLocal": "2026-02-26T05:00:00+02:00",
+  "start": "2026-02-26T01:00:00Z",
+  "end": "2026-02-26T04:00:00Z",
+  "startLocal": "2026-02-26T03:00:00+02:00",
+  "endLocal": "2026-02-26T06:00:00+02:00",
   "averageTotalCentsKwh": 8.452,
   "prices": [
     { "...TotalPrice objects..." }
@@ -129,8 +129,8 @@ All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <k
   "area": "FI",
   "today": [
     {
-      "deliveryStart": "2026-02-26T00:00:00+02:00",
-      "deliveryEnd": "2026-02-26T00:15:00+02:00",
+      "deliveryStart": "2026-02-25T22:00:00Z",
+      "deliveryEnd": "2026-02-25T22:15:00Z",
       "priceEurMwh": 52.3,
       "area": "FI",
       "spotCentsKwh": 5.23
