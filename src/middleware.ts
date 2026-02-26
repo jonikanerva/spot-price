@@ -1,6 +1,41 @@
 import type { Context, Next } from "hono";
+import { rateLimiter } from "hono-rate-limiter";
 import { resolveApiKey } from "./api-keys.js";
 import type { AppEnv } from "./app.js";
+
+/** Extract client IP from request headers (Railway sets X-Real-IP) */
+export const getClientIp = (c: Context): string =>
+  c.req.header("x-real-ip") ??
+  c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+  "unknown";
+
+/** Global IP rate limit: 120 req/min per IP, skip /health */
+export const globalRateLimit = rateLimiter<AppEnv>({
+  windowMs: 60_000,
+  limit: 120,
+  keyGenerator: (c) => getClientIp(c),
+  skip: (c) => c.req.path === "/health",
+  standardHeaders: "draft-6",
+  message: { error: "Too many requests. Try again later." },
+});
+
+/** Login/signup rate limit: 10 req/15min per IP */
+export const loginRateLimit = rateLimiter<AppEnv>({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  keyGenerator: (c) => `login:${getClientIp(c)}`,
+  standardHeaders: "draft-6",
+  message: { error: "Too many login attempts. Try again in 15 minutes." },
+});
+
+/** API key rate limit: 60 req/min per key (must run after apiKeyAuth) */
+export const apiKeyRateLimit = rateLimiter<AppEnv>({
+  windowMs: 60_000,
+  limit: 60,
+  keyGenerator: (c) => `apikey:${c.get("userId")}`,
+  standardHeaders: "draft-6",
+  message: { error: "Rate limit exceeded. Try again later." },
+});
 
 /** Extract Bearer token from Authorization header */
 const extractBearerToken = (header: string | undefined): string | null => {
@@ -39,52 +74,15 @@ export const apiKeyAuth = async (
   return undefined;
 };
 
-/** Simple in-memory rate limiter (per API key) */
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
+/** Maximum number of users allowed in the system */
+export const MAX_USERS = 100;
 
-const rateLimitStore = new Map<string, RateLimitEntry>();
-const WINDOW_MS = 60_000; // 1 minute
-const MAX_REQUESTS = 60; // 60 req/min
-
-/** Clean expired entries periodically */
-const cleanExpired = (): void => {
-  const now = Date.now();
-  for (const [key, entry] of rateLimitStore) {
-    if (entry.resetAt <= now) {
-      rateLimitStore.delete(key);
-    }
-  }
-};
-
-// Clean every 5 minutes
-setInterval(cleanExpired, 5 * 60_000);
-
-/** Rate limiting middleware (must run after apiKeyAuth) */
-export const rateLimit = async (
-  c: Context<AppEnv>,
-  next: Next,
-): Promise<Response | undefined> => {
-  const userId = c.get("userId");
-  const now = Date.now();
-  const existing = rateLimitStore.get(userId);
-
-  if (existing && existing.resetAt > now) {
-    if (existing.count >= MAX_REQUESTS) {
-      const retryAfter = Math.ceil((existing.resetAt - now) / 1000);
-      c.header("Retry-After", String(retryAfter));
-      return c.json({ error: "Rate limit exceeded. Try again later." }, 429);
-    }
-    existing.count++;
-  } else {
-    rateLimitStore.set(userId, {
-      count: 1,
-      resetAt: now + WINDOW_MS,
-    });
-  }
-
-  await next();
-  return undefined;
+/** Check if user registration is open (under the user cap) */
+export const isRegistrationOpen = (db: {
+  prepare: (sql: string) => { get: () => { count: number } | undefined };
+}): boolean => {
+  const row = db.prepare('SELECT COUNT(*) as count FROM "user"').get() as
+    | { count: number }
+    | undefined;
+  return (row?.count ?? 0) < MAX_USERS;
 };
