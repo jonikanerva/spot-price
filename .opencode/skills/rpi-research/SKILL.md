@@ -17,6 +17,13 @@ Create a research artifact that is decision-ready for planning.
 - Evidence and source links
 - Recommendation
 
+## Branch Lifecycle
+
+- Before writing any output, verify you are on an initiative branch (not `main`).
+- If no branch exists yet, create one: `git switch -c feat/<topic>` from `main`.
+- After writing the research dossier, commit it: `docs(research): add <topic> research dossier`.
+- The plan and implementation phases will commit to the same branch.
+
 ## Rules
 
 - Cite sources for all non-trivial claims.

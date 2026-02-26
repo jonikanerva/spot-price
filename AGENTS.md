@@ -16,10 +16,12 @@
 
 ## Product-to-Delivery Flow
 
-1. Research dossier drafted and challenged (problem, users, constraints, alternatives, evidence).
-2. Plan generated from approved research with dependencies, risks, and acceptance criteria.
-3. Quality gates defined against the plan before implementation starts.
-4. Implementation executes only after gate pass and owner signoff.
+1. **Create branch first** — before research, not before implementation. One branch per initiative covers the full RPI cycle.
+2. Research dossier drafted and challenged, then **committed to the initiative branch**.
+3. Plan generated from approved research, then **committed to the same branch**.
+4. Quality gates defined against the plan before implementation starts.
+5. Implementation executes only after gate pass and owner signoff, **committing to the same branch**.
+6. PR contains the complete story: research + plan + code. Merge via code review.
 
 ## Quality Expectations
 

@@ -20,24 +20,54 @@ Allowed exceptions (must be documented in PR or handoff note):
 - Read-only analysis/documentation session with no commits.
 - Submodule or repo edge case where worktree is known to be unstable (use separate clone).
 
-## Branch and commit progression
+## Branch lifecycle: one branch per initiative
 
-1. Start from updated base and create a session worktree + task branch.
+An initiative is the full RPI cycle: research → plan → implement. **All three phases commit to the same branch.** This prevents research and plan artifacts from being left as unstaged files when implementation starts.
+
+### Why branch-first matters
+
+Without this rule, a common failure mode is:
+
+1. Research creates `docs/research/topic.md` — uncommitted, sitting on `main`.
+2. Plan creates `docs/plans/topic-plan.md` — also uncommitted on `main`.
+3. Implementation creates a worktree — research and plan files are left behind on `main`.
+4. The PR contains only code, missing its research and plan context.
+
+### Branch and commit progression
+
+1. **Create the branch at initiative start** (before research, not before implementation).
    - Naming: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `chore/<topic>`.
-2. Ensure GitHub App auth + bot identity are configured in the active worktree (`./scripts/use-github-app-auth.sh`).
-3. Implement one logical change at a time.
-4. Run local verification for changed scope.
-5. Create single-purpose commit with clear message.
-6. Repeat until task scope is complete.
-7. Push branch and open PR.
-8. Merge to `main` only via reviewed PR.
+2. Ensure GitHub App auth + bot identity are configured (`./scripts/use-github-app-auth.sh`).
+3. **Research phase**: write research dossier, commit it to the branch.
+4. **Plan phase**: write plan from approved research, commit it to the branch.
+5. **Implementation phase**: implement tasks from the plan, commit each change.
+6. Run local verification before every commit.
+7. Push branch and open PR when ready for review.
+8. The PR contains the full story: research + plan + code.
+9. Merge to `main` only via reviewed PR.
 
-Worktree creation example:
+### Worktree creation example
+
+Create the worktree **at the start of research**, not at the start of implementation:
 
 ```bash
 mkdir -p .worktrees
 git worktree add ".worktrees/<topic>-<session>" -b "feat/<topic>" main
 ```
+
+### Commit sequence within a branch
+
+```
+feat/<topic>
+  ├── docs(research): add <topic> research dossier
+  ├── docs(plan): add <topic> implementation plan
+  ├── feat(<scope>): implement task 1
+  ├── feat(<scope>): implement task 2
+  ├── test(<scope>): add tests for task 1-2
+  └── ...
+```
+
+Each commit is single-purpose. Research and plan are separate commits from implementation code.
 
 ## Commit cadence
 
@@ -88,15 +118,27 @@ Agent pauses and asks for explicit confirmation when:
 
 ## Merge and cleanup cadence
 
-- After PR merge, remove the session worktree within 24h.
-- Run `git worktree prune` at least weekly.
-- Keep stale session branches out of local workspace; delete merged branches during cleanup.
+After a PR is merged to `main`, **immediately** clean up both local and remote branches:
 
-Cleanup example:
+1. **Delete remote branch**: use `--delete-branch` flag during merge, or `git push origin --delete <branch>`.
+2. **Switch to main and pull**: `git switch main && git pull`.
+3. **Delete local branch**: `git branch -d <branch>`.
+4. **Remove worktree** (if used): `git worktree remove ".worktrees/<topic>-<session>"`.
+5. **Prune stale worktrees**: `git worktree prune`.
+
+Do not leave merged branches lingering — clean up is part of the merge, not a separate chore.
+
+Cleanup example (full sequence):
 
 ```bash
-git worktree remove ".worktrees/<topic>-<session>"
+# If using code-reviewer agent, merge handles remote deletion:
+gh pr merge <number> --merge --delete-branch
+
+# Then clean up locally:
+git switch main
+git pull
 git branch -d feat/<topic>
+git worktree remove ".worktrees/<topic>-<session>"  # if worktree was used
 git worktree prune
 ```
 

@@ -9,9 +9,10 @@ Implement approved plan steps with verification evidence.
 
 ## Preconditions
 
-- Approved research document exists.
-- Approved plan document exists.
+- Approved research document exists and is committed to the initiative branch.
+- Approved plan document exists and is committed to the same branch.
 - Quality gates are defined.
+- You are on the initiative branch (not `main`). Do not create a new branch — research and plan are already here.
 
 ## Execution Rules
 
