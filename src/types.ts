@@ -36,6 +36,7 @@ export interface UserSettings {
   readonly nightStartHour: number;
   readonly nightEndHour: number;
   readonly timezone: string;
+  readonly area: string;
 }
 
 /** Total price breakdown for a single delivery interval */

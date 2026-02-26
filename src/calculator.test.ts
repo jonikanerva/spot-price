@@ -17,6 +17,7 @@ const defaultSettings: UserSettings = {
   nightStartHour: 22,
   nightEndHour: 7,
   timezone: "Europe/Helsinki",
+  area: "FI",
 };
 
 const makePrice = (hour: number, eurMwh: number): HourlyPrice => ({

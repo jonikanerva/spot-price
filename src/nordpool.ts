@@ -4,7 +4,7 @@ const BASE_URL = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices";
 
 interface FetchPricesParams {
   readonly date: string; // YYYY-MM-DD
-  readonly area: string; // e.g. "FI"
+  readonly areas: readonly string[]; // e.g. ["FI"] or ["FI", "SE1", "SE2", ...]
 }
 
 /** Convert EUR/MWh to c/kWh (divide by 10) */
@@ -15,29 +15,30 @@ const buildUrl = (params: FetchPricesParams): string => {
   const url = new URL(BASE_URL);
   url.searchParams.set("date", params.date);
   url.searchParams.set("market", "DayAhead");
-  url.searchParams.set("deliveryArea", params.area);
+  url.searchParams.set("deliveryArea", params.areas.join(","));
   url.searchParams.set("currency", "EUR");
   return url.toString();
 };
 
 const parseResponse = (
   data: NordPoolResponse,
-  area: string,
+  areas: readonly string[],
 ): readonly HourlyPrice[] => {
-  return data.multiAreaEntries
-    .map((entry): HourlyPrice | null => {
+  const results: HourlyPrice[] = [];
+  for (const entry of data.multiAreaEntries) {
+    for (const area of areas) {
       const price = entry.entryPerArea[area];
-      if (price === undefined) {
-        return null;
+      if (price !== undefined) {
+        results.push({
+          deliveryStart: entry.deliveryStart,
+          deliveryEnd: entry.deliveryEnd,
+          priceEurMwh: price,
+          area,
+        });
       }
-      return {
-        deliveryStart: entry.deliveryStart,
-        deliveryEnd: entry.deliveryEnd,
-        priceEurMwh: price,
-        area,
-      };
-    })
-    .filter((p): p is HourlyPrice => p !== null);
+    }
+  }
+  return results;
 };
 
 const MAX_RETRIES = 3;
@@ -94,7 +95,7 @@ export const fetchDayAheadPrices = async (
         return [];
       }
 
-      return parseResponse(data, params.area);
+      return parseResponse(data, params.areas);
     } catch (error) {
       const isLastAttempt = attempt === MAX_RETRIES;
       if (isLastAttempt) {

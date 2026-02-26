@@ -1,8 +1,10 @@
 import type Database from "better-sqlite3";
 import { fetchDayAheadPrices } from "./nordpool.js";
 import { storePrices, countPricesForDate } from "./price-store.js";
+import { DELIVERY_AREAS } from "./areas.js";
 
-const DEFAULT_AREA = "FI";
+/** Minimum expected price entries per area per day (DST days may have 23h = 92 entries) */
+const MIN_ENTRIES_PER_AREA = 23;
 
 const formatDate = (date: Date): string => {
   const year = date.getFullYear();
@@ -27,20 +29,26 @@ interface FetchResult {
   readonly skipped: boolean;
 }
 
-/** Fetch prices for a single date if not already in DB */
+/** Check if all areas already have data for a given date */
+const allAreasPresent = (db: Database.Database, date: string): boolean => {
+  const totalAreas = DELIVERY_AREAS.length;
+  const areasWithData = DELIVERY_AREAS.filter(
+    (a) => countPricesForDate(db, date, a.code) >= MIN_ENTRIES_PER_AREA,
+  ).length;
+  return areasWithData >= totalAreas;
+};
+
+/** Fetch prices for all areas for a single date if not already complete */
 const fetchForDate = async (
   db: Database.Database,
   date: string,
-  area: string,
 ): Promise<FetchResult> => {
-  const existing = countPricesForDate(db, date, area);
-  if (existing >= 23) {
-    // At least 23 hours means we likely have the full day
-    // (DST transition days have 23 or 25 hours)
+  if (allAreasPresent(db, date)) {
     return { date, stored: 0, skipped: true };
   }
 
-  const prices = await fetchDayAheadPrices({ date, area });
+  const allAreaCodes = DELIVERY_AREAS.map((a) => a.code);
+  const prices = await fetchDayAheadPrices({ date, areas: allAreaCodes });
   if (prices.length === 0) {
     return { date, stored: 0, skipped: false };
   }
@@ -51,32 +59,38 @@ const fetchForDate = async (
 
 const logFetchResult = (date: string, result: FetchResult): void => {
   if (result.skipped) {
-    console.log(`[fetch-job] ${date}: already in DB, skipped`);
+    console.log(
+      `[fetch-job] ${date}: all ${String(DELIVERY_AREAS.length)} areas already in DB, skipped`,
+    );
   } else if (result.stored === 0) {
     console.log(
       `[fetch-job] ${date}: not available yet (published ~14:00 EET)`,
     );
   } else {
-    console.log(`[fetch-job] ${date}: stored ${String(result.stored)} prices`);
+    console.log(
+      `[fetch-job] ${date}: stored ${String(result.stored)} prices across all areas`,
+    );
   }
 };
 
-/** Run the daily price fetch job: fetch today + tomorrow */
+/** Run the daily price fetch job: fetch today + tomorrow for all areas */
 export const runFetchJob = async (
   db: Database.Database,
 ): Promise<readonly FetchResult[]> => {
   const { today, tomorrow } = getTodayAndTomorrow();
   const results: FetchResult[] = [];
 
-  console.log(`[fetch-job] Fetching prices for ${today} and ${tomorrow}...`);
+  console.log(
+    `[fetch-job] Fetching prices for ${today} and ${tomorrow} (${String(DELIVERY_AREAS.length)} areas)...`,
+  );
 
-  const todayResult = await fetchForDate(db, today, DEFAULT_AREA);
+  const todayResult = await fetchForDate(db, today);
   results.push(todayResult);
 
   logFetchResult(today, todayResult);
 
   try {
-    const tomorrowResult = await fetchForDate(db, tomorrow, DEFAULT_AREA);
+    const tomorrowResult = await fetchForDate(db, tomorrow);
     results.push(tomorrowResult);
     logFetchResult(tomorrow, tomorrowResult);
   } catch (error) {

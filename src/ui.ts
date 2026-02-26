@@ -203,6 +203,10 @@ export const renderHomePage = (): string => `<!doctype html>
         width: 100px;
         text-align: right;
       }
+      .settings-grid label select {
+        width: 200px;
+        text-align: right;
+      }
 
       /* ---- api panel ---- */
       .api-panel { display: none; }
@@ -343,6 +347,48 @@ export const renderHomePage = (): string => `<!doctype html>
               <label>VAT % <input id="vat" type="number" step="0.1" /></label>
               <label>Night start hour <input id="nightStart" type="number" min="0" max="23" /></label>
               <label>Night end hour <input id="nightEnd" type="number" min="0" max="23" /></label>
+              <label>Delivery area
+                <select id="area">
+                  <option value="FI">Finland (FI)</option>
+                  <option value="SE1">Sweden — Luleå (SE1)</option>
+                  <option value="SE2">Sweden — Sundsvall (SE2)</option>
+                  <option value="SE3">Sweden — Stockholm (SE3)</option>
+                  <option value="SE4">Sweden — Malmö (SE4)</option>
+                  <option value="NO1">Norway — Oslo (NO1)</option>
+                  <option value="NO2">Norway — Kristiansand (NO2)</option>
+                  <option value="NO3">Norway — Trondheim (NO3)</option>
+                  <option value="NO4">Norway — Tromsø (NO4)</option>
+                  <option value="NO5">Norway — Bergen (NO5)</option>
+                  <option value="DK1">Denmark — West (DK1)</option>
+                  <option value="DK2">Denmark — East (DK2)</option>
+                  <option value="EE">Estonia (EE)</option>
+                  <option value="LT">Lithuania (LT)</option>
+                  <option value="LV">Latvia (LV)</option>
+                  <option value="AT">Austria (AT)</option>
+                  <option value="BE">Belgium (BE)</option>
+                  <option value="FR">France (FR)</option>
+                  <option value="GER">Germany (GER)</option>
+                  <option value="NL">Netherlands (NL)</option>
+                  <option value="PL">Poland (PL)</option>
+                </select>
+              </label>
+              <label>Timezone
+                <select id="timezone">
+                  <option value="Europe/Amsterdam">Europe/Amsterdam</option>
+                  <option value="Europe/Berlin">Europe/Berlin</option>
+                  <option value="Europe/Brussels">Europe/Brussels</option>
+                  <option value="Europe/Copenhagen">Europe/Copenhagen</option>
+                  <option value="Europe/Helsinki">Europe/Helsinki</option>
+                  <option value="Europe/Oslo">Europe/Oslo</option>
+                  <option value="Europe/Paris">Europe/Paris</option>
+                  <option value="Europe/Riga">Europe/Riga</option>
+                  <option value="Europe/Stockholm">Europe/Stockholm</option>
+                  <option value="Europe/Tallinn">Europe/Tallinn</option>
+                  <option value="Europe/Vienna">Europe/Vienna</option>
+                  <option value="Europe/Vilnius">Europe/Vilnius</option>
+                  <option value="Europe/Warsaw">Europe/Warsaw</option>
+                </select>
+              </label>
               <button id="saveBtn" class="btn btn-primary" style="margin-top:6px">Save settings</button>
               <div id="settingsStatus" class="status"></div>
             </div>
@@ -522,6 +568,24 @@ export const renderHomePage = (): string => `<!doctype html>
           label: new Date(p.deliveryStart).toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit', hour12: false })
         }))
 
+      /* ---- area-to-timezone mapping ---- */
+      const areaTimezoneMap = {
+        FI: 'Europe/Helsinki', SE1: 'Europe/Stockholm', SE2: 'Europe/Stockholm',
+        SE3: 'Europe/Stockholm', SE4: 'Europe/Stockholm', NO1: 'Europe/Oslo',
+        NO2: 'Europe/Oslo', NO3: 'Europe/Oslo', NO4: 'Europe/Oslo', NO5: 'Europe/Oslo',
+        DK1: 'Europe/Copenhagen', DK2: 'Europe/Copenhagen', EE: 'Europe/Tallinn',
+        LT: 'Europe/Vilnius', LV: 'Europe/Riga', AT: 'Europe/Vienna',
+        BE: 'Europe/Brussels', FR: 'Europe/Paris', GER: 'Europe/Berlin',
+        NL: 'Europe/Amsterdam', PL: 'Europe/Warsaw'
+      }
+
+      if ($('area')) {
+        $('area').onchange = () => {
+          const tz = areaTimezoneMap[$('area').value]
+          if (tz && $('timezone')) $('timezone').value = tz
+        }
+      }
+
       /* ---- data loading ---- */
       const loadPublicChart = async () => {
         const r = await json('/api/public/spot')
@@ -552,6 +616,8 @@ export const renderHomePage = (): string => `<!doctype html>
         $('vat').value = s.vatPercent
         $('nightStart').value = s.nightStartHour
         $('nightEnd').value = s.nightEndHour
+        if ($('area')) $('area').value = s.area || 'FI'
+        if ($('timezone')) $('timezone').value = s.timezone || 'Europe/Helsinki'
         setStatus('settingsStatus', 'ok', 'Settings loaded')
       }
 
@@ -666,7 +732,9 @@ export const renderHomePage = (): string => `<!doctype html>
           taxCentsKwh: Number($('tax').value),
           vatPercent: Number($('vat').value),
           nightStartHour: Number($('nightStart').value),
-          nightEndHour: Number($('nightEnd').value)
+          nightEndHour: Number($('nightEnd').value),
+          area: $('area') ? $('area').value : 'FI',
+          timezone: $('timezone') ? $('timezone').value : 'Europe/Helsinki'
         }
         const r = await json('/api/v1/me/settings', {
           method: 'PUT',

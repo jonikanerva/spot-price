@@ -41,8 +41,8 @@ const seedUser = (db: Database.Database): void => {
   db.prepare(
     `INSERT OR IGNORE INTO user_settings (
       user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
-      tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     TEST_USER_ID,
     0.45,
@@ -53,6 +53,7 @@ const seedUser = (db: Database.Database): void => {
     22,
     7,
     "Europe/Helsinki",
+    "FI",
   );
 
   db.prepare(
