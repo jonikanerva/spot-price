@@ -22,12 +22,18 @@ Status: Active draft
 - **Strong types always**: no `any`, `unknown` as bypass, or similar catch-all types. Every parameter and return value has an explicit type.
 - **No code duplication**: refactor to reuse existing logic instead of copying. DRY applies to logic, not just strings.
 
+## Language policy
+
+- All artifacts are in English: source code, comments, commit messages, branch names, PR titles/descriptions, documentation, variable names, error messages, and log output.
+- No exceptions — regardless of conversation language.
+
 ## Git and review readiness
 
 - Work is on a non-protected branch.
 - Commits are single-purpose, readable, and follow commit convention.
 - **Holistic commits**: each commit contains exactly one logical change — no mixed fixes, features, or refactors.
 - PR description includes verification steps, risks, and assumptions.
+- **Code review required**: PR must receive LGTM from the code-reviewer agent before merge.
 
 ## Safety and compliance
 

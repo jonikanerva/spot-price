@@ -90,7 +90,8 @@
           "product-strategist": "allow",
           "roadmap-planner": "allow",
           "quality-gatekeeper": "allow",
-          "integration-operator": "allow"
+          "integration-operator": "allow",
+          "code-reviewer": "allow"
         }
       }
     },
