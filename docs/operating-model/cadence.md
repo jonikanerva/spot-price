@@ -11,11 +11,12 @@ Define a predictable execution rhythm so work moves quickly with low interruptio
 ## Daily rhythm
 
 1. Start by syncing branch context (`git status`, target scope, blockers).
-2. Create a session worktree and task branch (default mode for implementation work).
-3. Execute one scoped task at a time in that worktree.
-4. Commit at logical milestones (typically every 30-90 minutes).
-5. Run targeted verification before each commit.
-6. Push and hand off when a reviewable slice is ready.
+2. If starting a new initiative: create worktree + branch **before research** (see handoff-protocol.md).
+3. If resuming: switch to the existing initiative branch.
+4. Execute one scoped task at a time — research, plan, and implementation all commit to the same branch.
+5. Commit at logical milestones (typically every 30-90 minutes).
+6. Run targeted verification before each commit.
+7. Push and hand off when a reviewable slice is ready.
 
 ## Checkpoint cadence
 

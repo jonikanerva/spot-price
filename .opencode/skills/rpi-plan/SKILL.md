@@ -16,6 +16,12 @@ Translate approved research into an execution-ready plan.
 - Acceptance criteria
 - Quality gate checks
 
+## Branch Lifecycle
+
+- Verify you are on the same initiative branch where the research dossier was committed (not `main`).
+- After writing the plan, commit it: `docs(plan): add <topic> implementation plan`.
+- The implementation phase will continue on the same branch.
+
 ## Rules
 
 - Preserve research intent and constraints.
