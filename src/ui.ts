@@ -264,6 +264,15 @@ export const renderHomePage = (): string => `<!doctype html>
       .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
       .copy-btn.copied { color: var(--ok); border-color: var(--ok); }
 
+      /* ---- details/summary ---- */
+      details { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; background: rgba(15,21,40,0.5); }
+      details[open] { padding-bottom: 4px; }
+      details summary { list-style: none; }
+      details summary::-webkit-details-marker { display: none; }
+      details summary::before { content: "\\25B8 "; font-size: 11px; }
+      details[open] summary::before { content: "\\25BE "; }
+      details pre { margin-top: 8px; border: none; background: #0b1020; font-size: 0.78rem; }
+
       /* ---- responsive ---- */
       @media (max-width: 980px) {
         .grid-2 { grid-template-columns: 1fr; }
@@ -407,6 +416,113 @@ export const renderHomePage = (): string => `<!doctype html>
 
             <h2 style="margin-top:20px">Usage examples</h2>
             <div id="apiExamples"></div>
+
+            <h2 style="margin-top:28px">Response types</h2>
+            <p style="margin-bottom:12px">All prices are in <strong style="color:var(--text)">c/kWh</strong>. Timestamps are ISO 8601. <code style="color:var(--accent);background:#0d1323;padding:2px 6px;border-radius:4px">local*</code> fields use your configured timezone.</p>
+
+            <details style="margin-top:14px" open>
+              <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">GET /api/v1/price/now &mdash; TotalPrice</summary>
+              <pre><span class="comment">// Single price entry with full cost breakdown</span>
+{
+  "deliveryStart": "2026-02-26T10:00:00+02:00",
+  "deliveryEnd":   "2026-02-26T10:15:00+02:00",
+  "localStart":    "2026-02-26 12:00",
+  "localEnd":      "2026-02-26 12:15",
+  "spotCentsKwh":      5.23,    <span class="comment">// Nord Pool spot price</span>
+  "marginCentsKwh":    0.5,     <span class="comment">// your seller margin</span>
+  "transferCentsKwh":  2.5,     <span class="comment">// grid transfer (day or night)</span>
+  "taxCentsKwh":       2.794,   <span class="comment">// electricity tax</span>
+  "vatCentsKwh":       2.756,   <span class="comment">// VAT amount</span>
+  "totalCentsKwh":     13.78,   <span class="comment">// final total incl. everything</span>
+  "isNightRate":       false    <span class="comment">// night transfer rate applied?</span>
+}</pre>
+            </details>
+
+            <details style="margin-top:10px">
+              <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">GET /api/v1/price/today &mdash; Price list</summary>
+              <pre><span class="comment">// Array of TotalPrice for each 15-min interval</span>
+{
+  "prices": [
+    { <span class="comment">/* TotalPrice */</span> },
+    { <span class="comment">/* TotalPrice */</span> },
+    <span class="comment">// ...96 entries (15-min resolution)</span>
+  ],
+  "available": true
+}</pre>
+            </details>
+
+            <details style="margin-top:10px">
+              <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">GET /api/v1/price/tomorrow &mdash; Price list or unavailable</summary>
+              <pre><span class="comment">// Before ~14:00 EET (prices not yet published)</span>
+{
+  "prices": [],
+  "available": false,
+  "expectedAt": "14:00 EET"
+}
+
+<span class="comment">// After ~14:00 EET</span>
+{
+  "prices": [ { <span class="comment">/* TotalPrice */</span> }, <span class="comment">...</span> ],
+  "available": true
+}</pre>
+            </details>
+
+            <details style="margin-top:10px">
+              <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">GET /api/v1/price/cheapest &mdash; Cheapest window</summary>
+              <pre><span class="comment">// Optimal contiguous window for the requested duration</span>
+{
+  "start":      "2026-02-26T01:00:00+02:00",
+  "end":        "2026-02-26T04:00:00+02:00",
+  "startLocal": "2026-02-26 03:00",
+  "endLocal":   "2026-02-26 06:00",
+  "averageTotalCentsKwh": 8.452,
+  "prices": [
+    { <span class="comment">/* TotalPrice */</span> },
+    <span class="comment">// ...one entry per 15-min interval in the window</span>
+  ]
+}
+
+<span class="comment">// Query params:</span>
+<span class="comment">//   duration  (required) — minutes, e.g. 180</span>
+<span class="comment">//   startTime (optional) — ISO 8601, default: now</span>
+<span class="comment">//   endTime   (optional) — ISO 8601, default: end of tomorrow</span></pre>
+            </details>
+
+            <details style="margin-top:10px">
+              <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">GET /api/public/spot &mdash; Public spot prices (no auth)</summary>
+              <pre>{
+  "area": "FI",
+  "today": [
+    {
+      "deliveryStart": "2026-02-26T00:00:00+02:00",
+      "deliveryEnd":   "2026-02-26T00:15:00+02:00",
+      "priceEurMwh":   52.3,
+      "area":          "FI",
+      "spotCentsKwh":  5.23
+    },
+    <span class="comment">// ...96 entries</span>
+  ],
+  "tomorrow": [ <span class="comment">/* same shape, or empty */</span> ],
+  "tomorrowAvailable": false,
+  "unit": "c/kWh",
+  "resolutionMinutes": 15
+}
+
+<span class="comment">// Query params:</span>
+<span class="comment">//   area (optional) — e.g. SE3, NO1, default: FI</span></pre>
+            </details>
+
+            <details style="margin-top:10px">
+              <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">Error responses</summary>
+              <pre><span class="comment">// All errors follow the same shape</span>
+{ "error": "Description of what went wrong" }
+
+<span class="comment">// Status codes:</span>
+<span class="comment">//   400 — Bad request (invalid params, invalid area)</span>
+<span class="comment">//   401 — Missing or invalid API key</span>
+<span class="comment">//   404 — No price data available</span>
+<span class="comment">//   429 — Rate limit exceeded (60 req/min per key)</span></pre>
+            </details>
           </article>
         </div>
       </section>
