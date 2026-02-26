@@ -118,15 +118,27 @@ Agent pauses and asks for explicit confirmation when:
 
 ## Merge and cleanup cadence
 
-- After PR merge, remove the session worktree within 24h.
-- Run `git worktree prune` at least weekly.
-- Keep stale session branches out of local workspace; delete merged branches during cleanup.
+After a PR is merged to `main`, **immediately** clean up both local and remote branches:
 
-Cleanup example:
+1. **Delete remote branch**: use `--delete-branch` flag during merge, or `git push origin --delete <branch>`.
+2. **Switch to main and pull**: `git switch main && git pull`.
+3. **Delete local branch**: `git branch -d <branch>`.
+4. **Remove worktree** (if used): `git worktree remove ".worktrees/<topic>-<session>"`.
+5. **Prune stale worktrees**: `git worktree prune`.
+
+Do not leave merged branches lingering — clean up is part of the merge, not a separate chore.
+
+Cleanup example (full sequence):
 
 ```bash
-git worktree remove ".worktrees/<topic>-<session>"
+# If using code-reviewer agent, merge handles remote deletion:
+gh pr merge <number> --merge --delete-branch
+
+# Then clean up locally:
+git switch main
+git pull
 git branch -d feat/<topic>
+git worktree remove ".worktrees/<topic>-<session>"  # if worktree was used
 git worktree prune
 ```
 
