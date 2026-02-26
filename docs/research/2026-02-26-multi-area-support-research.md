@@ -2,7 +2,7 @@
 
 Date: 2026-02-26
 Author: Research Agent
-Status: **Draft** — awaiting owner review
+Status: **Approved** — owner GO on 2026-02-26
 
 ---
 
