@@ -424,10 +424,10 @@ export const renderHomePage = (): string => `<!doctype html>
               <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">GET /api/v1/price/now &mdash; TotalPrice</summary>
               <pre><span class="comment">// Single price entry with full cost breakdown</span>
 {
-  "deliveryStart": "2026-02-26T10:00:00+02:00",
-  "deliveryEnd":   "2026-02-26T10:15:00+02:00",
-  "localStart":    "2026-02-26 12:00",
-  "localEnd":      "2026-02-26 12:15",
+  "deliveryStart": "2026-02-26T10:00:00+01:00",
+  "deliveryEnd":   "2026-02-26T10:15:00+01:00",
+  "localStart":    "2026-02-26T11:00:00+02:00",
+  "localEnd":      "2026-02-26T11:15:00+02:00",
   "spotCentsKwh":      5.23,    <span class="comment">// Nord Pool spot price</span>
   "marginCentsKwh":    0.5,     <span class="comment">// your seller margin</span>
   "transferCentsKwh":  2.5,     <span class="comment">// grid transfer (day or night)</span>
@@ -471,10 +471,10 @@ export const renderHomePage = (): string => `<!doctype html>
               <summary style="cursor:pointer;color:var(--accent);font-size:13px;font-weight:700;margin-bottom:8px">GET /api/v1/price/cheapest &mdash; Cheapest window</summary>
               <pre><span class="comment">// Optimal contiguous window for the requested duration</span>
 {
-  "start":      "2026-02-26T01:00:00+02:00",
-  "end":        "2026-02-26T04:00:00+02:00",
-  "startLocal": "2026-02-26 03:00",
-  "endLocal":   "2026-02-26 06:00",
+  "start":      "2026-02-26T01:00:00+01:00",
+  "end":        "2026-02-26T04:00:00+01:00",
+  "startLocal": "2026-02-26T02:00:00+02:00",
+  "endLocal":   "2026-02-26T05:00:00+02:00",
   "averageTotalCentsKwh": 8.452,
   "prices": [
     { <span class="comment">/* TotalPrice */</span> },
