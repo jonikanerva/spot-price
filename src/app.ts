@@ -35,6 +35,7 @@ import {
   toInternalEmail,
   validateUsername,
 } from "./usernames.js";
+import { isValidAreaCode, isValidTimezone } from "./areas.js";
 
 export interface AppEnv {
   Variables: {
@@ -44,7 +45,7 @@ export interface AppEnv {
   };
 }
 
-const AREA = "FI";
+const DEFAULT_AREA = "FI";
 const HELSINKI_TZ = "Europe/Helsinki";
 
 const parseDuration = (value: string | undefined): number | null => {
@@ -223,12 +224,17 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
   });
 
   app.get("/api/public/spot", (c) => {
+    const area = c.req.query("area")?.toUpperCase() ?? DEFAULT_AREA;
+    if (!isValidAreaCode(area)) {
+      return c.json({ error: "Invalid area code" }, 400);
+    }
+
     const { today, tomorrow } = getCurrentAndNextDate(HELSINKI_TZ);
-    const todayPrices = getPricesForDate(c.get("db"), today, AREA).map((p) => ({
+    const todayPrices = getPricesForDate(c.get("db"), today, area).map((p) => ({
       ...p,
       spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
     }));
-    const tomorrowPrices = getPricesForDate(c.get("db"), tomorrow, AREA).map(
+    const tomorrowPrices = getPricesForDate(c.get("db"), tomorrow, area).map(
       (p) => ({
         ...p,
         spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
@@ -236,6 +242,7 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     );
 
     return c.json({
+      area,
       today: todayPrices,
       tomorrow: tomorrowPrices,
       tomorrowAvailable: tomorrowPrices.length > 0,
@@ -266,6 +273,7 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
         nightStartHour: number;
         nightEndHour: number;
         timezone: string;
+        area: string;
       }>
     >();
 
@@ -284,6 +292,12 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     if (next.nightEndHour < 0 || next.nightEndHour > 23) {
       return c.json({ error: "nightEndHour must be 0-23" }, 400);
     }
+    if (!isValidAreaCode(next.area)) {
+      return c.json({ error: "Invalid delivery area code" }, 400);
+    }
+    if (!isValidTimezone(next.timezone)) {
+      return c.json({ error: "Invalid timezone" }, 400);
+    }
 
     upsertUserSettings(c.get("db"), next);
     return c.json(next);
@@ -296,8 +310,8 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     const { today, tomorrow } = getCurrentAndNextDate(
       settings.timezone || HELSINKI_TZ,
     );
-    const todaySpot = getPricesForDate(c.get("db"), today, AREA);
-    const tomorrowSpot = getPricesForDate(c.get("db"), tomorrow, AREA);
+    const todaySpot = getPricesForDate(c.get("db"), today, settings.area);
+    const tomorrowSpot = getPricesForDate(c.get("db"), tomorrow, settings.area);
 
     return c.json({
       today: calculateTotalPrices(todaySpot, settings),
@@ -319,8 +333,8 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       settings.timezone || HELSINKI_TZ,
     );
     const prices = [
-      ...getPricesForDate(c.get("db"), today, AREA),
-      ...getPricesForDate(c.get("db"), tomorrow, AREA),
+      ...getPricesForDate(c.get("db"), today, settings.area),
+      ...getPricesForDate(c.get("db"), tomorrow, settings.area),
     ];
 
     const current = getCurrentPrice(prices, new Date());
@@ -343,7 +357,7 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       new Date(),
       settings.timezone || HELSINKI_TZ,
     );
-    const prices = getPricesForDate(c.get("db"), today, AREA);
+    const prices = getPricesForDate(c.get("db"), today, settings.area);
     if (prices.length === 0) {
       return c.json({ prices: [], available: false });
     }
@@ -365,7 +379,7 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       addDays(new Date(), 1),
       settings.timezone || HELSINKI_TZ,
     );
-    const prices = getPricesForDate(c.get("db"), tomorrow, AREA);
+    const prices = getPricesForDate(c.get("db"), tomorrow, settings.area);
     if (prices.length === 0) {
       return c.json({ available: false, expectedAt: "14:00 EET", prices: [] });
     }
@@ -417,8 +431,8 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       settings.timezone || HELSINKI_TZ,
     );
     const prices = [
-      ...getPricesForDate(c.get("db"), today, AREA),
-      ...getPricesForDate(c.get("db"), tomorrow, AREA),
+      ...getPricesForDate(c.get("db"), today, settings.area),
+      ...getPricesForDate(c.get("db"), tomorrow, settings.area),
     ];
 
     const effectiveStart = startBound ?? now;

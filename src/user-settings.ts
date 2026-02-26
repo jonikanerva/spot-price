@@ -11,6 +11,7 @@ interface UserSettingsRow {
   night_start_hour: number;
   night_end_hour: number;
   timezone: string;
+  area: string;
 }
 
 const rowToSettings = (row: UserSettingsRow): UserSettings => ({
@@ -23,6 +24,7 @@ const rowToSettings = (row: UserSettingsRow): UserSettings => ({
   nightStartHour: row.night_start_hour,
   nightEndHour: row.night_end_hour,
   timezone: row.timezone,
+  area: row.area,
 });
 
 /** Get settings for a user, or null if not configured */
@@ -49,8 +51,8 @@ export const upsertUserSettings = (
   db.prepare(
     `INSERT OR REPLACE INTO user_settings
      (user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
-      tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
   ).run(
     settings.userId,
     settings.marginCentsKwh,
@@ -61,6 +63,7 @@ export const upsertUserSettings = (
     settings.nightStartHour,
     settings.nightEndHour,
     settings.timezone,
+    settings.area,
   );
 };
 
@@ -74,6 +77,7 @@ const DEFAULT_SETTINGS: Omit<UserSettings, "userId"> = {
   nightStartHour: 22,
   nightEndHour: 7,
   timezone: "Europe/Helsinki",
+  area: "FI",
 };
 
 /** Ensure a user has default settings (create if missing) */
