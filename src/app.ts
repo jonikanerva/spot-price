@@ -419,12 +419,21 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
       return true;
     });
 
+    if (futurePrices.length === 0) {
+      return c.json(
+        { error: "No price data available for the requested time range" },
+        404,
+      );
+    }
+
     const totals = calculateTotalPrices(futurePrices, settings);
     const window = findCheapestWindow(totals, durationMinutes);
 
     if (!window) {
       return c.json(
-        { error: "No valid window found for requested duration" },
+        {
+          error: `Not enough contiguous price data to form a ${String(durationMinutes)}-minute window`,
+        },
         404,
       );
     }
