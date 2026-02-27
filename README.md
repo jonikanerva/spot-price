@@ -95,7 +95,7 @@ Finland (FI), Sweden (SE1-SE4), Norway (NO1-NO5), Denmark (DK1-DK2), Estonia (EE
 ### Prerequisites
 
 - Node.js >= 24
-- npm
+- pnpm
 
 ### Setup
 
