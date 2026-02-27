@@ -326,9 +326,23 @@ describe("findCheapestWindow", () => {
     expect(result?.averageTotalCentsKwh).toBeCloseTo(4.0, 3);
   });
 
-  it("returns null when exact duration cannot be formed", () => {
-    const prices = makeQuarterHourSeries([1, 2, 3, 4]); // only 60 min total
-    const result = findCheapestWindow(prices, 50); // not multiple of 15
-    expect(result).toBeNull();
+  it("rounds up to nearest interval when duration is not a multiple", () => {
+    const prices = makeQuarterHourSeries([5, 1, 2, 8]); // 60 min total at 15-min intervals
+    const result = findCheapestWindow(prices, 50); // rounds up to 60 min (4 × 15)
+    expect(result).not.toBeNull();
+    expect(result?.prices).toHaveLength(4);
+  });
+
+  it("rounds up to nearest interval for 280-minute request with 15-min data", () => {
+    // 280 min is not divisible by 15; next multiple is 285 (19 × 15)
+    // Create 24 quarter-hour slots (360 min total)
+    const prices = makeQuarterHourSeries([
+      10, 10, 10, 10, 10, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 10,
+      10,
+    ]);
+    const result = findCheapestWindow(prices, 280);
+    expect(result).not.toBeNull();
+    // Should get 19 slots × 15 min = 285 min (>= 280)
+    expect(result?.prices).toHaveLength(19);
   });
 });
