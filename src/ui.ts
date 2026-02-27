@@ -425,6 +425,13 @@ export const renderHomePage = (): string => `<!doctype html>
             <h2 style="margin-top:20px">Usage examples</h2>
             <div id="apiExamples"></div>
 
+            <h2 style="margin-top:28px">Home Assistant</h2>
+            <p style="margin-bottom:4px">Drop-in REST commands for Home Assistant. Copy this YAML to your HA config directory as <code>spot-price.yaml</code>, then add <code>rest_command: !include spot-price.yaml</code> to <code>configuration.yaml</code> and restart HA.</p>
+            <div id="haYamlBlock" class="example-block">
+              <pre id="haYamlContent" style="max-height:320px;overflow-y:auto">Loading...</pre>
+              <button class="copy-btn" id="copyHaYamlBtn">Copy</button>
+            </div>
+
             <h2 style="margin-top:28px">API reference</h2>
             <p style="margin-bottom:12px">Full request/response schemas with interactive examples:</p>
             <a href="/api/docs" target="_blank" class="btn btn-secondary" style="display:inline-block;margin-top:8px;text-decoration:none">
@@ -669,6 +676,75 @@ export const renderHomePage = (): string => `<!doctype html>
           '</div>'
       }
 
+      const buildHaYaml = (apiKey, baseUrl) => {
+        const auth = 'Bearer ' + apiKey
+        return [
+          '# Spot Price API \u2014 Home Assistant REST Commands',
+          '',
+          '# Save this file as spot-price.yaml in your HA config directory and add to configuration.yaml:',
+          '#',
+          '#   rest_command: !include spot-price.yaml',
+          '',
+          '# Restart Home Assistant to activate the commands.',
+          '# Full API reference: ' + baseUrl + '/api/docs',
+          '',
+          '# \u2500\u2500 Current price \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+          '# Returns the total electricity price for the current 15-min period.',
+          '#',
+          '# Response: result.content.totalCentsKwh, .spotCentsKwh, .marginCentsKwh, .transferCentsKwh, .taxCentsKwh, .vatCentsKwh, .isNightRate, .localStart, .localEnd',
+          '',
+          'spot_price_now:',
+          '  url: "' + baseUrl + '/api/v1/price/now"',
+          '  method: GET',
+          '  headers:',
+          '    Authorization: "' + auth + '"',
+          '  content_type: "application/json"',
+          '',
+          '# \u2500\u2500 Today\u2019s prices \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+          '# Returns all prices for today (up to 96 quarter-hour periods).',
+          '',
+          'spot_price_today:',
+          '  url: "' + baseUrl + '/api/v1/price/today"',
+          '  method: GET',
+          '  headers:',
+          '    Authorization: "' + auth + '"',
+          '  content_type: "application/json"',
+          '',
+          '# \u2500\u2500 Tomorrow\u2019s prices \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+          '# Available after ~14:00 EET when Nord Pool publishes next-day prices.',
+          '',
+          'spot_price_tomorrow:',
+          '  url: "' + baseUrl + '/api/v1/price/tomorrow"',
+          '  method: GET',
+          '  headers:',
+          '    Authorization: "' + auth + '"',
+          '  content_type: "application/json"',
+          '',
+          '# \u2500\u2500 Cheapest window \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+          '# Finds the cheapest contiguous block of time.',
+          '# Pass "duration" in minutes (required).  Optionally limit the',
+          '# search range with "start" and "end" (ISO 8601).',
+          '#',
+          '# Response: result.content.startLocal, .endLocal, .averageTotalCentsKwh, .prices[]',
+          '#',
+          '# Example \u2014 cheapest 3h overnight:',
+          '#   action: rest_command.spot_price_cheapest',
+          '#   data:',
+          '#     duration: "180"',
+          '#     start: "{{ today_at(' + "'" + '22:00' + "'" + ') }}"',
+          '#     end: "{{ today_at(' + "'" + '22:00' + "'" + ') + timedelta(hours=9) }}"',
+          '#   response_variable: result',
+          '',
+          'spot_price_cheapest:',
+          '  url: >-',
+          '    ' + baseUrl + '/api/v1/price/cheapest?duration={{ duration }}{% if start is defined %}&startTime={{ start }}{% endif %}{% if end is defined %}&endTime={{ end }}{% endif %}',
+          '  method: GET',
+          '  headers:',
+          '    Authorization: "' + auth + '"',
+          '  content_type: "application/json"',
+        ].join('\\n')
+      }
+
       const renderExamples = () => {
         if (!state.apiKey) return
         const k = state.apiKey
@@ -714,6 +790,16 @@ export const renderHomePage = (): string => `<!doctype html>
             setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied') }, 1500)
           }
         })
+
+        // render HA YAML with user's API key
+        const haYaml = buildHaYaml(k, base)
+        $('haYamlContent').textContent = haYaml
+        $('copyHaYamlBtn').onclick = async () => {
+          await navigator.clipboard.writeText(haYaml)
+          $('copyHaYamlBtn').textContent = 'Copied!'
+          $('copyHaYamlBtn').classList.add('copied')
+          setTimeout(() => { $('copyHaYamlBtn').textContent = 'Copy'; $('copyHaYamlBtn').classList.remove('copied') }, 1500)
+        }
       }
 
       /* ---- navigation ---- */
