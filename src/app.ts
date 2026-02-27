@@ -391,8 +391,11 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
     ensureUserSettings(c.get("db"), userId);
     const existing = getCurrentApiKey(c.get("db"), userId);
     if (existing) {
+      // Key exists — return it (key may be null if plaintext was lost,
+      // but we never auto-delete a working key just because we can't display it)
       return c.json({ apiKey: existing.key, createdAt: existing.createdAt });
     }
+    // No key exists at all — create the first one
     const created = regenerateApiKey(c.get("db"), userId);
     return c.json({ apiKey: created.key, createdAt: created.createdAt }, 201);
   });

@@ -664,8 +664,13 @@ export const renderHomePage = (): string => `<!doctype html>
         const r = await json('/api/keys')
         if (!r.ok) { setStatus('apiStatus', 'err', r.data.error || 'Failed'); return }
         state.apiKey = r.data.apiKey
-        $('apiKeyDisplay').textContent = state.apiKey
-        renderExamples()
+        if (state.apiKey) {
+          $('apiKeyDisplay').textContent = state.apiKey
+          renderExamples()
+        } else {
+          $('apiKeyDisplay').textContent = '(key exists but cannot be displayed — click Regenerate to get a new visible key)'
+          setStatus('apiStatus', 'err', 'Your API key works but was created before plaintext storage. Regenerate to see it.')
+        }
       }
 
       const makeExample = (comment, cmd) => {

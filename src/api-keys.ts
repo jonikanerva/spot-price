@@ -17,7 +17,7 @@ export const hashApiKey = (key: string): string =>
 export interface ApiKeyInfo {
   readonly id: string;
   readonly userId: string;
-  readonly key: string;
+  readonly key: string | null;
   readonly createdAt: string;
   readonly lastUsedAt: string | null;
 }
@@ -31,7 +31,11 @@ interface ApiKeyRow {
   readonly last_used_at: string | null;
 }
 
-/** Get the current (single) API key for a user, or null if none exists */
+/** Get the current (single) API key for a user, or null if no key exists.
+ *  When the key exists but key_plaintext is missing (pre-migration-006 key),
+ *  returns the key info with key=null — the key still works for auth but
+ *  cannot be displayed in the UI. This prevents accidental deletion of
+ *  working keys that just lack the plaintext column. */
 export const getCurrentApiKey = (
   db: Database.Database,
   userId: string,
@@ -43,7 +47,7 @@ export const getCurrentApiKey = (
     )
     .get(userId) as ApiKeyRow | undefined;
 
-  if (!row || !row.key_plaintext) {
+  if (!row) {
     return null;
   }
 
