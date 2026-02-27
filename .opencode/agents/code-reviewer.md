@@ -11,12 +11,12 @@ permission:
     "git status*": allow
     "git diff*": allow
     "git log*": allow
-    "npm run typecheck*": allow
-    "npm run lint*": allow
-    "npm run format:check*": allow
-    "npm test*": allow
-    "npm run build*": allow
-    "npm run test:e2e*": allow
+    "pnpm typecheck*": allow
+    "pnpm lint*": allow
+    "pnpm format:check*": allow
+    "pnpm test*": allow
+    "pnpm build*": allow
+    "pnpm test:e2e*": allow
     "gh pr *": allow
     "git switch main*": allow
     "git pull*": allow
