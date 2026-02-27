@@ -111,14 +111,17 @@ export const calculateTotalPrices = (
 ): TotalPrice[] => prices.map((p) => calculateTotalPrice(p, settings));
 
 /**
- * Find the cheapest contiguous window of a given duration.
+ * Find the cheapest contiguous window of at least the given duration.
  * Supports variable interval lengths (e.g. 60 min, 15 min).
+ * When duration is not an exact multiple of the interval, the window
+ * is rounded up to the next interval boundary (e.g. 280 min with
+ * 15-min data → 285-min window).
  *
  * Uses a contiguous-window scan — O(n^2), but n is small (<= 96/day).
  *
  * @param prices Sorted array of total prices
- * @param durationMinutes Desired exact window length in minutes
- * @returns The cheapest exact-duration window, or null if none exists
+ * @param durationMinutes Minimum window length in minutes
+ * @returns The cheapest window of at least durationMinutes, or null if none exists
  */
 export const findCheapestWindow = (
   prices: readonly TotalPrice[],
@@ -157,16 +160,12 @@ export const findCheapestWindow = (
       weightedSum += entry.totalCentsKwh * intervalMinutes;
       previousEnd = entry.deliveryEnd;
 
-      if (accumulatedMinutes === durationMinutes) {
+      if (accumulatedMinutes >= durationMinutes) {
         const average = weightedSum / accumulatedMinutes;
         if (average < bestAverage) {
           bestAverage = average;
           bestWindow = [...window];
         }
-        break;
-      }
-
-      if (accumulatedMinutes > durationMinutes) {
         break;
       }
     }
