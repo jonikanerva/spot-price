@@ -112,14 +112,24 @@ export const CheapestQuerySchema = z.object({
     example: 180,
     description: "Window duration in minutes (1-1440)",
   }),
-  startTime: z.iso.datetime({ offset: true }).optional().openapi({
-    example: "2026-02-27T14:00:00+02:00",
-    description: "Earliest allowed window start (ISO 8601)",
-  }),
-  endTime: z.iso.datetime({ offset: true }).optional().openapi({
-    example: "2026-02-28T06:00:00+02:00",
-    description: "Latest allowed window end (ISO 8601)",
-  }),
+  startTime: z
+    .string()
+    .transform((s) => s.replace(/ /g, "+"))
+    .pipe(z.iso.datetime({ offset: true }))
+    .optional()
+    .openapi({
+      example: "2026-02-27T14:00:00+02:00",
+      description: "Earliest allowed window start (ISO 8601)",
+    }),
+  endTime: z
+    .string()
+    .transform((s) => s.replace(/ /g, "+"))
+    .pipe(z.iso.datetime({ offset: true }))
+    .optional()
+    .openapi({
+      example: "2026-02-28T06:00:00+02:00",
+      description: "Latest allowed window end (ISO 8601)",
+    }),
 });
 
 export const SpotQuerySchema = z.object({
