@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   key_hash TEXT NOT NULL,
+  key_plaintext TEXT,
   name TEXT NOT NULL DEFAULT 'Default',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_used_at TEXT

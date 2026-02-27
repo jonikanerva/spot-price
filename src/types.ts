@@ -41,25 +41,25 @@ export interface UserSettings {
 
 /** Total price breakdown for a single delivery interval */
 export interface TotalPrice {
-  deliveryStart: string;
-  deliveryEnd: string;
-  localStart: string;
-  localEnd: string;
-  spotCentsKwh: number;
-  marginCentsKwh: number;
-  transferCentsKwh: number;
-  taxCentsKwh: number;
-  vatCentsKwh: number;
-  totalCentsKwh: number;
-  isNightRate: boolean;
+  readonly deliveryStart: string;
+  readonly deliveryEnd: string;
+  readonly localStart: string;
+  readonly localEnd: string;
+  readonly spotCentsKwh: number;
+  readonly marginCentsKwh: number;
+  readonly transferCentsKwh: number;
+  readonly taxCentsKwh: number;
+  readonly vatCentsKwh: number;
+  readonly totalCentsKwh: number;
+  readonly isNightRate: boolean;
 }
 
 /** Cheapest contiguous window result */
 export interface CheapestWindow {
-  start: string;
-  end: string;
-  startLocal: string;
-  endLocal: string;
-  averageTotalCentsKwh: number;
-  prices: TotalPrice[];
+  readonly start: string;
+  readonly end: string;
+  readonly startLocal: string;
+  readonly endLocal: string;
+  readonly averageTotalCentsKwh: number;
+  readonly prices: TotalPrice[];
 }

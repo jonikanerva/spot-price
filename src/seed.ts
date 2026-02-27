@@ -1,22 +1,30 @@
 import { initDatabase, closeDatabase } from "./db.js";
 import { randomUUID } from "node:crypto";
+import { formatUtcDate } from "./time.js";
 
-/** Generate sample hourly prices for a given date (24 hours) */
+/** Number of 15-minute intervals per day */
+const INTERVALS_PER_DAY = 96;
+
+/** Generate sample 15-minute prices for a given UTC date (96 intervals) */
 const generateDayPrices = (
   dateStr: string,
-): readonly { start: string; end: string; price: number }[] => {
-  const hours = Array.from({ length: 24 }, (_, i) => i);
+): readonly { start: string; end: string; price: number }[] =>
+  Array.from({ length: INTERVALS_PER_DAY }, (_, i) => {
+    const startMs = Date.UTC(
+      Number(dateStr.slice(0, 4)),
+      Number(dateStr.slice(5, 7)) - 1,
+      Number(dateStr.slice(8, 10)),
+      Math.floor(i / 4),
+      (i % 4) * 15,
+    );
+    const endMs = startMs + 15 * 60_000;
 
-  return hours.map((hour) => {
-    const start = `${dateStr}T${String(hour).padStart(2, "0")}:00:00+02:00`;
-    const nextHour = hour + 1;
-    const end =
-      nextHour < 24
-        ? `${dateStr}T${String(nextHour).padStart(2, "0")}:00:00+02:00`
-        : `${dateStr}T00:00:00+02:00`; // midnight next day (simplified)
+    const start = new Date(startMs).toISOString();
+    const end = new Date(endMs).toISOString();
 
     // Simulate realistic Finnish spot prices (EUR/MWh)
     // Night hours (22-07) tend to be cheaper
+    const hour = Math.floor(i / 4);
     const isNight = hour >= 22 || hour < 7;
     const basePrice = isNight ? 25 : 55;
     const variation = (Math.random() - 0.5) * 30;
@@ -24,14 +32,14 @@ const generateDayPrices = (
 
     return { start, end, price: Math.round(price * 100) / 100 };
   });
-};
 
 const seed = (): void => {
   const db = initDatabase();
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const now = new Date();
+    const today = formatUtcDate(now);
+    const tomorrow = formatUtcDate(new Date(now.getTime() + 24 * 60 * 60_000));
 
     const insert = db.prepare(`
       INSERT OR IGNORE INTO prices (delivery_start, delivery_end, price_eur_mwh, area)

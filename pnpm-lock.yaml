@@ -14,6 +14,9 @@ importers:
       '@hono/zod-openapi':
         specifier: ^1.2.2
         version: 1.2.2(hono@4.12.3)(zod@4.3.6)
+      '@scalar/hono-api-reference':
+        specifier: ^0.9.46
+        version: 0.9.46(hono@4.12.3)
       better-auth:
         specifier: ^1.4.19
         version: 1.4.19(@prisma/client@5.22.0)(better-sqlite3@12.6.2)(drizzle-orm@0.41.0(@prisma/client@5.22.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.16.0)(better-sqlite3@12.6.2)(kysely@0.28.11)(pg@8.18.0))(pg@8.18.0)(vitest@4.0.18(@types/node@25.3.2)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.2))
@@ -42,9 +45,6 @@ importers:
       '@playwright/test':
         specifier: ^1.58.2
         version: 1.58.2
-      '@scalar/hono-api-reference':
-        specifier: ^0.9.46
-        version: 0.9.46(hono@4.12.3)
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13

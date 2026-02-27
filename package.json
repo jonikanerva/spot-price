@@ -25,6 +25,7 @@
   "dependencies": {
     "@hono/node-server": "^1.19.9",
     "@hono/zod-openapi": "^1.2.2",
+    "@scalar/hono-api-reference": "^0.9.46",
     "better-auth": "^1.4.19",
     "better-sqlite3": "^12.6.2",
     "hono": "^4.12.3",
@@ -36,7 +37,6 @@
     "@better-auth/cli": "^1.4.19",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.58.2",
-    "@scalar/hono-api-reference": "^0.9.46",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.2",
     "@types/node-cron": "^3.0.11",

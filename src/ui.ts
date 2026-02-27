@@ -1,3 +1,25 @@
+import { DELIVERY_AREAS, SUPPORTED_TIMEZONES } from "./areas.js";
+
+/** Generate <option> elements for the area dropdown */
+const renderAreaOptions = (): string =>
+  DELIVERY_AREAS.map(
+    (a) => `<option value="${a.code}">${a.name} (${a.code})</option>`,
+  ).join("\n                  ");
+
+/** Generate <option> elements for the timezone dropdown */
+const renderTimezoneOptions = (): string =>
+  SUPPORTED_TIMEZONES.map((tz) => `<option value="${tz}">${tz}</option>`).join(
+    "\n                  ",
+  );
+
+/** Generate the JS area-to-timezone mapping object */
+const renderAreaTimezoneMap = (): string => {
+  const entries = DELIVERY_AREAS.map(
+    (a) => `${JSON.stringify(a.code)}: ${JSON.stringify(a.timezone)}`,
+  );
+  return `{ ${entries.join(", ")} }`;
+};
+
 export const renderHomePage = (): string => `<!doctype html>
 <html lang="en">
   <head>
@@ -363,44 +385,12 @@ export const renderHomePage = (): string => `<!doctype html>
               <label>Night end hour <input id="nightEnd" type="number" min="0" max="23" /></label>
               <label class="stacked">Delivery area
                 <select id="area">
-                  <option value="FI">Finland (FI)</option>
-                  <option value="SE1">Sweden — Luleå (SE1)</option>
-                  <option value="SE2">Sweden — Sundsvall (SE2)</option>
-                  <option value="SE3">Sweden — Stockholm (SE3)</option>
-                  <option value="SE4">Sweden — Malmö (SE4)</option>
-                  <option value="NO1">Norway — Oslo (NO1)</option>
-                  <option value="NO2">Norway — Kristiansand (NO2)</option>
-                  <option value="NO3">Norway — Trondheim (NO3)</option>
-                  <option value="NO4">Norway — Tromsø (NO4)</option>
-                  <option value="NO5">Norway — Bergen (NO5)</option>
-                  <option value="DK1">Denmark — West (DK1)</option>
-                  <option value="DK2">Denmark — East (DK2)</option>
-                  <option value="EE">Estonia (EE)</option>
-                  <option value="LT">Lithuania (LT)</option>
-                  <option value="LV">Latvia (LV)</option>
-                  <option value="AT">Austria (AT)</option>
-                  <option value="BE">Belgium (BE)</option>
-                  <option value="FR">France (FR)</option>
-                  <option value="GER">Germany (GER)</option>
-                  <option value="NL">Netherlands (NL)</option>
-                  <option value="PL">Poland (PL)</option>
+                  ${renderAreaOptions()}
                 </select>
               </label>
               <label class="stacked">Timezone
                 <select id="timezone">
-                  <option value="Europe/Amsterdam">Europe/Amsterdam</option>
-                  <option value="Europe/Berlin">Europe/Berlin</option>
-                  <option value="Europe/Brussels">Europe/Brussels</option>
-                  <option value="Europe/Copenhagen">Europe/Copenhagen</option>
-                  <option value="Europe/Helsinki">Europe/Helsinki</option>
-                  <option value="Europe/Oslo">Europe/Oslo</option>
-                  <option value="Europe/Paris">Europe/Paris</option>
-                  <option value="Europe/Riga">Europe/Riga</option>
-                  <option value="Europe/Stockholm">Europe/Stockholm</option>
-                  <option value="Europe/Tallinn">Europe/Tallinn</option>
-                  <option value="Europe/Vienna">Europe/Vienna</option>
-                  <option value="Europe/Vilnius">Europe/Vilnius</option>
-                  <option value="Europe/Warsaw">Europe/Warsaw</option>
+                  ${renderTimezoneOptions()}
                 </select>
               </label>
               <button id="saveBtn" class="btn btn-primary" style="margin-top:6px">Save settings</button>
@@ -599,15 +589,7 @@ export const renderHomePage = (): string => `<!doctype html>
         }))
 
       /* ---- area-to-timezone mapping ---- */
-      const areaTimezoneMap = {
-        FI: 'Europe/Helsinki', SE1: 'Europe/Stockholm', SE2: 'Europe/Stockholm',
-        SE3: 'Europe/Stockholm', SE4: 'Europe/Stockholm', NO1: 'Europe/Oslo',
-        NO2: 'Europe/Oslo', NO3: 'Europe/Oslo', NO4: 'Europe/Oslo', NO5: 'Europe/Oslo',
-        DK1: 'Europe/Copenhagen', DK2: 'Europe/Copenhagen', EE: 'Europe/Tallinn',
-        LT: 'Europe/Vilnius', LV: 'Europe/Riga', AT: 'Europe/Vienna',
-        BE: 'Europe/Brussels', FR: 'Europe/Paris', GER: 'Europe/Berlin',
-        NL: 'Europe/Amsterdam', PL: 'Europe/Warsaw'
-      }
+      const areaTimezoneMap = ${renderAreaTimezoneMap()}
 
       if ($('area')) {
         $('area').onchange = () => {
@@ -664,13 +646,8 @@ export const renderHomePage = (): string => `<!doctype html>
         const r = await json('/api/keys')
         if (!r.ok) { setStatus('apiStatus', 'err', r.data.error || 'Failed'); return }
         state.apiKey = r.data.apiKey
-        if (state.apiKey) {
-          $('apiKeyDisplay').textContent = state.apiKey
-          renderExamples()
-        } else {
-          $('apiKeyDisplay').textContent = '(key exists but cannot be displayed — click Regenerate to get a new visible key)'
-          setStatus('apiStatus', 'err', 'Your API key works but was created before plaintext storage. Regenerate to see it.')
-        }
+        $('apiKeyDisplay').textContent = state.apiKey
+        renderExamples()
       }
 
       const makeExample = (comment, cmd) => {
