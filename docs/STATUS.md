@@ -2,42 +2,41 @@
 
 Read this file first at session start.
 
-Date: 2026-02-25
+Date: 2026-02-27
 Owner: Repository Owner + Agent
 Status: Active
 
 ## Current phase
 
-UI/UX v2 implementation (dark mode, single API key, E2E tests)
+MVP complete - production-ready maintenance
 
 ## Active objective
 
-Deliver polished developer-friendly UI with interactive charts, simplified API key management, and E2E regression tests.
+Keep the production MVP stable, align governance artifacts, and prepare the post-MVP backlog.
 
 ## Success criteria for current objective
 
-- Landing: login row + public spot chart with axes and hover tooltip.
-- Dashboard: total price chart (left) + settings panel (right) with hover tooltip.
-- API panel: single always-visible API key + regenerate button + curl examples.
-- Dark-mode-only Railway-inspired visual style.
-- Playwright E2E smoke tests cover all critical UI flows.
-- All checks pass: typecheck, lint, format, unit tests (47), E2E tests (11).
+- MVP milestones M0-M7 are complete and reflected as done in the roadmap.
+- Production deployment is active and smoke checks are documented.
+- Research, plan, and implementation artifacts exist for delivered MVP scope.
+- A concrete quality gate artifact declares MVP production readiness.
+- Next actions are post-release follow-ups (no contradictory pre-release tasks).
 
 ## Next actions (max 3)
 
-1. Deploy to production and verify UI changes live.
+1. Define and prioritize the first post-MVP backlog slice.
 2. Optional: polish copy and empty-state texts.
-3. Optional: define post-MVP backlog for next milestone.
+3. Optional: add screenshot artifact for UI handoff completeness.
 
 ## Active artifact pointers
 
 - Vision: `docs/vision/VISION.md`
 - Research: `docs/research/2026-02-24-foundation-research.md` (Approved)
-- Plan: `docs/plans/2026-02-24-foundation-plan.md` (Approved for execution)
+- Plan: `docs/plans/2026-02-24-foundation-plan.md` (Executed)
 - UI/UX v2 Design: `docs/plans/2026-02-25-ui-ux-v2-design.md` (Approved)
 - Roadmap: `docs/plans/ROADMAP.md`
 - Next actions: `docs/plans/NEXT-ACTIONS.md`
-- Gate: `docs/quality-gates/README.md`
+- Gate: `docs/quality-gates/2026-02-27-mvp-production-readiness-gate-check.md`
 - Working model: `docs/operating-model/README.md`
 
 ## Ownership
@@ -48,7 +47,7 @@ Deliver polished developer-friendly UI with interactive charts, simplified API k
 
 ## Last updated
 
-2026-02-25 — UI/UX v2 implemented: redesigned dark-mode UI with SVG chart axes + hover tooltips, simplified single-API-key model (always visible, regenerate), Playwright E2E smoke tests (11 tests). All checks pass (47 unit + 11 E2E).
+2026-02-27 — State aligned to MVP complete and production-ready. Status, queue, roadmap, and gate artifacts now consistently reflect post-release maintenance mode.
 
 ## Update rule
 
