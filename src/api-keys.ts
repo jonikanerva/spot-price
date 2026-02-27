@@ -66,12 +66,14 @@ export const regenerateApiKey = (
   const keyHash = hashApiKey(rawKey);
   const id = randomBytes(16).toString("hex");
 
+  const createdAt = new Date().toISOString();
+
   const regenerate = db.transaction(() => {
     db.prepare(`DELETE FROM api_keys WHERE user_id = ?`).run(userId);
     db.prepare(
-      `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name)
-       VALUES (?, ?, ?, ?, 'default')`,
-    ).run(id, userId, keyHash, rawKey);
+      `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name, created_at)
+       VALUES (?, ?, ?, ?, 'default', ?)`,
+    ).run(id, userId, keyHash, rawKey, createdAt);
   });
 
   regenerate();
@@ -80,7 +82,7 @@ export const regenerateApiKey = (
     id,
     userId,
     key: rawKey,
-    createdAt: new Date().toISOString(),
+    createdAt,
     lastUsedAt: null,
   };
 };
@@ -99,9 +101,10 @@ export const resolveApiKey = (
     return null;
   }
 
-  db.prepare(
-    `UPDATE api_keys SET last_used_at = datetime('now') WHERE key_hash = ?`,
-  ).run(keyHash);
+  db.prepare(`UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?`).run(
+    new Date().toISOString(),
+    keyHash,
+  );
 
   return row.user_id;
 };

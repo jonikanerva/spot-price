@@ -28,11 +28,22 @@ interface PriceRow {
   area: string;
 }
 
-/** Get prices for a date range */
+const rowToHourlyPrice = (r: PriceRow): HourlyPrice => ({
+  deliveryStart: r.delivery_start,
+  deliveryEnd: r.delivery_end,
+  priceEurMwh: r.price_eur_mwh,
+  area: r.area,
+});
+
+/**
+ * Get prices within a UTC time range.
+ * All parameters must be UTC ISO 8601 strings (e.g. "2026-02-27T22:00:00.000Z").
+ * Returns entries where delivery_start >= startUtc AND delivery_start < endUtc.
+ */
 export const getPricesByRange = (
   db: Database.Database,
-  startInclusive: string,
-  endExclusive: string,
+  startUtc: string,
+  endUtc: string,
   area: string,
 ): readonly HourlyPrice[] => {
   const rows = db
@@ -42,54 +53,26 @@ export const getPricesByRange = (
        WHERE area = ? AND delivery_start >= ? AND delivery_start < ?
        ORDER BY delivery_start`,
     )
-    .all(area, startInclusive, endExclusive) as readonly PriceRow[];
+    .all(area, startUtc, endUtc) as readonly PriceRow[];
 
-  return rows.map(
-    (r): HourlyPrice => ({
-      deliveryStart: r.delivery_start,
-      deliveryEnd: r.delivery_end,
-      priceEurMwh: r.price_eur_mwh,
-      area: r.area,
-    }),
-  );
+  return rows.map(rowToHourlyPrice);
 };
 
-/** Count prices for a given date (YYYY-MM-DD prefix match on delivery_start) */
-export const countPricesForDate = (
+/**
+ * Count prices within a UTC time range.
+ * All parameters must be UTC ISO 8601 strings.
+ */
+export const countPricesByRange = (
   db: Database.Database,
-  date: string,
+  startUtc: string,
+  endUtc: string,
   area: string,
 ): number => {
   const result = db
     .prepare(
       `SELECT COUNT(*) as cnt FROM prices
-       WHERE area = ? AND delivery_start LIKE ?`,
+       WHERE area = ? AND delivery_start >= ? AND delivery_start < ?`,
     )
-    .get(area, `${date}%`) as { cnt: number };
+    .get(area, startUtc, endUtc) as { cnt: number };
   return result.cnt;
-};
-
-/** Get all prices for a specific day (YYYY-MM-DD) */
-export const getPricesForDate = (
-  db: Database.Database,
-  date: string,
-  area: string,
-): readonly HourlyPrice[] => {
-  const rows = db
-    .prepare(
-      `SELECT delivery_start, delivery_end, price_eur_mwh, area
-       FROM prices
-       WHERE area = ? AND delivery_start LIKE ?
-       ORDER BY delivery_start`,
-    )
-    .all(area, `${date}%`) as readonly PriceRow[];
-
-  return rows.map(
-    (r): HourlyPrice => ({
-      deliveryStart: r.delivery_start,
-      deliveryEnd: r.delivery_end,
-      priceEurMwh: r.price_eur_mwh,
-      area: r.area,
-    }),
-  );
 };
