@@ -9,7 +9,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: "npx tsx src/index.ts",
+    command: "pnpm tsx src/index.ts",
     port: 3000,
     timeout: 15_000,
     reuseExistingServer: true,

@@ -69,11 +69,11 @@ Comprehensive code review for pull requests. Enforces project code standards, se
 1. Read the PR diff (git diff main...HEAD or base...head)
 2. Read the PR description and linked plan/research if referenced
 3. Run verification commands:
-   - npm run typecheck
-   - npm run lint
-   - npm run format:check
-   - npm test
-   - npm run build
+   - pnpm typecheck
+   - pnpm lint
+   - pnpm format:check
+   - pnpm test
+   - pnpm build
 4. Evaluate against all 6 review categories above
 5. Categorize findings by severity
 6. Render verdict
