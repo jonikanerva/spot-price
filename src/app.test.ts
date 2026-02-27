@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { createApp } from "./app.js";
 import { initTestDatabase, closeDatabase } from "./db.js";
+import { createTestApp } from "./test-utils.js";
 import { isRegistrationOpen, MAX_USERS, getClientIp } from "./middleware.js";
 import { Hono } from "hono";
 
@@ -9,12 +9,16 @@ describe("health endpoint", () => {
   let db: Database.Database;
 
   afterEach(() => {
-    closeDatabase(db);
+    try {
+      closeDatabase(db);
+    } catch {
+      // DB may already be closed by test
+    }
   });
 
   it("returns 200 with ok status when DB is healthy", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const res = await app.request("/health");
 
@@ -25,8 +29,8 @@ describe("health endpoint", () => {
   });
 
   it("returns 503 when DB is closed", async () => {
-    db = new Database(":memory:");
-    const app = createApp(db);
+    db = initTestDatabase();
+    const app = createTestApp(db);
     db.close();
 
     const res = await app.request("/health");

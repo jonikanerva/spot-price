@@ -1,6 +1,5 @@
 import type { Context, Next } from "hono";
 import type { AppEnv } from "./app.js";
-import { auth } from "./auth.js";
 
 export interface AuthSessionUser {
   readonly id: string;
@@ -16,19 +15,24 @@ interface BetterAuthSessionPayload {
   };
 }
 
-export const sessionAuth = async (
-  c: Context<AppEnv>,
-  next: Next,
-): Promise<Response | undefined> => {
-  const session = (await auth.api.getSession({
-    headers: c.req.raw.headers,
-  })) as BetterAuthSessionPayload | null;
+/** Create session auth middleware that uses the given Better Auth instance. */
+export const createSessionAuth = (authInstance: {
+  api: { getSession: (opts: { headers: Headers }) => Promise<unknown> };
+}) => {
+  return async (
+    c: Context<AppEnv>,
+    next: Next,
+  ): Promise<Response | undefined> => {
+    const session = (await authInstance.api.getSession({
+      headers: c.req.raw.headers,
+    })) as BetterAuthSessionPayload | null;
 
-  if (!session?.user) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
+    if (!session?.user) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
 
-  c.set("sessionUser", session.user);
-  await next();
-  return undefined;
+    c.set("sessionUser", session.user);
+    await next();
+    return undefined;
+  };
 };

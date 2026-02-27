@@ -2,24 +2,18 @@ import type Database from "better-sqlite3";
 import { fetchDayAheadPrices } from "./nordpool.js";
 import { storePrices, countPricesByRange } from "./price-store.js";
 import { DELIVERY_AREAS } from "./areas.js";
+import { formatUtcDate } from "./time.js";
 
 /** Minimum expected price entries per area per day (DST days may have 23h = 92 entries) */
 const MIN_ENTRIES_PER_AREA = 23;
-
-const formatDate = (date: Date): string => {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  return `${String(year)}-${month}-${day}`;
-};
 
 const getTodayAndTomorrow = (): { today: string; tomorrow: string } => {
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
   return {
-    today: formatDate(now),
-    tomorrow: formatDate(tomorrow),
+    today: formatUtcDate(now),
+    tomorrow: formatUtcDate(tomorrow),
   };
 };
 

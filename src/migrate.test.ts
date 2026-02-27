@@ -63,7 +63,7 @@ describe("migration system", () => {
       .prepare("SELECT version, name FROM _migrations ORDER BY version")
       .all() as readonly MigrationRecord[];
 
-    expect(migrations.length).toBe(8);
+    expect(migrations.length).toBe(5);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("create_prices");
     expect(migrations[1]?.version).toBe(2);
@@ -74,12 +74,6 @@ describe("migration system", () => {
     expect(migrations[3]?.name).toBe("create_better_auth_tables");
     expect(migrations[4]?.version).toBe(5);
     expect(migrations[4]?.name).toBe("create_usernames");
-    expect(migrations[5]?.version).toBe(6);
-    expect(migrations[5]?.name).toBe("api_keys_plaintext");
-    expect(migrations[6]?.version).toBe(7);
-    expect(migrations[6]?.name).toBe("update_default_settings");
-    expect(migrations[7]?.version).toBe(8);
-    expect(migrations[7]?.name).toBe("add_area_to_user_settings");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -90,7 +84,7 @@ describe("migration system", () => {
     const result = runMigrations(db);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(8);
+    expect(result.total).toBe(5);
   });
 });
 

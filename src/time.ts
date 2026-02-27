@@ -1,3 +1,22 @@
+/** Get today and tomorrow date strings in the given timezone */
+export const getCurrentAndNextDate = (
+  timeZone: string,
+): { today: string; tomorrow: string } => {
+  const now = new Date();
+  return {
+    today: formatDateInTimeZone(now, timeZone),
+    tomorrow: formatDateInTimeZone(addDays(now, 1), timeZone),
+  };
+};
+
+/** Format a Date as YYYY-MM-DD using UTC components */
+export const formatUtcDate = (date: Date): string => {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${String(year)}-${month}-${day}`;
+};
+
 const getDatePart = (
   date: Date,
   timeZone: string,

@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
+import { createAuth } from "./auth.js";
 import { initDatabase, closeDatabase } from "./db.js";
 import { runFetchJob } from "./fetch-job.js";
 import { startScheduler } from "./scheduler.js";
@@ -19,7 +20,8 @@ const getPort = (): number => {
 
 const main = (): void => {
   const db = initDatabase();
-  const app = createApp(db);
+  const auth = createAuth(db);
+  const app = createApp(db, auth);
   const port = getPort();
 
   // Start daily price fetch scheduler

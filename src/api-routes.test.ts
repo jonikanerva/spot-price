@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
-import { createApp } from "./app.js";
 import { closeDatabase, initTestDatabase } from "./db.js";
+import { createTestApp } from "./test-utils.js";
 import { hashApiKey } from "./api-keys.js";
 import {
   formatDateInTimeZone,
@@ -14,7 +14,7 @@ const TEST_API_KEY = "sp_test_key_123";
 const HELSINKI_TZ = "Europe/Helsinki";
 
 const loginOrSignupAndGetCookie = async (
-  app: ReturnType<typeof createApp>,
+  app: ReturnType<typeof createTestApp>,
 ): Promise<string> => {
   const username = `user_${String(Date.now())}`;
   const response = await app.request("/api/session/login-or-signup", {
@@ -92,7 +92,7 @@ describe("API routes", () => {
 
   it("returns 401 for price endpoint without API key", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const response = await app.request("/api/v1/price/now");
     expect(response.status).toBe(401);
@@ -100,7 +100,7 @@ describe("API routes", () => {
 
   it("supports login-or-signup and returns session payload", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const cookie = await loginOrSignupAndGetCookie(app);
     const sessionResponse = await app.request("/api/session", {
@@ -120,7 +120,7 @@ describe("API routes", () => {
 
   it("gets or auto-creates a single API key with session auth", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     // First GET auto-creates a key
@@ -142,7 +142,7 @@ describe("API routes", () => {
 
   it("regenerates API key (new key, old invalidated)", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     // Create initial key
@@ -167,7 +167,7 @@ describe("API routes", () => {
 
   it("returns 401 for key access without session", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const response = await app.request("/api/keys");
     expect(response.status).toBe(401);
@@ -176,7 +176,7 @@ describe("API routes", () => {
   it("returns public spot chart data", async () => {
     db = initTestDatabase();
     seedPrices(db);
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const response = await app.request("/api/public/spot");
     expect(response.status).toBe(200);
@@ -194,7 +194,7 @@ describe("API routes", () => {
     db = initTestDatabase();
     seedUser(db);
     seedPrices(db);
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const response = await app.request("/api/v1/price/now", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
@@ -207,7 +207,7 @@ describe("API routes", () => {
     db = initTestDatabase();
     seedUser(db);
     seedPrices(db);
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const response = await app.request("/api/v1/price/cheapest?duration=180", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
@@ -222,7 +222,7 @@ describe("API routes", () => {
 
   it("loads and updates me/settings with session auth", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     const getResponse = await app.request("/api/v1/me/settings", {
@@ -244,7 +244,7 @@ describe("API routes", () => {
   it("returns me/chart with session auth", async () => {
     db = initTestDatabase();
     seedPrices(db);
-    const app = createApp(db);
+    const app = createTestApp(db);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     const response = await app.request("/api/v1/me/chart", {
@@ -255,7 +255,7 @@ describe("API routes", () => {
 
   it("renders homepage with login and chart elements", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
     const response = await app.request("/");
     expect(response.status).toBe(200);
     const html = await response.text();
@@ -324,14 +324,14 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     closeDatabase(db);
   });
 
-  const setup = (): ReturnType<typeof createApp> => {
+  const setup = (): ReturnType<typeof createTestApp> => {
     db = initTestDatabase();
     seedUser(db);
-    return createApp(db);
+    return createTestApp(db);
   };
 
   const requestCheapest = async (
-    app: ReturnType<typeof createApp>,
+    app: ReturnType<typeof createTestApp>,
     params: string,
   ): Promise<Response> =>
     app.request(`/api/v1/price/cheapest?${params}`, {
@@ -526,10 +526,10 @@ describe("cross-midnight contiguity", () => {
     closeDatabase(db);
   });
 
-  const setup = (): ReturnType<typeof createApp> => {
+  const setup = (): ReturnType<typeof createTestApp> => {
     db = initTestDatabase();
     seedUser(db);
-    return createApp(db);
+    return createTestApp(db);
   };
 
   it("cheapest window spans UTC midnight boundary without gaps", async () => {
@@ -637,7 +637,7 @@ describe("OpenAPI spec", () => {
 
   it("returns valid OpenAPI 3.1 spec with all expected routes", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     const response = await app.request("/api/v1/openapi.json");
     expect(response.status).toBe(200);
@@ -667,7 +667,7 @@ describe("OpenAPI spec", () => {
     db = initTestDatabase();
     seedUser(db);
     seedPrices(db);
-    const app = createApp(db);
+    const app = createTestApp(db);
 
     // duration=0 is below minimum (1)
     const response = await app.request("/api/v1/price/cheapest?duration=0", {
@@ -682,7 +682,7 @@ describe("OpenAPI spec", () => {
 
   it("returns 400 with error message for invalid settings update", async () => {
     db = initTestDatabase();
-    const app = createApp(db);
+    const app = createTestApp(db);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     // vatPercent > 100 is above maximum
