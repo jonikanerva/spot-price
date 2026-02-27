@@ -53,15 +53,18 @@ describe("isRegistrationOpen", () => {
     db = initTestDatabase();
 
     // Insert MAX_USERS rows into the user table
+    const now = new Date().toISOString();
     const insert = db.prepare(
       `INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt)
-       VALUES (?, ?, ?, 0, datetime('now'), datetime('now'))`,
+       VALUES (?, ?, ?, 0, ?, ?)`,
     );
     for (let i = 0; i < MAX_USERS; i++) {
       insert.run(
         `user-${String(i)}`,
         `user${String(i)}`,
         `u${String(i)}@x.com`,
+        now,
+        now,
       );
     }
 
@@ -71,15 +74,18 @@ describe("isRegistrationOpen", () => {
   it("returns true when just below the cap", () => {
     db = initTestDatabase();
 
+    const now = new Date().toISOString();
     const insert = db.prepare(
       `INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt)
-       VALUES (?, ?, ?, 0, datetime('now'), datetime('now'))`,
+       VALUES (?, ?, ?, 0, ?, ?)`,
     );
     for (let i = 0; i < MAX_USERS - 1; i++) {
       insert.run(
         `user-${String(i)}`,
         `user${String(i)}`,
         `u${String(i)}@x.com`,
+        now,
+        now,
       );
     }
 

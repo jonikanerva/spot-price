@@ -15,7 +15,7 @@ import {
   isRegistrationOpen,
   loginRateLimit,
 } from "./middleware.js";
-import { getPricesForDate } from "./price-store.js";
+import { getPricesByRange } from "./price-store.js";
 import { auth } from "./auth.js";
 import { eurMwhToCentsKwh } from "./nordpool.js";
 import {
@@ -23,7 +23,11 @@ import {
   getUserSettings,
   upsertUserSettings,
 } from "./user-settings.js";
-import { addDays, formatDateInTimeZone } from "./time.js";
+import {
+  addDays,
+  formatDateInTimeZone,
+  getUtcRangeForLocalDate,
+} from "./time.js";
 import type { HourlyPrice, TotalPrice, UserSettings } from "./types.js";
 import { renderHomePage } from "./ui.js";
 import type { AuthSessionUser } from "./session-auth.js";
@@ -315,7 +319,20 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
     const existingUserId = getUserIdByUsername(c.get("db"), username);
     const email = toInternalEmail(username);
 
-    if (existingUserId) {
+    // Check if a user row exists for this email even without a username mapping.
+    // This handles accounts created before the usernames table (migration 005)
+    // was introduced — their usernames entry is missing but the user row exists.
+    const userRowByEmail = c
+      .get("db")
+      .prepare('SELECT id FROM "user" WHERE email = ?')
+      .get(email) as { id: string } | undefined;
+
+    if (existingUserId || userRowByEmail) {
+      // Backfill the usernames mapping if it was missing (pre-migration-005 account)
+      if (!existingUserId && userRowByEmail) {
+        assignUsername(c.get("db"), userRowByEmail.id, username);
+      }
+
       const signInResponse = await auth.api.signInEmail({
         headers: c.req.raw.headers,
         body: { email, password, rememberMe: true },
@@ -335,13 +352,13 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
     });
 
     if (signUpResponse.ok) {
-      const userRow = c
+      const newUserRow = c
         .get("db")
         .prepare('SELECT id FROM "user" WHERE email = ?')
         .get(email) as { id: string } | undefined;
-      if (userRow?.id) {
-        assignUsername(c.get("db"), userRow.id, username);
-        ensureUserSettings(c.get("db"), userRow.id);
+      if (newUserRow?.id) {
+        assignUsername(c.get("db"), newUserRow.id, username);
+        ensureUserSettings(c.get("db"), newUserRow.id);
       }
     }
 
@@ -397,17 +414,30 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
   app.openapi(publicSpotRoute, (c) => {
     const { area } = c.req.valid("query");
 
-    const { today, tomorrow } = getCurrentAndNextDate(getDefaultTimezone(area));
-    const todayPrices = getPricesForDate(c.get("db"), today, area).map((p) => ({
+    // Convert local dates to UTC ranges at the boundary
+    const tz = getDefaultTimezone(area);
+    const { today, tomorrow } = getCurrentAndNextDate(tz);
+    const todayUtc = getUtcRangeForLocalDate(today, tz);
+    const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
+
+    const todayPrices = getPricesByRange(
+      c.get("db"),
+      todayUtc.startUtc,
+      todayUtc.endUtc,
+      area,
+    ).map((p) => ({
       ...p,
       spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
     }));
-    const tomorrowPrices = getPricesForDate(c.get("db"), tomorrow, area).map(
-      (p) => ({
-        ...p,
-        spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
-      }),
-    );
+    const tomorrowPrices = getPricesByRange(
+      c.get("db"),
+      tomorrowUtc.startUtc,
+      tomorrowUtc.endUtc,
+      area,
+    ).map((p) => ({
+      ...p,
+      spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
+    }));
 
     return c.json({
       area,
@@ -455,11 +485,24 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
     const userId = c.get("sessionUser").id;
     const settings = ensureUserSettings(c.get("db"), userId);
 
-    const { today, tomorrow } = getCurrentAndNextDate(
-      settings.timezone || HELSINKI_TZ,
+    // Convert local dates to UTC ranges at the boundary
+    const tz = settings.timezone || HELSINKI_TZ;
+    const { today, tomorrow } = getCurrentAndNextDate(tz);
+    const todayUtc = getUtcRangeForLocalDate(today, tz);
+    const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
+
+    const todaySpot = getPricesByRange(
+      c.get("db"),
+      todayUtc.startUtc,
+      todayUtc.endUtc,
+      settings.area,
     );
-    const todaySpot = getPricesForDate(c.get("db"), today, settings.area);
-    const tomorrowSpot = getPricesForDate(c.get("db"), tomorrow, settings.area);
+    const tomorrowSpot = getPricesByRange(
+      c.get("db"),
+      tomorrowUtc.startUtc,
+      tomorrowUtc.endUtc,
+      settings.area,
+    );
 
     return c.json({
       today: calculateTotalPrices(todaySpot, settings),
@@ -479,13 +522,17 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
       return c.json({ error: "User settings not found" }, 404);
     }
 
-    const { today, tomorrow } = getCurrentAndNextDate(
-      settings.timezone || HELSINKI_TZ,
+    // Convert local dates to UTC range spanning today + tomorrow
+    const tz = settings.timezone || HELSINKI_TZ;
+    const { today, tomorrow } = getCurrentAndNextDate(tz);
+    const todayUtc = getUtcRangeForLocalDate(today, tz);
+    const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
+    const prices = getPricesByRange(
+      c.get("db"),
+      todayUtc.startUtc,
+      tomorrowUtc.endUtc,
+      settings.area,
     );
-    const prices = [
-      ...getPricesForDate(c.get("db"), today, settings.area),
-      ...getPricesForDate(c.get("db"), tomorrow, settings.area),
-    ];
 
     const current = getCurrentPrice(prices, new Date());
     if (!current) {
@@ -503,11 +550,16 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
       return c.json({ error: "User settings not found" }, 404);
     }
 
-    const today = formatDateInTimeZone(
-      new Date(),
-      settings.timezone || HELSINKI_TZ,
+    // Convert local "today" to UTC range at the boundary
+    const tz = settings.timezone || HELSINKI_TZ;
+    const today = formatDateInTimeZone(new Date(), tz);
+    const todayUtc = getUtcRangeForLocalDate(today, tz);
+    const prices = getPricesByRange(
+      c.get("db"),
+      todayUtc.startUtc,
+      todayUtc.endUtc,
+      settings.area,
     );
-    const prices = getPricesForDate(c.get("db"), today, settings.area);
     if (prices.length === 0) {
       return c.json({ prices: [], available: false }, 200);
     }
@@ -528,11 +580,16 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
       return c.json({ error: "User settings not found" }, 404 as const);
     }
 
-    const tomorrow = formatDateInTimeZone(
-      addDays(new Date(), 1),
-      settings.timezone || HELSINKI_TZ,
+    // Convert local "tomorrow" to UTC range at the boundary
+    const tz = settings.timezone || HELSINKI_TZ;
+    const tomorrow = formatDateInTimeZone(addDays(new Date(), 1), tz);
+    const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
+    const prices = getPricesByRange(
+      c.get("db"),
+      tomorrowUtc.startUtc,
+      tomorrowUtc.endUtc,
+      settings.area,
     );
-    const prices = getPricesForDate(c.get("db"), tomorrow, settings.area);
     if (prices.length === 0) {
       return c.json(
         {
@@ -569,13 +626,18 @@ export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
     const endBound = endTime ? new Date(endTime) : null;
 
     const now = new Date();
-    const { today, tomorrow } = getCurrentAndNextDate(
-      settings.timezone || HELSINKI_TZ,
+    const tz = settings.timezone || HELSINKI_TZ;
+    const { today, tomorrow } = getCurrentAndNextDate(tz);
+    // Use a single UTC range spanning today + tomorrow to ensure contiguous
+    // data across midnight (avoids the LIKE prefix gap bug)
+    const todayRange = getUtcRangeForLocalDate(today, tz);
+    const tomorrowRange = getUtcRangeForLocalDate(tomorrow, tz);
+    const prices = getPricesByRange(
+      c.get("db"),
+      todayRange.startUtc,
+      tomorrowRange.endUtc,
+      settings.area,
     );
-    const prices = [
-      ...getPricesForDate(c.get("db"), today, settings.area),
-      ...getPricesForDate(c.get("db"), tomorrow, settings.area),
-    ];
 
     const effectiveStart = startBound ?? now;
     const futurePrices = prices.filter((p) => {

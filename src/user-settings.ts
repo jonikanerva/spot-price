@@ -52,7 +52,7 @@ export const upsertUserSettings = (
     `INSERT OR REPLACE INTO user_settings
      (user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
       tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     settings.userId,
     settings.marginCentsKwh,
@@ -64,6 +64,7 @@ export const upsertUserSettings = (
     settings.nightEndHour,
     settings.timezone,
     settings.area,
+    new Date().toISOString(),
   );
 };
 

@@ -1,27 +1,41 @@
 import type Database from "better-sqlite3";
 import { fetchDayAheadPrices } from "./nordpool.js";
-import { storePrices, countPricesForDate } from "./price-store.js";
+import { storePrices, countPricesByRange } from "./price-store.js";
 import { DELIVERY_AREAS } from "./areas.js";
 
 /** Minimum expected price entries per area per day (DST days may have 23h = 92 entries) */
 const MIN_ENTRIES_PER_AREA = 23;
 
 const formatDate = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
   return `${String(year)}-${month}-${day}`;
 };
 
 const getTodayAndTomorrow = (): { today: string; tomorrow: string } => {
   const now = new Date();
   const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
   return {
     today: formatDate(now),
     tomorrow: formatDate(tomorrow),
   };
 };
+
+/**
+ * Convert a UTC date (YYYY-MM-DD) to a UTC ISO range for database queries.
+ * Nord Pool data for a given date spans from ~23:00 UTC previous day to ~23:00 UTC.
+ * We use a full UTC day (00:00 to 24:00) for counting — this is an approximation
+ * that works because the Nord Pool API returns data starting from 23:00 UTC prev day,
+ * so the bulk of entries (92+) fall within the UTC day itself.
+ */
+const utcDateToRange = (
+  utcDate: string,
+): { startUtc: string; endUtc: string } => ({
+  startUtc: `${utcDate}T00:00:00.000Z`,
+  endUtc: `${utcDate}T23:59:59.999Z`,
+});
 
 interface FetchResult {
   readonly date: string;
@@ -32,8 +46,10 @@ interface FetchResult {
 /** Check if all areas already have data for a given date */
 const allAreasPresent = (db: Database.Database, date: string): boolean => {
   const totalAreas = DELIVERY_AREAS.length;
+  const { startUtc, endUtc } = utcDateToRange(date);
   const areasWithData = DELIVERY_AREAS.filter(
-    (a) => countPricesForDate(db, date, a.code) >= MIN_ENTRIES_PER_AREA,
+    (a) =>
+      countPricesByRange(db, startUtc, endUtc, a.code) >= MIN_ENTRIES_PER_AREA,
   ).length;
   return areasWithData >= totalAreas;
 };
