@@ -73,10 +73,20 @@ export const renderHomePage = (): string => `<!doctype html>
         outline: none;
         transition: border-color 0.15s, box-shadow 0.15s;
       }
-      input:focus {
+      input:focus, select:focus {
         border-color: var(--accent);
         box-shadow: 0 0 0 2px rgba(93, 213, 255, 0.18);
       }
+      input[type="number"] {
+        -moz-appearance: textfield;
+        appearance: textfield;
+      }
+      input[type="number"]::-webkit-inner-spin-button,
+      input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+
 
       /* ---- buttons ---- */
       .btn {
@@ -203,23 +213,27 @@ export const renderHomePage = (): string => `<!doctype html>
         width: 100px;
         text-align: right;
       }
-      .settings-grid label select {
-        width: 200px;
-        text-align: right;
+      .settings-grid label.stacked {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 4px;
       }
 
       /* ---- api panel ---- */
       .api-panel { display: none; }
 
+      .key-display-wrap {
+        position: relative;
+        margin: 10px 0;
+      }
       .key-display {
         background: #0d1323;
         border: 1px solid var(--border);
         border-radius: 8px;
-        padding: 12px 14px;
+        padding: 12px 60px 12px 14px;
         font-size: 0.82rem;
         color: var(--accent);
         word-break: break-all;
-        margin: 10px 0;
         font-family: inherit;
       }
 
@@ -356,7 +370,7 @@ export const renderHomePage = (): string => `<!doctype html>
               <label>VAT % <input id="vat" type="number" step="0.1" /></label>
               <label>Night start hour <input id="nightStart" type="number" min="0" max="23" /></label>
               <label>Night end hour <input id="nightEnd" type="number" min="0" max="23" /></label>
-              <label>Delivery area
+              <label class="stacked">Delivery area
                 <select id="area">
                   <option value="FI">Finland (FI)</option>
                   <option value="SE1">Sweden — Luleå (SE1)</option>
@@ -381,7 +395,7 @@ export const renderHomePage = (): string => `<!doctype html>
                   <option value="PL">Poland (PL)</option>
                 </select>
               </label>
-              <label>Timezone
+              <label class="stacked">Timezone
                 <select id="timezone">
                   <option value="Europe/Amsterdam">Europe/Amsterdam</option>
                   <option value="Europe/Berlin">Europe/Berlin</option>
@@ -410,7 +424,10 @@ export const renderHomePage = (): string => `<!doctype html>
             <h2>API</h2>
             <p>Use this key to call the REST API from Home Assistant or scripts.</p>
 
-            <div class="key-display" id="apiKeyDisplay">Loading...</div>
+            <div class="key-display-wrap">
+              <div class="key-display" id="apiKeyDisplay">Loading...</div>
+              <button class="copy-btn" id="copyKeyBtn">Copy</button>
+            </div>
             <button id="regenBtn" class="btn btn-danger">Regenerate API key</button>
             <div id="apiStatus" class="status"></div>
 
@@ -786,7 +803,18 @@ export const renderHomePage = (): string => `<!doctype html>
         ]
         $('apiExamples').innerHTML = examples.join('')
 
-        // attach copy handlers
+        // attach API key copy handler
+        $('copyKeyBtn').onclick = async () => {
+          const text = $('apiKeyDisplay').textContent
+          if (text && text !== 'Loading...') {
+            await navigator.clipboard.writeText(text)
+            $('copyKeyBtn').textContent = 'Copied!'
+            $('copyKeyBtn').classList.add('copied')
+            setTimeout(() => { $('copyKeyBtn').textContent = 'Copy'; $('copyKeyBtn').classList.remove('copied') }, 1500)
+          }
+        }
+
+        // attach example copy handlers
         $('apiExamples').querySelectorAll('.copy-btn').forEach(btn => {
           btn.onclick = async () => {
             const text = btn.getAttribute('data-cmd').replace(/&quot;/g, '"').replace(/\\\\n/g, '\\n')
@@ -823,13 +851,20 @@ export const renderHomePage = (): string => `<!doctype html>
           setStatus('authStatus', 'err', 'Username and password required')
           return
         }
+        const pwHint = 'Password must be 8\u2013128 characters.'
+        if (password.length < 8 || password.length > 128) {
+          setStatus('authStatus', 'err', pwHint)
+          return
+        }
         const r = await json('/api/session/login-or-signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password })
         })
         if (!r.ok) {
-          setStatus('authStatus', 'err', r.data.message || r.data.error || 'Login failed')
+          const msg = r.data.message || r.data.error || 'Login failed'
+          const isPwErr = /password/i.test(msg)
+          setStatus('authStatus', 'err', isPwErr ? msg + ' \u2014 ' + pwHint : msg)
           return
         }
         setStatus('authStatus', 'ok', 'Authenticated')
