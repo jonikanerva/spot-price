@@ -108,7 +108,7 @@ export const calculateTotalPrice = (
 export const calculateTotalPrices = (
   prices: readonly HourlyPrice[],
   settings: UserSettings,
-): readonly TotalPrice[] => prices.map((p) => calculateTotalPrice(p, settings));
+): TotalPrice[] => prices.map((p) => calculateTotalPrice(p, settings));
 
 /**
  * Find the cheapest contiguous window of a given duration.
@@ -129,7 +129,7 @@ export const findCheapestWindow = (
   }
 
   let bestAverage = Number.POSITIVE_INFINITY;
-  let bestWindow: readonly TotalPrice[] | null = null;
+  let bestWindow: TotalPrice[] | null = null;
 
   for (let startIndex = 0; startIndex < prices.length; startIndex++) {
     const window: TotalPrice[] = [];

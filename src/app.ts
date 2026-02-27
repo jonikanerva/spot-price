@@ -1,4 +1,5 @@
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { Scalar } from "@scalar/hono-api-reference";
 import { logger } from "hono/logger";
 import type Database from "better-sqlite3";
 import {
@@ -23,7 +24,7 @@ import {
   upsertUserSettings,
 } from "./user-settings.js";
 import { addDays, formatDateInTimeZone } from "./time.js";
-import type { HourlyPrice } from "./types.js";
+import type { HourlyPrice, TotalPrice, UserSettings } from "./types.js";
 import { renderHomePage } from "./ui.js";
 import type { AuthSessionUser } from "./session-auth.js";
 import { sessionAuth } from "./session-auth.js";
@@ -35,11 +36,19 @@ import {
   toInternalEmail,
   validateUsername,
 } from "./usernames.js";
+import { getDefaultTimezone } from "./areas.js";
 import {
-  isValidAreaCode,
-  isValidTimezone,
-  getDefaultTimezone,
-} from "./areas.js";
+  CheapestQuerySchema,
+  CheapestWindowSchema,
+  ChartDataSchema,
+  ErrorSchema,
+  PriceListSchema,
+  PublicSpotSchema,
+  SpotQuerySchema,
+  TotalPriceSchema,
+  UserSettingsResponseSchema,
+  UserSettingsUpdateSchema,
+} from "./api-schemas.js";
 
 export interface AppEnv {
   Variables: {
@@ -49,19 +58,7 @@ export interface AppEnv {
   };
 }
 
-const DEFAULT_AREA = "FI";
 const HELSINKI_TZ = "Europe/Helsinki";
-
-const parseDuration = (value: string | undefined): number | null => {
-  if (!value) {
-    return null;
-  }
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 24 * 60) {
-    return null;
-  }
-  return parsed;
-};
 
 const getCurrentAndNextDate = (
   timeZone: string,
@@ -88,22 +85,197 @@ const getCurrentPrice = (
   return null;
 };
 
-export const createApp = (db: Database.Database): Hono<AppEnv> => {
-  const app = new Hono<AppEnv>();
+// ---------------------------------------------------------------------------
+// OpenAPI route definitions
+// ---------------------------------------------------------------------------
 
-  // Middleware: request logging
+const publicSpotRoute = createRoute({
+  method: "get",
+  path: "/api/public/spot",
+  tags: ["Public"],
+  summary: "Public spot prices (today + tomorrow)",
+  description:
+    "Returns raw spot prices in c/kWh for the requested delivery area. No authentication required.",
+  request: { query: SpotQuerySchema },
+  responses: {
+    200: {
+      content: { "application/json": { schema: PublicSpotSchema } },
+      description: "Spot prices for today and tomorrow (if available)",
+    },
+  },
+});
+
+const settingsGetRoute = createRoute({
+  method: "get",
+  path: "/api/v1/me/settings",
+  tags: ["User"],
+  summary: "Get user settings",
+  description:
+    "Returns the authenticated user's electricity contract settings.",
+  responses: {
+    200: {
+      content: { "application/json": { schema: UserSettingsResponseSchema } },
+      description: "Current user settings",
+    },
+  },
+});
+
+const settingsPutRoute = createRoute({
+  method: "put",
+  path: "/api/v1/me/settings",
+  tags: ["User"],
+  summary: "Update user settings",
+  description:
+    "Update one or more electricity contract settings. Only provided fields are changed.",
+  request: {
+    body: {
+      content: { "application/json": { schema: UserSettingsUpdateSchema } },
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: UserSettingsResponseSchema } },
+      description: "Updated user settings",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description: "Validation error",
+    },
+  },
+});
+
+const chartRoute = createRoute({
+  method: "get",
+  path: "/api/v1/me/chart",
+  tags: ["User"],
+  summary: "Chart data (total prices)",
+  description:
+    "Returns today's and tomorrow's total prices calculated with the user's contract settings.",
+  responses: {
+    200: {
+      content: { "application/json": { schema: ChartDataSchema } },
+      description: "Chart data for today and tomorrow",
+    },
+  },
+});
+
+const priceNowRoute = createRoute({
+  method: "get",
+  path: "/api/v1/price/now",
+  tags: ["Price"],
+  summary: "Current total price",
+  description:
+    "Returns the total price breakdown for the current 15-minute delivery interval.",
+  security: [{ BearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: TotalPriceSchema } },
+      description: "Current total price with full breakdown",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description: "No current price available or settings not found",
+    },
+  },
+});
+
+const priceTodayRoute = createRoute({
+  method: "get",
+  path: "/api/v1/price/today",
+  tags: ["Price"],
+  summary: "Today's hourly total prices",
+  description:
+    "Returns all total prices for today, calculated with the user's contract settings.",
+  security: [{ BearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: PriceListSchema } },
+      description: "Today's prices",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description: "User settings not found",
+    },
+  },
+});
+
+const priceTomorrowRoute = createRoute({
+  method: "get",
+  path: "/api/v1/price/tomorrow",
+  tags: ["Price"],
+  summary: "Tomorrow's hourly total prices",
+  description:
+    "Returns tomorrow's total prices if available. Prices are typically published after 14:00 EET.",
+  security: [{ BearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: PriceListSchema } },
+      description: "Tomorrow's prices (check 'available' field)",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description: "User settings not found",
+    },
+  },
+});
+
+const priceCheapestRoute = createRoute({
+  method: "get",
+  path: "/api/v1/price/cheapest",
+  tags: ["Price"],
+  summary: "Cheapest contiguous window",
+  description:
+    "Finds the cheapest contiguous N-minute window from available future prices. Optionally constrain the search with startTime and endTime.",
+  security: [{ BearerAuth: [] }],
+  request: { query: CheapestQuerySchema },
+  responses: {
+    200: {
+      content: { "application/json": { schema: CheapestWindowSchema } },
+      description: "Cheapest window with price breakdown per interval",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description: "Invalid query parameters",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description:
+        "No price data available or insufficient data for requested window",
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// App factory
+// ---------------------------------------------------------------------------
+
+export const createApp = (db: Database.Database): OpenAPIHono<AppEnv> => {
+  const app = new OpenAPIHono<AppEnv>({
+    defaultHook: (result, c) => {
+      if (!result.success) {
+        const messages = result.error.issues
+          .map((i) =>
+            i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message,
+          )
+          .join("; ");
+        return c.json({ error: messages }, 400);
+      }
+    },
+  });
+
+  // --- Middleware ----------------------------------------------------------
+
   app.use(logger());
 
-  // Middleware: inject database into context
   app.use(async (c, next) => {
     c.set("db", db);
     await next();
   });
 
-  // Global rate limit: 120 req/min per IP (skips /health)
   app.use(globalRateLimit);
 
-  // Health check — verifies DB is accessible
+  // --- Non-OpenAPI routes (health, HTML, auth, keys) ----------------------
+
   app.get("/health", (c) => {
     try {
       const dbInstance = c.get("db");
@@ -122,7 +294,6 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
 
   app.get("/", (c) => c.html(renderHomePage()));
 
-  // Login/signup rate limit: 10 req/15min per IP (POST only)
   app.post("/api/session/login-or-signup", loginRateLimit, async (c) => {
     const payload = await c.req.json<{
       username?: string;
@@ -147,28 +318,19 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     if (existingUserId) {
       const signInResponse = await auth.api.signInEmail({
         headers: c.req.raw.headers,
-        body: {
-          email,
-          password,
-          rememberMe: true,
-        },
+        body: { email, password, rememberMe: true },
         asResponse: true,
       });
       return signInResponse;
     }
 
-    // User cap: reject signup if at maximum
     if (!isRegistrationOpen(c.get("db"))) {
       return c.json({ error: "Registration is currently closed." }, 403);
     }
 
     const signUpResponse = await auth.api.signUpEmail({
       headers: c.req.raw.headers,
-      body: {
-        email,
-        password,
-        name: username,
-      },
+      body: { email, password, name: username },
       asResponse: true,
     });
 
@@ -207,7 +369,6 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
   app.use("/api/keys", sessionAuth);
   app.use("/api/keys/*", sessionAuth);
 
-  /** Get current API key (auto-creates one if none exists) */
   app.get("/api/keys", (c) => {
     const userId = c.get("sessionUser").id;
     ensureUserSettings(c.get("db"), userId);
@@ -219,7 +380,6 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     return c.json({ apiKey: created.key, createdAt: created.createdAt }, 201);
   });
 
-  /** Regenerate API key (deletes old, creates new) */
   app.post("/api/keys/regenerate", (c) => {
     const userId = c.get("sessionUser").id;
     ensureUserSettings(c.get("db"), userId);
@@ -227,11 +387,15 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     return c.json({ apiKey: created.key, createdAt: created.createdAt });
   });
 
-  app.get("/api/public/spot", (c) => {
-    const area = c.req.query("area")?.toUpperCase() ?? DEFAULT_AREA;
-    if (!isValidAreaCode(area)) {
-      return c.json({ error: "Invalid area code" }, 400);
-    }
+  // --- Auth middleware for API routes --------------------------------------
+
+  app.use("/api/v1/price/*", apiKeyAuth, apiKeyRateLimit);
+  app.use("/api/v1/me/*", sessionAuth);
+
+  // --- OpenAPI routes: Public ----------------------------------------------
+
+  app.openapi(publicSpotRoute, (c) => {
+    const { area } = c.req.valid("query");
 
     const { today, tomorrow } = getCurrentAndNextDate(getDefaultTimezone(area));
     const todayPrices = getPricesForDate(c.get("db"), today, area).map((p) => ({
@@ -255,59 +419,39 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     });
   });
 
-  app.use("/api/v1/price/*", apiKeyAuth, apiKeyRateLimit);
-  app.use("/api/v1/me/*", sessionAuth);
+  // --- OpenAPI routes: User (session-protected) ----------------------------
 
-  app.get("/api/v1/me/settings", (c) => {
+  app.openapi(settingsGetRoute, (c) => {
     const userId = c.get("sessionUser").id;
     const settings = ensureUserSettings(c.get("db"), userId);
     return c.json(settings);
   });
 
-  app.put("/api/v1/me/settings", async (c) => {
+  app.openapi(settingsPutRoute, (c) => {
     const userId = c.get("sessionUser").id;
     const current = ensureUserSettings(c.get("db"), userId);
-    const payload = await c.req.json<
-      Partial<{
-        marginCentsKwh: number;
-        transferDayCentsKwh: number;
-        transferNightCentsKwh: number;
-        taxCentsKwh: number;
-        vatPercent: number;
-        nightStartHour: number;
-        nightEndHour: number;
-        timezone: string;
-        area: string;
-      }>
-    >();
+    const payload = c.req.valid("json");
 
-    const next = {
-      ...current,
-      ...payload,
+    const next: UserSettings = {
       userId,
+      marginCentsKwh: payload.marginCentsKwh ?? current.marginCentsKwh,
+      transferDayCentsKwh:
+        payload.transferDayCentsKwh ?? current.transferDayCentsKwh,
+      transferNightCentsKwh:
+        payload.transferNightCentsKwh ?? current.transferNightCentsKwh,
+      taxCentsKwh: payload.taxCentsKwh ?? current.taxCentsKwh,
+      vatPercent: payload.vatPercent ?? current.vatPercent,
+      nightStartHour: payload.nightStartHour ?? current.nightStartHour,
+      nightEndHour: payload.nightEndHour ?? current.nightEndHour,
+      timezone: payload.timezone ?? current.timezone,
+      area: payload.area ?? current.area,
     };
 
-    if (next.vatPercent < 0 || next.vatPercent > 100) {
-      return c.json({ error: "vatPercent must be 0-100" }, 400);
-    }
-    if (next.nightStartHour < 0 || next.nightStartHour > 23) {
-      return c.json({ error: "nightStartHour must be 0-23" }, 400);
-    }
-    if (next.nightEndHour < 0 || next.nightEndHour > 23) {
-      return c.json({ error: "nightEndHour must be 0-23" }, 400);
-    }
-    if (!isValidAreaCode(next.area)) {
-      return c.json({ error: "Invalid delivery area code" }, 400);
-    }
-    if (!isValidTimezone(next.timezone)) {
-      return c.json({ error: "Invalid timezone" }, 400);
-    }
-
     upsertUserSettings(c.get("db"), next);
-    return c.json(next);
+    return c.json(next, 200);
   });
 
-  app.get("/api/v1/me/chart", (c) => {
+  app.openapi(chartRoute, (c) => {
     const userId = c.get("sessionUser").id;
     const settings = ensureUserSettings(c.get("db"), userId);
 
@@ -326,7 +470,9 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     });
   });
 
-  app.get("/api/v1/price/now", (c) => {
+  // --- OpenAPI routes: Price (API key-protected) ---------------------------
+
+  app.openapi(priceNowRoute, (c) => {
     const userId = c.get("userId");
     const settings = getUserSettings(c.get("db"), userId);
     if (!settings) {
@@ -347,10 +493,10 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     }
 
     const total = calculateTotalPrice(current, settings);
-    return c.json(total);
+    return c.json(total, 200);
   });
 
-  app.get("/api/v1/price/today", (c) => {
+  app.openapi(priceTodayRoute, (c) => {
     const userId = c.get("userId");
     const settings = getUserSettings(c.get("db"), userId);
     if (!settings) {
@@ -363,20 +509,23 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     );
     const prices = getPricesForDate(c.get("db"), today, settings.area);
     if (prices.length === 0) {
-      return c.json({ prices: [], available: false });
+      return c.json({ prices: [], available: false }, 200);
     }
 
-    return c.json({
-      prices: calculateTotalPrices(prices, settings),
-      available: true,
-    });
+    return c.json(
+      {
+        prices: calculateTotalPrices(prices, settings),
+        available: true,
+      },
+      200,
+    );
   });
 
-  app.get("/api/v1/price/tomorrow", (c) => {
+  app.openapi(priceTomorrowRoute, (c) => {
     const userId = c.get("userId");
     const settings = getUserSettings(c.get("db"), userId);
     if (!settings) {
-      return c.json({ error: "User settings not found" }, 404);
+      return c.json({ error: "User settings not found" }, 404 as const);
     }
 
     const tomorrow = formatDateInTimeZone(
@@ -385,50 +534,39 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     );
     const prices = getPricesForDate(c.get("db"), tomorrow, settings.area);
     if (prices.length === 0) {
-      return c.json({ available: false, expectedAt: "14:00 EET", prices: [] });
+      return c.json(
+        {
+          available: false as const,
+          expectedAt: "14:00 EET",
+          prices: [] as TotalPrice[],
+        },
+        200 as const,
+      );
     }
 
-    return c.json({
-      prices: calculateTotalPrices(prices, settings),
-      available: true,
-    });
+    return c.json(
+      {
+        prices: calculateTotalPrices(prices, settings),
+        available: true as const,
+      },
+      200 as const,
+    );
   });
 
-  app.get("/api/v1/price/cheapest", (c) => {
+  app.openapi(priceCheapestRoute, (c) => {
     const userId = c.get("userId");
     const settings = getUserSettings(c.get("db"), userId);
     if (!settings) {
-      return c.json({ error: "User settings not found" }, 404);
+      return c.json({ error: "User settings not found" }, 404 as const);
     }
 
-    const durationMinutes = parseDuration(c.req.query("duration"));
-    if (!durationMinutes) {
-      return c.json(
-        { error: "duration query parameter is required (1-1440 minutes)" },
-        400,
-      );
-    }
-
-    const startTimeParam = c.req.query("startTime");
-    const endTimeParam = c.req.query("endTime");
-    const startBound = startTimeParam ? new Date(startTimeParam) : null;
-    const endBound = endTimeParam ? new Date(endTimeParam) : null;
-
-    if (
-      startTimeParam &&
-      (!startBound || !Number.isFinite(startBound.getTime()))
-    ) {
-      return c.json(
-        { error: "startTime must be a valid ISO 8601 timestamp" },
-        400,
-      );
-    }
-    if (endTimeParam && (!endBound || !Number.isFinite(endBound.getTime()))) {
-      return c.json(
-        { error: "endTime must be a valid ISO 8601 timestamp" },
-        400,
-      );
-    }
+    const {
+      duration: durationMinutes,
+      startTime,
+      endTime,
+    } = c.req.valid("query");
+    const startBound = startTime ? new Date(startTime) : null;
+    const endBound = endTime ? new Date(endTime) : null;
 
     const now = new Date();
     const { today, tomorrow } = getCurrentAndNextDate(
@@ -455,7 +593,7 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
     if (futurePrices.length === 0) {
       return c.json(
         { error: "No price data available for the requested time range" },
-        404,
+        404 as const,
       );
     }
 
@@ -467,34 +605,52 @@ export const createApp = (db: Database.Database): Hono<AppEnv> => {
         {
           error: `Not enough contiguous price data to form a ${String(durationMinutes)}-minute window`,
         },
-        404,
+        404 as const,
       );
     }
 
-    return c.json(window);
+    return c.json(window, 200 as const);
   });
 
-  app.get("/api/v1/openapi.json", (c) => {
-    return c.json({
-      openapi: "3.0.0",
-      info: {
-        title: "Spot Price API",
-        version: "0.1.0",
+  // --- OpenAPI spec + interactive docs ------------------------------------
+
+  app.doc31("/api/v1/openapi.json", {
+    openapi: "3.1.0",
+    info: {
+      title: "Spot Price API",
+      version: "1.0.0",
+      description:
+        "Finnish and Nordic spot electricity price API with total price calculation, cheapest window finder, and per-user contract settings.",
+    },
+    servers: [{ url: "https://spot.calmdonut.com" }],
+    security: [{ BearerAuth: [] }],
+    tags: [
+      {
+        name: "Price",
+        description: "Electricity price endpoints (API key required)",
       },
-      paths: {
-        "/api/v1/price/now": { get: { summary: "Current total price" } },
-        "/api/v1/price/today": {
-          get: { summary: "Today's hourly total prices" },
-        },
-        "/api/v1/price/tomorrow": {
-          get: { summary: "Tomorrow's hourly total prices" },
-        },
-        "/api/v1/price/cheapest": {
-          get: { summary: "Cheapest contiguous window" },
-        },
+      {
+        name: "User",
+        description: "User settings and chart data (session required)",
       },
-    });
+      { name: "Public", description: "Unauthenticated endpoints" },
+    ],
   });
+
+  app.openAPIRegistry.registerComponent("securitySchemes", "BearerAuth", {
+    type: "http",
+    scheme: "bearer",
+    description:
+      "API key obtained from the web dashboard. Use as: Authorization: Bearer <api-key>",
+  });
+
+  app.get(
+    "/api/docs",
+    Scalar({
+      url: "/api/v1/openapi.json",
+      theme: "deepSpace",
+    }),
+  );
 
   return app;
 };

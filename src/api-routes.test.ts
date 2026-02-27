@@ -487,3 +487,77 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     expect(body.error).toContain("No price data");
   });
 });
+
+describe("OpenAPI spec", () => {
+  let db: Database.Database;
+
+  afterEach(() => {
+    closeDatabase(db);
+  });
+
+  it("returns valid OpenAPI 3.1 spec with all expected routes", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+
+    const response = await app.request("/api/v1/openapi.json");
+    expect(response.status).toBe(200);
+
+    const spec = (await response.json()) as {
+      openapi: string;
+      info: { title: string; version: string };
+      paths: Record<string, unknown>;
+    };
+
+    expect(spec.openapi).toBe("3.1.0");
+    expect(spec.info.title).toBe("Spot Price API");
+    expect(spec.info.version).toBe("1.0.0");
+
+    // Verify all 8 migrated routes are present
+    const paths = Object.keys(spec.paths);
+    expect(paths).toContain("/api/v1/price/now");
+    expect(paths).toContain("/api/v1/price/today");
+    expect(paths).toContain("/api/v1/price/tomorrow");
+    expect(paths).toContain("/api/v1/price/cheapest");
+    expect(paths).toContain("/api/public/spot");
+    expect(paths).toContain("/api/v1/me/settings");
+    expect(paths).toContain("/api/v1/me/chart");
+  });
+
+  it("returns 400 with error message for invalid cheapest query", async () => {
+    db = initTestDatabase();
+    seedUser(db);
+    seedPrices(db);
+    const app = createApp(db);
+
+    // duration=0 is below minimum (1)
+    const response = await app.request("/api/v1/price/cheapest?duration=0", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBeDefined();
+    expect(typeof body.error).toBe("string");
+  });
+
+  it("returns 400 with error message for invalid settings update", async () => {
+    db = initTestDatabase();
+    const app = createApp(db);
+    const cookie = await loginOrSignupAndGetCookie(app);
+
+    // vatPercent > 100 is above maximum
+    const response = await app.request("/api/v1/me/settings", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ vatPercent: 150 }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBeDefined();
+    expect(typeof body.error).toBe("string");
+  });
+});
