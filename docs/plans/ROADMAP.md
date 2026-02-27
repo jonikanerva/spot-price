@@ -1,8 +1,8 @@
 # Delivery Roadmap
 
-Date: 2026-02-24
+Date: 2026-02-27
 Owner: Repository Owner + Agent
-Status: Active
+Status: MVP complete - maintenance
 
 ## Purpose
 
@@ -49,3 +49,7 @@ With parallelism: **~6–7 sessions** total
 
 - Update milestone states when project phase advances.
 - Keep tactical work out of this file; place it in `docs/plans/NEXT-ACTIONS.md`.
+
+## Checkpoint
+
+- 2026-02-27: MVP marked complete and production-ready. Evidence: `docs/quality-gates/2026-02-27-mvp-production-readiness-gate-check.md`.
