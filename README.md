@@ -16,7 +16,7 @@ Supports all 21 Nord Pool delivery areas across the Nordics, Baltics, and Centra
 
 | Component  | Choice                                               |
 | ---------- | ---------------------------------------------------- |
-| Runtime    | Node.js 22 LTS                                       |
+| Runtime    | Node.js 24 LTS                                       |
 | Language   | TypeScript (strict mode)                             |
 | Framework  | [Hono](https://hono.dev) + @hono/node-server         |
 | Database   | SQLite via better-sqlite3 (WAL mode)                 |
@@ -54,94 +54,9 @@ All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <k
 | --------- | -------- | ----------------------------------- |
 | `area`    | No       | Nord Pool area code (default: `FI`) |
 
-### Response types
+### Response types and interactive docs
 
-#### `GET /api/v1/price/now` — TotalPrice
-
-```json
-{
-  "deliveryStart": "2026-02-26T10:00:00Z",
-  "deliveryEnd": "2026-02-26T10:15:00Z",
-  "localStart": "2026-02-26T12:00:00+02:00",
-  "localEnd": "2026-02-26T12:15:00+02:00",
-  "spotCentsKwh": 5.23,
-  "marginCentsKwh": 0.5,
-  "transferCentsKwh": 2.5,
-  "taxCentsKwh": 2.79372,
-  "vatCentsKwh": 2.762,
-  "totalCentsKwh": 13.786,
-  "isNightRate": false
-}
-```
-
-#### `GET /api/v1/price/today` — Price list
-
-```json
-{
-  "prices": [
-    {
-      "deliveryStart": "...",
-      "deliveryEnd": "...",
-      "localStart": "...",
-      "localEnd": "...",
-      "spotCentsKwh": 5.23,
-      "marginCentsKwh": 0.5,
-      "transferCentsKwh": 2.5,
-      "taxCentsKwh": 2.79372,
-      "vatCentsKwh": 2.762,
-      "totalCentsKwh": 13.786,
-      "isNightRate": false
-    }
-  ],
-  "available": true
-}
-```
-
-#### `GET /api/v1/price/tomorrow` — Price list (or unavailable)
-
-```json
-{
-  "prices": [],
-  "available": false,
-  "expectedAt": "14:00 EET"
-}
-```
-
-#### `GET /api/v1/price/cheapest` — Cheapest window
-
-```json
-{
-  "start": "2026-02-26T01:00:00Z",
-  "end": "2026-02-26T04:00:00Z",
-  "startLocal": "2026-02-26T03:00:00+02:00",
-  "endLocal": "2026-02-26T06:00:00+02:00",
-  "averageTotalCentsKwh": 8.452,
-  "prices": [
-    { "...TotalPrice objects..." }
-  ]
-}
-```
-
-#### `GET /api/public/spot` — Public spot prices
-
-```json
-{
-  "area": "FI",
-  "today": [
-    {
-      "deliveryStart": "2026-02-25T22:00:00Z",
-      "deliveryEnd": "2026-02-25T22:15:00Z",
-      "priceEurMwh": 52.3,
-      "area": "FI",
-      "spotCentsKwh": 5.23
-    }
-  ],
-  "tomorrow": [],
-  "tomorrowAvailable": false,
-  "unit": "c/kWh",
-  "resolutionMinutes": 15
-}
-```
+Full request/response schemas with examples are available in the [Interactive API Documentation](https://spot.calmdonut.com/api/docs). The OpenAPI 3.1 spec is also available at [`/api/v1/openapi.json`](https://spot.calmdonut.com/api/v1/openapi.json).
 
 ### Error responses
 
@@ -179,7 +94,7 @@ Finland (FI), Sweden (SE1-SE4), Norway (NO1-NO5), Denmark (DK1-DK2), Estonia (EE
 
 ### Prerequisites
 
-- Node.js >= 22
+- Node.js >= 24
 - npm
 
 ### Setup
