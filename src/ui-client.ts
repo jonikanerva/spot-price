@@ -222,8 +222,8 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         'action: rest_command.spot_price_cheapest',
         'data:',
         '  duration: "210"',
-        '  start: "{{  today_at("22:00").isoformat() }}"',
-        '  end:   "{{ (today_at("7:00") + timedelta(days=1)).isoformat() }}"',
+        "  start: {{  today_at('22:00').isoformat() }}",
+        "  end:   {{ (today_at('7:00') + timedelta(days=1)).isoformat() }}",
         'response_variable: result',
       ].join('\\n')
 
