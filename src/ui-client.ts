@@ -224,34 +224,94 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         '  duration: "210"',
         \`  start: '{{  today_at("22:00").isoformat() }}'\`,
         \`  end:   '{{ (today_at("7:00") + timedelta(days=1)).isoformat() }}'\`,
-        '  max_price: "12"  # optional, c/kWh',
+        '  max_price: "20"',
         'response_variable: result',
       ].join('\\n')
+
+      const toUtcIsoSeconds = (date) => {
+        const iso = date.toISOString()
+        return iso.endsWith('.000Z') ? iso.slice(0, -5) + 'Z' : iso
+      }
+
+      const buildUtcIsoForTodayHour = (hour) => {
+        const now = new Date()
+        const timestamp = new Date(
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate(),
+            hour,
+            0,
+            0,
+            0,
+          ),
+        )
+        return toUtcIsoSeconds(timestamp)
+      }
 
       const renderExamples = () => {
         if (!state.apiKey) return
         const base = location.origin
         const apiKeyHeader = '-H "Authorization: Bearer ' + state.apiKey + '"'
+        const windowStartUtc = buildUtcIsoForTodayHour(8)
+        const windowEndUtc = buildUtcIsoForTodayHour(17)
         const examples = [
-          '# Current total price\\ncurl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/now',
-          '# Cheapest 3-hour window\\ncurl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/cheapest?duration=180"',
-          '# Cheapest 3-hour window under 12 c/kWh\\ncurl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/cheapest?duration=180&maxPrice=12"',
-          '# Today prices\\ncurl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/today',
-          '# Tomorrow prices\\ncurl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/tomorrow',
+          {
+            title: 'Current total price',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/now',
+          },
+          {
+            title: 'Cheapest 3-hour window',
+            command: 'curl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/cheapest?duration=180"',
+          },
+          {
+            title: 'Cheapest 1-hour window under 20 c/kWh',
+            command:
+              'curl -sS ' +
+              apiKeyHeader +
+              ' "' +
+              base +
+              '/api/v1/price/cheapest?duration=60&maxPrice=20"',
+          },
+          {
+            title: 'Cheapest 2-hour window today between 08:00-17:00 UTC',
+            command:
+              'curl -sS ' +
+              apiKeyHeader +
+              ' "' +
+              base +
+              '/api/v1/price/cheapest?duration=120&startTime=' +
+              windowStartUtc +
+              '&endTime=' +
+              windowEndUtc +
+              '"',
+          },
+          {
+            title: 'Today prices',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/today',
+          },
+          {
+            title: 'Tomorrow prices',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/tomorrow',
+          },
         ]
 
-        $('apiExamples').innerHTML = examples.map((cmd) => (
+        $('apiExamples').innerHTML = examples.map((example, index) => (
           '<div class="example-block">' +
-            '<pre>' + cmd + '</pre>' +
-            '<button class="copy-btn" data-cmd="' + cmd.replace(/"/g, '&quot;') + '">Copy</button>' +
+            '<pre><span class="comment"># ' + example.title + '</span>\\n' + example.command + '</pre>' +
+            '<button class="copy-btn" data-index="' + String(index) + '">Copy</button>' +
           '</div>'
         )).join('')
 
         const copyButtons = $('apiExamples').querySelectorAll('.copy-btn')
         copyButtons.forEach((button) => {
           button.onclick = async () => {
-            const cmd = button.getAttribute('data-cmd') || ''
-            await copyWithFeedback(button, cmd.replace(/&quot;/g, '"'))
+            const indexText = button.getAttribute('data-index')
+            const index = Number(indexText)
+            if (!Number.isInteger(index) || index < 0 || index >= examples.length) {
+              return
+            }
+            await copyWithFeedback(button, examples[index].command)
           }
         })
 
