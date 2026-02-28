@@ -6,6 +6,17 @@ CREATE TABLE api_keys_new (
   last_used_at TEXT
 );
 
+CREATE TABLE api_keys_plaintext_guard (
+  plaintext_null_count INTEGER NOT NULL CHECK (plaintext_null_count = 0)
+);
+
+INSERT INTO api_keys_plaintext_guard (plaintext_null_count)
+SELECT COUNT(*)
+FROM api_keys
+WHERE key_plaintext IS NULL;
+
+DROP TABLE api_keys_plaintext_guard;
+
 INSERT INTO api_keys_new (id, user_id, key_plaintext, created_at, last_used_at)
 WITH ranked AS (
   SELECT

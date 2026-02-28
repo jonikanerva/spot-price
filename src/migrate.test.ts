@@ -1,6 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { initTestDatabase, closeDatabase } from "./db.js";
+import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 interface TableInfo {
   name: string;
@@ -34,6 +38,11 @@ const getColumns = (
 ): readonly ColumnInfo[] => {
   return db.prepare(`PRAGMA table_info(${table})`).all() as ColumnInfo[];
 };
+
+const migrationsDir = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "migrations",
+);
 
 describe("migration system", () => {
   let db: Database.Database;
@@ -219,5 +228,45 @@ describe("api_keys table", () => {
     expect(row["name"]).toBeUndefined();
     expect(row["created_at"]).toBeDefined();
     expect(row["last_used_at"]).toBeNull();
+  });
+
+  it("migration 007 fails fast when api_keys contains null plaintext", () => {
+    const dbLegacy = new BetterSqlite3(":memory:");
+    try {
+      dbLegacy.exec(`
+        CREATE TABLE api_keys (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          key_hash TEXT NOT NULL,
+          key_plaintext TEXT,
+          name TEXT NOT NULL DEFAULT 'Default',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+      `);
+
+      dbLegacy
+        .prepare(
+          `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "legacy-key",
+          "legacy-user",
+          "deadbeef",
+          null,
+          "Default",
+          new Date().toISOString(),
+        );
+
+      const migrationSql = readFileSync(
+        path.join(migrationsDir, "007_drop_api_key_hash_and_name.sql"),
+        "utf-8",
+      );
+
+      expect(() => dbLegacy.exec(migrationSql)).toThrow();
+    } finally {
+      dbLegacy.close();
+    }
   });
 });
