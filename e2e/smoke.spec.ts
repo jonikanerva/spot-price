@@ -96,6 +96,25 @@ test.describe("API panel", () => {
     await expect(keyDisplay).toBeVisible();
     // Wait for key to load (starts with sp_)
     await expect(keyDisplay).toContainText("sp_", { timeout: 5_000 });
+
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"], {
+        origin: new URL(page.url()).origin,
+      });
+
+    const firstBlock = page.locator(".example-block").first();
+    const preText = (await firstBlock.locator("pre").textContent()) ?? "";
+    const commandOnly = preText.split("\n").slice(1).join("\n").trim();
+
+    await firstBlock.locator(".copy-btn").click();
+    const copiedText = await page.evaluate(async () =>
+      navigator.clipboard.readText(),
+    );
+
+    expect(copiedText).toBe(commandOnly);
+    expect(copiedText.startsWith("curl ")).toBe(true);
+    expect(copiedText.includes("#")).toBe(false);
   });
 
   test("regenerate creates a new key", async ({ page }) => {
@@ -126,6 +145,27 @@ test.describe("API panel", () => {
     const key = await page.locator("#apiKeyDisplay").textContent();
     const examples = await page.locator("#apiExamples").textContent();
     expect(examples).toContain(key?.trim() ?? "");
+
+    const cheapestExampleText =
+      (await page
+        .locator(".example-block")
+        .filter({
+          hasText: "Cheapest 2-hour window today between 08:00-17:00 UTC",
+        })
+        .locator("pre")
+        .textContent()) ?? "";
+
+    expect(cheapestExampleText).toContain("duration=120");
+    expect(cheapestExampleText).toContain("startTime=");
+    expect(cheapestExampleText).toContain("endTime=");
+    expect(cheapestExampleText).not.toContain("%3A");
+    expect(cheapestExampleText).not.toContain("$(date");
+    expect(cheapestExampleText).toMatch(
+      /startTime=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/,
+    );
+    expect(cheapestExampleText).toMatch(
+      /endTime=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/,
+    );
   });
 
   test("home assistant snippets render with copy buttons", async ({ page }) => {
