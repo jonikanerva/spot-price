@@ -14,10 +14,6 @@
 - `BETTER_AUTH_SECRET=<32+ char random secret>`
 - `BETTER_AUTH_URL=https://spot.calmdonut.com`
 
-Optional:
-
-- `CRON_SCHEDULE` (defaults to `0 12 * * *` in code path)
-
 ## Health checks
 
 - Path: `/health`
@@ -33,7 +29,25 @@ Run after first successful deployment:
 
 ```bash
 curl -sS "$APP_URL/health"
-curl -sS -X POST "$APP_URL/api/keys" -H "content-type: application/json" -d '{"userId":"smoke-user","name":"smoke"}'
+AUTH_HEADERS="$(mktemp)"
+AUTH_BODY="$(mktemp)"
+
+curl -sS -D "$AUTH_HEADERS" -o "$AUTH_BODY" -X POST "$APP_URL/api/session/login-or-signup" \
+  -H "content-type: application/json" \
+  -d '{"username":"smoke_user","password":"smoke-password-123"}'
+
+SESSION_COOKIE="$(python3 - "$AUTH_HEADERS" <<'PY'
+import pathlib
+import re
+import sys
+
+headers = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"^set-cookie:\\s*([^;\\r\\n]+)", headers, flags=re.IGNORECASE | re.MULTILINE)
+print(match.group(1) if match else "")
+PY
+)"
+
+curl -sS "$APP_URL/api/keys" -H "Cookie: $SESSION_COOKIE"
 ```
 
 Then call one protected endpoint with returned API key:

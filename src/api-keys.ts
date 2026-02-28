@@ -1,9 +1,8 @@
-import { randomBytes, createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 
 const KEY_PREFIX = "sp_";
 const KEY_BYTE_LENGTH = 32;
-
 /** Generate a random API key with prefix */
 export const generateApiKey = (): string => {
   const bytes = randomBytes(KEY_BYTE_LENGTH);
@@ -17,7 +16,7 @@ export const hashApiKey = (key: string): string =>
 export interface ApiKeyInfo {
   readonly id: string;
   readonly userId: string;
-  readonly key: string | null;
+  readonly key: string;
   readonly createdAt: string;
   readonly lastUsedAt: string | null;
 }
@@ -43,7 +42,7 @@ export const getCurrentApiKey = (
     )
     .get(userId) as ApiKeyRow | undefined;
 
-  if (!row) {
+  if (!row || !row.key_plaintext) {
     return null;
   }
 
@@ -71,8 +70,8 @@ export const regenerateApiKey = (
   const regenerate = db.transaction(() => {
     db.prepare(`DELETE FROM api_keys WHERE user_id = ?`).run(userId);
     db.prepare(
-      `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name, created_at)
-       VALUES (?, ?, ?, ?, 'default', ?)`,
+      `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
     ).run(id, userId, keyHash, rawKey, createdAt);
   });
 

@@ -42,58 +42,24 @@ describe("health endpoint", () => {
 });
 
 describe("isRegistrationOpen", () => {
-  let db: Database.Database;
+  interface RegistrationCountDb {
+    prepare: (sql: string) => { get: () => { count: number } | undefined };
+  }
 
-  afterEach(() => {
-    closeDatabase(db);
+  const mockDbWithCount = (count: number): RegistrationCountDb => ({
+    prepare: () => ({ get: () => ({ count }) }),
   });
 
   it("returns true when user count is below MAX_USERS", () => {
-    db = initTestDatabase();
-    expect(isRegistrationOpen(db)).toBe(true);
+    expect(isRegistrationOpen(mockDbWithCount(0))).toBe(true);
   });
 
   it("returns false when user count reaches MAX_USERS", () => {
-    db = initTestDatabase();
-
-    // Insert MAX_USERS rows into the user table
-    const now = new Date().toISOString();
-    const insert = db.prepare(
-      `INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt)
-       VALUES (?, ?, ?, 0, ?, ?)`,
-    );
-    for (let i = 0; i < MAX_USERS; i++) {
-      insert.run(
-        `user-${String(i)}`,
-        `user${String(i)}`,
-        `u${String(i)}@x.com`,
-        now,
-        now,
-      );
-    }
-
-    expect(isRegistrationOpen(db)).toBe(false);
+    expect(isRegistrationOpen(mockDbWithCount(MAX_USERS))).toBe(false);
   });
 
   it("returns true when just below the cap", () => {
-    db = initTestDatabase();
-
-    const now = new Date().toISOString();
-    const insert = db.prepare(
-      `INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt)
-       VALUES (?, ?, ?, 0, ?, ?)`,
-    );
-    for (let i = 0; i < MAX_USERS - 1; i++) {
-      insert.run(
-        `user-${String(i)}`,
-        `user${String(i)}`,
-        `u${String(i)}@x.com`,
-        now,
-        now,
-      );
-    }
-
-    expect(isRegistrationOpen(db)).toBe(true);
+    expect(isRegistrationOpen(mockDbWithCount(MAX_USERS - 1))).toBe(true);
   });
 });
 

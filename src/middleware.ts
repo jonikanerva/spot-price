@@ -75,7 +75,7 @@ export const apiKeyAuth = async (
 };
 
 /** Maximum number of users allowed in the system */
-export const MAX_USERS = 100;
+export const MAX_USERS = 100_000;
 
 /** Check if user registration is open (under the user cap) */
 export const isRegistrationOpen = (db: {

@@ -61,14 +61,8 @@ const seedUser = (db: Database.Database): void => {
   );
 
   db.prepare(
-    `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name) VALUES (?, ?, ?, ?, ?)`,
-  ).run(
-    "key-1",
-    TEST_USER_ID,
-    hashApiKey(TEST_API_KEY),
-    TEST_API_KEY,
-    "default",
-  );
+    `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext) VALUES (?, ?, ?, ?)`,
+  ).run("key-1", TEST_USER_ID, hashApiKey(TEST_API_KEY), TEST_API_KEY);
 };
 
 const seedPrices = (db: Database.Database): void => {
@@ -116,6 +110,21 @@ describe("API routes", () => {
     expect(body.username === null || typeof body.username === "string").toBe(
       true,
     );
+  });
+
+  it("returns 400 for malformed JSON in login-or-signup", async () => {
+    db = initTestDatabase();
+    const app = createTestApp(db);
+
+    const response = await app.request("/api/session/login-or-signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("Invalid JSON payload");
   });
 
   it("gets or auto-creates a single API key with session auth", async () => {
@@ -550,9 +559,13 @@ describe("cross-midnight contiguity", () => {
     seedHourlyRange(db, tomorrow, 0, 1, 5); // tomorrow 00-01 Helsinki = cheap
 
     // Request cheapest 3-hour window — should find the 22:00-01:00 window
-    const res = await app.request("/api/v1/price/cheapest?duration=180", {
-      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
-    });
+    const startTime = `${today}T00:00:00+02:00`;
+    const res = await app.request(
+      `/api/v1/price/cheapest?duration=180&startTime=${encodeURIComponent(startTime)}`,
+      {
+        headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+      },
+    );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
