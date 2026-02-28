@@ -128,6 +128,25 @@ test.describe("API panel", () => {
     expect(examples).toContain(key?.trim() ?? "");
   });
 
+  test("home assistant snippets render with copy buttons", async ({ page }) => {
+    await page.click("#navApi");
+    await expect(page.locator("#apiKeyDisplay")).toContainText("sp_", {
+      timeout: 5_000,
+    });
+
+    await expect(page.locator("#haPackagesContent")).toContainText(
+      "packages: !include_dir_named packages",
+    );
+    await expect(page.locator("#haYamlContent")).toContainText("rest_command:");
+    await expect(page.locator("#haUsageContent")).toContainText(
+      "action: rest_command.spot_price_cheapest",
+    );
+
+    await expect(page.locator("#copyHaPackagesBtn")).toBeVisible();
+    await expect(page.locator("#copyHaYamlBtn")).toBeVisible();
+    await expect(page.locator("#copyHaUsageBtn")).toBeVisible();
+  });
+
   test("navigating back to dashboard shows chart", async ({ page }) => {
     await page.click("#navApi");
     await expect(page.locator("#apiView")).toBeVisible();
