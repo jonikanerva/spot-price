@@ -36,6 +36,20 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         }
       }
 
+      const markCopied = (button) => {
+        button.textContent = 'Copied!'
+        button.classList.add('copied')
+        setTimeout(() => {
+          button.textContent = 'Copy'
+          button.classList.remove('copied')
+        }, 1500)
+      }
+
+      const copyWithFeedback = async (button, text) => {
+        await navigator.clipboard.writeText(text)
+        markCopied(button)
+      }
+
       const toChartData = (prices, valueKey) =>
         prices.map((price) => ({
           value: Number(price[valueKey]),
@@ -166,36 +180,52 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         return [
           '# Spot Price API - Home Assistant REST Commands',
           '',
-          'spot_price_now:',
-          '  url: "' + baseUrl + '/api/v1/price/now"',
-          '  method: GET',
-          '  headers:',
-          '    Authorization: "' + auth + '"',
-          '  content_type: "application/json"',
+          'rest_command:',
           '',
-          'spot_price_today:',
-          '  url: "' + baseUrl + '/api/v1/price/today"',
-          '  method: GET',
-          '  headers:',
-          '    Authorization: "' + auth + '"',
-          '  content_type: "application/json"',
+          '  spot_price_now:',
+          '    url: "' + baseUrl + '/api/v1/price/now"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
           '',
-          'spot_price_tomorrow:',
-          '  url: "' + baseUrl + '/api/v1/price/tomorrow"',
-          '  method: GET',
-          '  headers:',
-          '    Authorization: "' + auth + '"',
-          '  content_type: "application/json"',
+          '  spot_price_today:',
+          '    url: "' + baseUrl + '/api/v1/price/today"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
           '',
-          'spot_price_cheapest:',
-          '  url: >-',
-          '    ' + baseUrl + '/api/v1/price/cheapest?duration={{ duration }}{% if start is defined %}&startTime={{ start | urlencode }}{% endif %}{% if end is defined %}&endTime={{ end | urlencode }}{% endif %}',
-          '  method: GET',
-          '  headers:',
-          '    Authorization: "' + auth + '"',
-          '  content_type: "application/json"',
+          '  spot_price_tomorrow:',
+          '    url: "' + baseUrl + '/api/v1/price/tomorrow"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_cheapest:',
+          '    url: >-',
+          '      ' + baseUrl + '/api/v1/price/cheapest?duration={{ duration }}{% if start is defined %}&startTime={{ start | urlencode }}{% endif %}{% if end is defined %}&endTime={{ end | urlencode }}{% endif %}',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
         ].join('\\n')
       }
+
+      const buildHaPackagesInclude = () => [
+        'homeassistant:',
+        '  packages: !include_dir_named packages',
+      ].join('\\n')
+
+      const buildHaUsageExample = () => [
+        'action: rest_command.spot_price_cheapest',
+        'data:',
+        '  duration: "210"',
+        '  start: "{{  today_at("22:00").isoformat() }}"',
+        '  end:   "{{ (today_at("7:00") + timedelta(days=1)).isoformat() }}"',
+        'response_variable: result',
+      ].join('\\n')
 
       const renderExamples = () => {
         if (!state.apiKey) return
@@ -219,26 +249,23 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         copyButtons.forEach((button) => {
           button.onclick = async () => {
             const cmd = button.getAttribute('data-cmd') || ''
-            await navigator.clipboard.writeText(cmd.replace(/&quot;/g, '"'))
-            button.textContent = 'Copied!'
-            button.classList.add('copied')
-            setTimeout(() => {
-              button.textContent = 'Copy'
-              button.classList.remove('copied')
-            }, 1500)
+            await copyWithFeedback(button, cmd.replace(/&quot;/g, '"'))
           }
         })
 
         const copyKeyButton = $('copyKeyBtn')
         if (copyKeyButton) {
           copyKeyButton.onclick = async () => {
-            await navigator.clipboard.writeText(state.apiKey)
-            copyKeyButton.textContent = 'Copied!'
-            copyKeyButton.classList.add('copied')
-            setTimeout(() => {
-              copyKeyButton.textContent = 'Copy'
-              copyKeyButton.classList.remove('copied')
-            }, 1500)
+            await copyWithFeedback(copyKeyButton, state.apiKey)
+          }
+        }
+
+        const haPackagesInclude = buildHaPackagesInclude()
+        $('haPackagesContent').textContent = haPackagesInclude
+        const copyPackagesButton = $('copyHaPackagesBtn')
+        if (copyPackagesButton) {
+          copyPackagesButton.onclick = async () => {
+            await copyWithFeedback(copyPackagesButton, haPackagesInclude)
           }
         }
 
@@ -247,13 +274,16 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         const copyYamlButton = $('copyHaYamlBtn')
         if (copyYamlButton) {
           copyYamlButton.onclick = async () => {
-            await navigator.clipboard.writeText(haYaml)
-            copyYamlButton.textContent = 'Copied!'
-            copyYamlButton.classList.add('copied')
-            setTimeout(() => {
-              copyYamlButton.textContent = 'Copy'
-              copyYamlButton.classList.remove('copied')
-            }, 1500)
+            await copyWithFeedback(copyYamlButton, haYaml)
+          }
+        }
+
+        const haUsageExample = buildHaUsageExample()
+        $('haUsageContent').textContent = haUsageExample
+        const copyUsageButton = $('copyHaUsageBtn')
+        if (copyUsageButton) {
+          copyUsageButton.onclick = async () => {
+            await copyWithFeedback(copyUsageButton, haUsageExample)
           }
         }
       }

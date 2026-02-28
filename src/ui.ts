@@ -91,6 +91,11 @@ export const renderHomePage = (): string => `<!doctype html>
       .status { min-height: 18px; font-size: 12px; margin-top: 8px; }
       .status.ok { color: var(--ok); }
       .status.err { color: var(--err); }
+      .inline-link {
+        color: var(--accent);
+        text-decoration-color: rgba(93, 213, 255, 0.55);
+      }
+      .inline-link:hover { color: #8ce6ff; }
 
       .chart-container { position: relative; margin-top: 12px; }
       .chart-box { border: 1px solid var(--border); border-radius: 10px; background: #0e1426; overflow: hidden; }
@@ -120,6 +125,7 @@ export const renderHomePage = (): string => `<!doctype html>
       .settings-grid label input { width: 100px; text-align: right; }
 
       .api-panel { display: none; }
+      .api-sections { display: grid; gap: 18px; }
       .key-display-wrap { position: relative; margin: 10px 0; }
       .key-display {
         background: #0d1323;
@@ -254,33 +260,53 @@ export const renderHomePage = (): string => `<!doctype html>
         </div>
 
         <div id="apiView" class="api-panel">
-          <article class="card">
-            <h2>API</h2>
-            <p>Use this key to call the REST API from Home Assistant or scripts.</p>
+          <div class="api-sections">
+            <article class="card">
+              <h2>API</h2>
+              <p>Use this key to call the REST API from Home Assistant or scripts.</p>
 
-            <div class="key-display-wrap">
-              <div class="key-display" id="apiKeyDisplay">Loading...</div>
-              <button class="copy-btn" id="copyKeyBtn">Copy</button>
-            </div>
-            <button id="regenBtn" class="btn btn-danger">Regenerate API key</button>
-            <div id="apiStatus" class="status"></div>
+              <div class="key-display-wrap">
+                <div class="key-display" id="apiKeyDisplay">Loading...</div>
+                <button class="copy-btn" id="copyKeyBtn">Copy</button>
+              </div>
+              <button id="regenBtn" class="btn btn-danger">Regenerate API key</button>
+              <div id="apiStatus" class="status"></div>
 
-            <h2 style="margin-top:20px">Usage examples</h2>
-            <div id="apiExamples"></div>
+              <h2 style="margin-top:20px">Usage examples</h2>
+              <div id="apiExamples"></div>
+            </article>
 
-            <h2 style="margin-top:28px">Home Assistant</h2>
-            <p style="margin-bottom:4px">Drop-in REST commands for Home Assistant. Copy this YAML to your HA config directory as <code>spot-price.yaml</code>, then add <code>rest_command: !include spot-price.yaml</code> to <code>configuration.yaml</code> and restart HA.</p>
-            <div id="haYamlBlock" class="example-block">
-              <pre id="haYamlContent" style="max-height:320px;overflow-y:auto">Loading...</pre>
-              <button class="copy-btn" id="copyHaYamlBtn">Copy</button>
-            </div>
+            <article class="card">
+              <h2>Home Assistant</h2>
+              <p style="margin-bottom:10px">Ensure you have the <a class="inline-link" href="https://www.home-assistant.io/integrations/rest_command" target="_blank" rel="noopener noreferrer">RESTful Command</a> integration installed in your Home Assistant.</p>
 
-            <h2 style="margin-top:28px">API reference</h2>
-            <p style="margin-bottom:12px">Full request/response schemas with interactive examples:</p>
-            <a href="/api/docs" target="_blank" class="btn btn-secondary" style="display:inline-block;margin-top:8px;text-decoration:none">
-              Open interactive API docs &rarr;
-            </a>
-          </article>
+              <p style="margin-bottom:4px">Create a <code>packages</code> directory if it does not already exist, and add this line to <code>configuration.yaml</code>:</p>
+              <div class="example-block">
+                <pre id="haPackagesContent">Loading...</pre>
+                <button class="copy-btn" id="copyHaPackagesBtn">Copy</button>
+              </div>
+
+              <p style="margin-top:14px;margin-bottom:4px">Then copy this into <code>packages/spot-price.yaml</code>, save it, and reload your YAML configurations (or reboot):</p>
+              <div id="haYamlBlock" class="example-block">
+                <pre id="haYamlContent" style="max-height:360px;overflow-y:auto">Loading...</pre>
+                <button class="copy-btn" id="copyHaYamlBtn">Copy</button>
+              </div>
+
+              <h2 style="margin-top:24px">Example usage</h2>
+              <div class="example-block">
+                <pre id="haUsageContent">Loading...</pre>
+                <button class="copy-btn" id="copyHaUsageBtn">Copy</button>
+              </div>
+            </article>
+
+            <article class="card">
+              <h2>API reference</h2>
+              <p style="margin-bottom:12px">Full request/response schemas with interactive examples:</p>
+              <a href="/api/docs" target="_blank" class="btn btn-secondary" style="display:inline-block;margin-top:8px;text-decoration:none">
+                Open interactive API docs &rarr;
+              </a>
+            </article>
+          </div>
         </div>
       </section>
     </main>
