@@ -14,7 +14,7 @@ import {
   getCurrentAndNextDate,
   getUtcRangeForLocalDate,
 } from "../time.js";
-import type { HourlyPrice, TotalPrice } from "../types.js";
+import type { HourlyPrice, TotalPrice, UserSettings } from "../types.js";
 import { getDefaultTimezone } from "../areas.js";
 import {
   CheapestQuerySchema,
@@ -44,6 +44,20 @@ const getCurrentPrice = (
     }
   }
   return null;
+};
+
+const getSettings = (c: {
+  get: (key: "db" | "userId") => AppEnv["Variables"]["db"] | string;
+}): UserSettings | null => {
+  const userId = c.get("userId");
+  const db = c.get("db");
+  if (typeof userId !== "string") {
+    return null;
+  }
+  if (typeof db === "string") {
+    return null;
+  }
+  return getUserSettings(db, userId);
 };
 
 // ---------------------------------------------------------------------------
@@ -199,8 +213,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   // --- Price endpoints (API key-protected) ----------------------------------
 
   app.openapi(priceNowRoute, (c) => {
-    const userId = c.get("userId");
-    const settings = getUserSettings(c.get("db"), userId);
+    const settings = getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404);
     }
@@ -226,8 +239,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   });
 
   app.openapi(priceTodayRoute, (c) => {
-    const userId = c.get("userId");
-    const settings = getUserSettings(c.get("db"), userId);
+    const settings = getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404);
     }
@@ -255,8 +267,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   });
 
   app.openapi(priceTomorrowRoute, (c) => {
-    const userId = c.get("userId");
-    const settings = getUserSettings(c.get("db"), userId);
+    const settings = getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404 as const);
     }
@@ -291,8 +302,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   });
 
   app.openapi(priceCheapestRoute, (c) => {
-    const userId = c.get("userId");
-    const settings = getUserSettings(c.get("db"), userId);
+    const settings = getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404 as const);
     }

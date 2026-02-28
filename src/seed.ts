@@ -77,12 +77,13 @@ const seed = (): void => {
     console.log("Seeded test user settings");
 
     // Seed a test API key (hash of "test-api-key-123")
+    const rawTestApiKey = "test-api-key-123";
     db.prepare(
       `
-      INSERT OR IGNORE INTO api_keys (id, user_id, key_hash, name)
-      VALUES (?, ?, ?, ?)
+      INSERT OR IGNORE INTO api_keys (id, user_id, key_plaintext)
+      VALUES (?, ?, ?)
     `,
-    ).run(randomUUID(), "test-user", "placeholder-hash", "Dev Test Key");
+    ).run(randomUUID(), "test-user", rawTestApiKey);
 
     console.log("Seeded test API key");
     console.log("Seed complete!");

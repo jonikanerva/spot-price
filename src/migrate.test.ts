@@ -1,6 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { initTestDatabase, closeDatabase } from "./db.js";
+import BetterSqlite3 from "better-sqlite3";
 import type Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 interface TableInfo {
   name: string;
@@ -35,6 +39,11 @@ const getColumns = (
   return db.prepare(`PRAGMA table_info(${table})`).all() as ColumnInfo[];
 };
 
+const migrationsDir = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "migrations",
+);
+
 describe("migration system", () => {
   let db: Database.Database;
 
@@ -63,7 +72,7 @@ describe("migration system", () => {
       .prepare("SELECT version, name FROM _migrations ORDER BY version")
       .all() as readonly MigrationRecord[];
 
-    expect(migrations.length).toBe(5);
+    expect(migrations.length).toBe(7);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("create_prices");
     expect(migrations[1]?.version).toBe(2);
@@ -74,6 +83,10 @@ describe("migration system", () => {
     expect(migrations[3]?.name).toBe("create_better_auth_tables");
     expect(migrations[4]?.version).toBe(5);
     expect(migrations[4]?.name).toBe("create_usernames");
+    expect(migrations[5]?.version).toBe(6);
+    expect(migrations[5]?.name).toBe("harden_api_keys_storage");
+    expect(migrations[6]?.version).toBe(7);
+    expect(migrations[6]?.name).toBe("drop_api_key_hash_and_name");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -84,7 +97,7 @@ describe("migration system", () => {
     const result = runMigrations(db);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(5);
+    expect(result.total).toBe(7);
   });
 });
 
@@ -202,17 +215,58 @@ describe("api_keys table", () => {
     db = initTestDatabase();
 
     db.prepare(
-      "INSERT INTO api_keys (id, user_id, key_hash, name) VALUES (?, ?, ?, ?)",
-    ).run("key-1", "user-1", "hashed-value", "Home Assistant");
+      "INSERT INTO api_keys (id, user_id, key_plaintext) VALUES (?, ?, ?)",
+    ).run("key-1", "user-1", "sp_test_key_123");
 
     const row = db
       .prepare("SELECT * FROM api_keys WHERE id = ?")
       .get("key-1") as Record<string, unknown>;
 
     expect(row["user_id"]).toBe("user-1");
-    expect(row["key_hash"]).toBe("hashed-value");
-    expect(row["name"]).toBe("Home Assistant");
+    expect(row["key_plaintext"]).toBe("sp_test_key_123");
+    expect(row["key_hash"]).toBeUndefined();
+    expect(row["name"]).toBeUndefined();
     expect(row["created_at"]).toBeDefined();
     expect(row["last_used_at"]).toBeNull();
+  });
+
+  it("migration 007 fails fast when api_keys contains null plaintext", () => {
+    const dbLegacy = new BetterSqlite3(":memory:");
+    try {
+      dbLegacy.exec(`
+        CREATE TABLE api_keys (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          key_hash TEXT NOT NULL,
+          key_plaintext TEXT,
+          name TEXT NOT NULL DEFAULT 'Default',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+      `);
+
+      dbLegacy
+        .prepare(
+          `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "legacy-key",
+          "legacy-user",
+          "deadbeef",
+          null,
+          "Default",
+          new Date().toISOString(),
+        );
+
+      const migrationSql = readFileSync(
+        path.join(migrationsDir, "007_drop_api_key_hash_and_name.sql"),
+        "utf-8",
+      );
+
+      expect(() => dbLegacy.exec(migrationSql)).toThrow();
+    } finally {
+      dbLegacy.close();
+    }
   });
 });

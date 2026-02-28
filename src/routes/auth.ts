@@ -27,10 +27,24 @@ export const registerAuthRoutes = (
   // --- Login / Signup -------------------------------------------------------
 
   app.post("/api/session/login-or-signup", loginRateLimit, async (c) => {
-    const payload = await c.req.json<{
+    const payload = await (async (): Promise<{
       username?: string;
       password?: string;
-    }>();
+    } | null> => {
+      try {
+        return await c.req.json<{
+          username?: string;
+          password?: string;
+        }>();
+      } catch {
+        return null;
+      }
+    })();
+
+    if (!payload || typeof payload !== "object") {
+      return c.json({ error: "Invalid JSON payload" }, 400);
+    }
+
     const username = normalizeUsername(payload.username ?? "");
     const password = payload.password;
 
