@@ -1,8 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "rpi-orchestrator",
-  "model": "opencode/gpt-5.1-codex",
-  "small_model": "opencode/gpt-5.1-mini",
+  "model": "opencode/gpt-5.3-codex",
+  "small_model": "opencode/gpt-5.3-codex",
   "share": "manual",
   "compaction": {
     "auto": true,
@@ -25,15 +25,16 @@
       "grep*": "allow",
       "rg*": "allow",
       "find*": "allow",
+      "curl*": "allow",
       "git*": "allow",
-      "npm*": "allow",
+      "pnpm*": "allow",
       "npx*": "allow",
       "gh*": "allow",
       "rm -rf *": "deny",
       "./scripts/use-github-app-auth.sh": "allow"
     },
     "task": {
-      "*": "deny"
+      "*": "ask"
     },
     "skill": {
       "*": "allow"
@@ -51,11 +52,12 @@
           "ls*": "allow",
           "pwd*": "allow",
           "cat*": "allow",
+          "curl*": "allow",
           "grep*": "allow",
           "rg*": "allow",
           "find*": "allow",
           "git*": "allow",
-          "npm*": "allow",
+          "pnpm*": "allow",
           "npx*": "allow",
           "gh*": "allow",
           "rm -rf *": "deny",
