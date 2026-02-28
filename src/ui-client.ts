@@ -205,7 +205,7 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
           '',
           '  spot_price_cheapest:',
           '    url: >-',
-          '      ' + baseUrl + '/api/v1/price/cheapest?duration={{ duration }}{% if start is defined %}&startTime={{ start | urlencode }}{% endif %}{% if end is defined %}&endTime={{ end | urlencode }}{% endif %}',
+          '      ' + baseUrl + '/api/v1/price/cheapest?duration={{ duration }}{% if start is defined %}&startTime={{ start | urlencode }}{% endif %}{% if end is defined %}&endTime={{ end | urlencode }}{% endif %}{% if max_price is defined %}&maxPrice={{ max_price }}{% endif %}',
           '    method: GET',
           '    headers:',
           '      Authorization: "' + auth + '"',
@@ -224,6 +224,7 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         '  duration: "210"',
         \`  start: '{{  today_at("22:00").isoformat() }}'\`,
         \`  end:   '{{ (today_at("7:00") + timedelta(days=1)).isoformat() }}'\`,
+        '  max_price: "12"  # optional, c/kWh',
         'response_variable: result',
       ].join('\\n')
 
@@ -234,6 +235,7 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         const examples = [
           '# Current total price\\ncurl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/now',
           '# Cheapest 3-hour window\\ncurl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/cheapest?duration=180"',
+          '# Cheapest 3-hour window under 12 c/kWh\\ncurl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/cheapest?duration=180&maxPrice=12"',
           '# Today prices\\ncurl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/today',
           '# Tomorrow prices\\ncurl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/tomorrow',
         ]

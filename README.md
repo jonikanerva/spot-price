@@ -47,6 +47,7 @@ All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <k
 | `duration`  | Yes      | Window length in minutes (1-1440)             |
 | `startTime` | No       | ISO 8601 start bound (default: now)           |
 | `endTime`   | No       | ISO 8601 end bound (default: end of tomorrow) |
+| `maxPrice`  | No       | Max allowed interval total (c/kWh, inclusive) |
 
 **`/api/public/spot`**
 

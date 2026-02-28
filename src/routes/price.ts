@@ -146,7 +146,7 @@ const priceCheapestRoute = createRoute({
   tags: ["Price"],
   summary: "Cheapest contiguous window",
   description:
-    "Finds the cheapest contiguous N-minute window from available future prices. Optionally constrain the search with startTime and endTime.",
+    "Finds the cheapest contiguous N-minute window from available future prices. Optionally constrain the search with startTime, endTime, and maxPrice.",
   security: [{ BearerAuth: [] }],
   request: { query: CheapestQuerySchema },
   responses: {
@@ -311,6 +311,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
       duration: durationMinutes,
       startTime,
       endTime,
+      maxPrice,
     } = c.req.valid("query");
     const startBound = startTime ? new Date(startTime) : null;
     const endBound = endTime ? new Date(endTime) : null;
@@ -350,12 +351,18 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     }
 
     const totals = calculateTotalPrices(futurePrices, settings);
-    const window = findCheapestWindow(totals, durationMinutes);
+    const constrainedTotals =
+      maxPrice === undefined
+        ? totals
+        : totals.filter((entry) => entry.totalCentsKwh <= maxPrice);
+    const window = findCheapestWindow(constrainedTotals, durationMinutes);
 
     if (!window) {
+      const maxPriceConstraint =
+        maxPrice === undefined ? "" : ` at or below ${String(maxPrice)} c/kWh`;
       return c.json(
         {
-          error: `Not enough contiguous price data to form a ${String(durationMinutes)}-minute window`,
+          error: `Not enough contiguous price data${maxPriceConstraint} to form a ${String(durationMinutes)}-minute window`,
         },
         404 as const,
       );
