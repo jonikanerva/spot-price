@@ -130,11 +130,18 @@ export const CheapestQuerySchema = z.object({
       example: "2026-02-28T06:00:00+02:00",
       description: "Latest allowed window end (ISO 8601)",
     }),
-  maxPrice: z.coerce.number().optional().openapi({
-    example: 12,
-    description:
-      "Maximum allowed total price in c/kWh for each interval in the selected window",
-  }),
+  maxPrice: z
+    .string()
+    .trim()
+    .min(1, "maxPrice is required when provided")
+    .transform((value) => Number(value))
+    .refine(Number.isFinite, "maxPrice must be a valid number")
+    .optional()
+    .openapi({
+      example: 12,
+      description:
+        "Maximum allowed total price in c/kWh for each interval in the selected window",
+    }),
 });
 
 export const SpotQuerySchema = z.object({

@@ -509,6 +509,27 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     expect(body.prices.every((p) => p.totalCentsKwh <= 12)).toBe(true);
   });
 
+  it("maxPrice: does not bridge filtered gaps (contiguity still required)", async () => {
+    const app = setup();
+    const { today } = getHelsinkiDates();
+
+    // Cheap, then expensive (to be filtered out), then cheap again.
+    // After maxPrice filtering, remaining 60-min blocks are not contiguous.
+    seedHourlyRange(db, today, 0, 1, 20);
+    seedHourlyRange(db, today, 1, 2, 120);
+    seedHourlyRange(db, today, 2, 3, 20);
+
+    const startTime = `${today}T00:00:00+02:00`;
+    const res = await requestCheapest(
+      app,
+      `duration=120&startTime=${encodeURIComponent(startTime)}&maxPrice=12`,
+    );
+
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("Not enough contiguous price data");
+  });
+
   it("maxPrice: boundary is inclusive (<=)", async () => {
     const app = setup();
     const { today } = getHelsinkiDates();
@@ -743,6 +764,24 @@ describe("OpenAPI spec", () => {
     const body = (await response.json()) as { error: string };
     expect(body.error).toBeDefined();
     expect(typeof body.error).toBe("string");
+  });
+
+  it("returns 400 when maxPrice is blank", async () => {
+    db = initTestDatabase();
+    seedUser(db);
+    seedPrices(db);
+    const app = createTestApp(db);
+
+    const response = await app.request(
+      "/api/v1/price/cheapest?duration=60&maxPrice=",
+      {
+        headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("maxPrice");
   });
 
   it("returns 400 with error message for invalid settings update", async () => {
