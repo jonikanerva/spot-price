@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type Database from "better-sqlite3";
 
 const KEY_PREFIX = "sp_";
@@ -8,10 +8,6 @@ export const generateApiKey = (): string => {
   const bytes = randomBytes(KEY_BYTE_LENGTH);
   return `${KEY_PREFIX}${bytes.toString("hex")}`;
 };
-
-/** Hash an API key for auth lookup (SHA-256) */
-export const hashApiKey = (key: string): string =>
-  createHash("sha256").update(key).digest("hex");
 
 export interface ApiKeyInfo {
   readonly id: string;
@@ -24,7 +20,6 @@ export interface ApiKeyInfo {
 interface ApiKeyRow {
   readonly id: string;
   readonly user_id: string;
-  readonly key_hash: string;
   readonly key_plaintext: string | null;
   readonly created_at: string;
   readonly last_used_at: string | null;
@@ -37,7 +32,7 @@ export const getCurrentApiKey = (
 ): ApiKeyInfo | null => {
   const row = db
     .prepare(
-      `SELECT id, user_id, key_hash, key_plaintext, created_at, last_used_at
+      `SELECT id, user_id, key_plaintext, created_at, last_used_at
        FROM api_keys WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
     )
     .get(userId) as ApiKeyRow | undefined;
@@ -62,7 +57,6 @@ export const regenerateApiKey = (
   userId: string,
 ): ApiKeyInfo => {
   const rawKey = generateApiKey();
-  const keyHash = hashApiKey(rawKey);
   const id = randomBytes(16).toString("hex");
 
   const createdAt = new Date().toISOString();
@@ -70,9 +64,9 @@ export const regenerateApiKey = (
   const regenerate = db.transaction(() => {
     db.prepare(`DELETE FROM api_keys WHERE user_id = ?`).run(userId);
     db.prepare(
-      `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(id, userId, keyHash, rawKey, createdAt);
+      `INSERT INTO api_keys (id, user_id, key_plaintext, created_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(id, userId, rawKey, createdAt);
   });
 
   regenerate();
@@ -91,19 +85,17 @@ export const resolveApiKey = (
   db: Database.Database,
   rawKey: string,
 ): string | null => {
-  const keyHash = hashApiKey(rawKey);
   const row = db
-    .prepare(`SELECT user_id FROM api_keys WHERE key_hash = ?`)
-    .get(keyHash) as { user_id: string } | undefined;
+    .prepare(`SELECT user_id FROM api_keys WHERE key_plaintext = ?`)
+    .get(rawKey) as { user_id: string } | undefined;
 
   if (!row) {
     return null;
   }
 
-  db.prepare(`UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?`).run(
-    new Date().toISOString(),
-    keyHash,
-  );
+  db.prepare(
+    `UPDATE api_keys SET last_used_at = ? WHERE key_plaintext = ?`,
+  ).run(new Date().toISOString(), rawKey);
 
   return row.user_id;
 };

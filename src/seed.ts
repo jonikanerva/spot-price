@@ -1,7 +1,6 @@
 import { initDatabase, closeDatabase } from "./db.js";
 import { randomUUID } from "node:crypto";
 import { formatUtcDate } from "./time.js";
-import { hashApiKey } from "./api-keys.js";
 
 /** Number of 15-minute intervals per day */
 const INTERVALS_PER_DAY = 96;
@@ -81,10 +80,10 @@ const seed = (): void => {
     const rawTestApiKey = "test-api-key-123";
     db.prepare(
       `
-      INSERT OR IGNORE INTO api_keys (id, user_id, key_hash, key_plaintext)
-      VALUES (?, ?, ?, ?)
+      INSERT OR IGNORE INTO api_keys (id, user_id, key_plaintext)
+      VALUES (?, ?, ?)
     `,
-    ).run(randomUUID(), "test-user", hashApiKey(rawTestApiKey), rawTestApiKey);
+    ).run(randomUUID(), "test-user", rawTestApiKey);
 
     console.log("Seeded test API key");
     console.log("Seed complete!");

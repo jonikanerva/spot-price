@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
 import { closeDatabase, initTestDatabase } from "./db.js";
 import { createTestApp } from "./test-utils.js";
-import { hashApiKey } from "./api-keys.js";
 import {
   formatDateInTimeZone,
   addDays,
@@ -61,8 +60,8 @@ const seedUser = (db: Database.Database): void => {
   );
 
   db.prepare(
-    `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext) VALUES (?, ?, ?, ?)`,
-  ).run("key-1", TEST_USER_ID, hashApiKey(TEST_API_KEY), TEST_API_KEY);
+    `INSERT INTO api_keys (id, user_id, key_plaintext) VALUES (?, ?, ?)`,
+  ).run("key-1", TEST_USER_ID, TEST_API_KEY);
 };
 
 const seedPrices = (db: Database.Database): void => {
