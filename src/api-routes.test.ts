@@ -224,8 +224,15 @@ describe("API routes", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       prices: readonly unknown[];
+      minTotalCentsKwh: number;
+      maxTotalCentsKwh: number;
+      averageTotalCentsKwh: number;
     };
     expect(body.prices.length).toBe(12);
+    expect(typeof body.minTotalCentsKwh).toBe("number");
+    expect(typeof body.maxTotalCentsKwh).toBe("number");
+    expect(typeof body.averageTotalCentsKwh).toBe("number");
+    expect(body.minTotalCentsKwh).toBeLessThanOrEqual(body.maxTotalCentsKwh);
   });
 
   it("loads and updates me/settings with session auth", async () => {

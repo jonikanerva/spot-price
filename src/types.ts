@@ -54,12 +54,14 @@ export interface TotalPrice {
   readonly isNightRate: boolean;
 }
 
-/** Cheapest contiguous window result */
-export interface CheapestWindow {
+/** Window result */
+export interface PriceWindow {
   readonly start: string;
   readonly end: string;
   readonly startLocal: string;
   readonly endLocal: string;
+  readonly minTotalCentsKwh: number;
+  readonly maxTotalCentsKwh: number;
   readonly averageTotalCentsKwh: number;
   readonly prices: TotalPrice[];
 }

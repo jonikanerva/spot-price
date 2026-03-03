@@ -30,15 +30,7 @@ export const TotalPriceSchema = z
   })
   .openapi("TotalPrice");
 
-export const PriceListSchema = z
-  .object({
-    prices: z.array(TotalPriceSchema),
-    available: z.boolean().openapi({ example: true }),
-    expectedAt: z.string().optional().openapi({ example: "14:00 EET" }),
-  })
-  .openapi("PriceList");
-
-export const CheapestWindowSchema = z
+export const PriceWindowSchema = z
   .object({
     start: z.string().openapi({ example: "2026-02-27T22:00:00.000Z" }),
     end: z.string().openapi({ example: "2026-02-28T01:00:00.000Z" }),
@@ -46,10 +38,17 @@ export const CheapestWindowSchema = z
       .string()
       .openapi({ example: "2026-02-28T00:00:00.000+02:00" }),
     endLocal: z.string().openapi({ example: "2026-02-28T03:00:00.000+02:00" }),
+    minTotalCentsKwh: z.number().openapi({ example: 6.21 }),
+    maxTotalCentsKwh: z.number().openapi({ example: 11.05 }),
     averageTotalCentsKwh: z.number().openapi({ example: 8.42 }),
     prices: z.array(TotalPriceSchema),
   })
-  .openapi("CheapestWindow");
+  .openapi("PriceWindow");
+
+export const PriceListSchema = PriceWindowSchema.extend({
+  available: z.boolean().openapi({ example: true }),
+  expectedAt: z.string().optional().openapi({ example: "14:00 EET" }),
+}).openapi("PriceList");
 
 const SpotPriceEntrySchema = z
   .object({

@@ -1,6 +1,7 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createRoute } from "@hono/zod-openapi";
 import {
+  buildPriceWindow,
   calculateTotalPrice,
   calculateTotalPrices,
   findCheapestWindow,
@@ -18,7 +19,7 @@ import type { HourlyPrice, TotalPrice, UserSettings } from "../types.js";
 import { getDefaultTimezone } from "../areas.js";
 import {
   CheapestQuerySchema,
-  CheapestWindowSchema,
+  PriceWindowSchema,
   ErrorSchema,
   PriceListSchema,
   PublicSpotSchema,
@@ -151,7 +152,7 @@ const priceCheapestRoute = createRoute({
   request: { query: CheapestQuerySchema },
   responses: {
     200: {
-      content: { "application/json": { schema: CheapestWindowSchema } },
+      content: { "application/json": { schema: PriceWindowSchema } },
       description: "Cheapest window with price breakdown per interval",
     },
     400: {
@@ -254,12 +255,28 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
       settings.area,
     );
     if (prices.length === 0) {
-      return c.json({ prices: [], available: false }, 200);
+      return c.json(
+        {
+          start: "",
+          end: "",
+          startLocal: "",
+          endLocal: "",
+          minTotalCentsKwh: 0,
+          maxTotalCentsKwh: 0,
+          averageTotalCentsKwh: 0,
+          prices: [],
+          available: false,
+        },
+        200,
+      );
     }
+
+    const totals = calculateTotalPrices(prices, settings);
+    const window = buildPriceWindow(totals);
 
     return c.json(
       {
-        prices: calculateTotalPrices(prices, settings),
+        ...window!,
         available: true,
       },
       200,
@@ -284,6 +301,13 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     if (prices.length === 0) {
       return c.json(
         {
+          start: "",
+          end: "",
+          startLocal: "",
+          endLocal: "",
+          minTotalCentsKwh: 0,
+          maxTotalCentsKwh: 0,
+          averageTotalCentsKwh: 0,
           available: false as const,
           expectedAt: "14:00 EET",
           prices: [] as TotalPrice[],
@@ -292,9 +316,12 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
       );
     }
 
+    const totals = calculateTotalPrices(prices, settings);
+    const window = buildPriceWindow(totals);
+
     return c.json(
       {
-        prices: calculateTotalPrices(prices, settings),
+        ...window!,
         available: true as const,
       },
       200 as const,
