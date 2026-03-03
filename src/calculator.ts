@@ -2,7 +2,7 @@ import type {
   HourlyPrice,
   UserSettings,
   TotalPrice,
-  CheapestWindow,
+  PriceWindow,
 } from "./types.js";
 import { eurMwhToCentsKwh } from "./nordpool.js";
 import { formatDateTimeInTimeZone } from "./time.js";
@@ -123,10 +123,52 @@ export const calculateTotalPrices = (
  * @param durationMinutes Minimum window length in minutes
  * @returns The cheapest window of at least durationMinutes, or null if none exists
  */
+/** Build a PriceWindow from a non-empty array of TotalPrice entries */
+export const buildPriceWindow = (prices: TotalPrice[]): PriceWindow | null => {
+  if (prices.length === 0) {
+    return null;
+  }
+
+  const firstPrice = prices[0];
+  const lastPrice = prices[prices.length - 1];
+  if (!firstPrice || !lastPrice) {
+    return null;
+  }
+
+  let totalWeightedSum = 0;
+  let totalMinutes = 0;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  for (const entry of prices) {
+    const intervalMinutes = getIntervalMinutes(
+      entry.deliveryStart,
+      entry.deliveryEnd,
+    );
+    totalWeightedSum += entry.totalCentsKwh * intervalMinutes;
+    totalMinutes += intervalMinutes;
+    if (entry.totalCentsKwh < min) min = entry.totalCentsKwh;
+    if (entry.totalCentsKwh > max) max = entry.totalCentsKwh;
+  }
+
+  const average = totalMinutes > 0 ? totalWeightedSum / totalMinutes : 0;
+
+  return {
+    start: firstPrice.deliveryStart,
+    end: lastPrice.deliveryEnd,
+    startLocal: firstPrice.localStart,
+    endLocal: lastPrice.localEnd,
+    minTotalCentsKwh: Math.round(min * 1000) / 1000,
+    maxTotalCentsKwh: Math.round(max * 1000) / 1000,
+    averageTotalCentsKwh: Math.round(average * 1000) / 1000,
+    prices,
+  };
+};
+
 export const findCheapestWindow = (
   prices: readonly TotalPrice[],
   durationMinutes: number,
-): CheapestWindow | null => {
+): PriceWindow | null => {
   if (prices.length === 0 || durationMinutes <= 0) {
     return null;
   }
@@ -175,19 +217,5 @@ export const findCheapestWindow = (
     return null;
   }
 
-  const firstPrice = bestWindow[0];
-  const lastPrice = bestWindow[bestWindow.length - 1];
-
-  if (!firstPrice || !lastPrice) {
-    return null;
-  }
-
-  return {
-    start: firstPrice.deliveryStart,
-    end: lastPrice.deliveryEnd,
-    startLocal: firstPrice.localStart,
-    endLocal: lastPrice.localEnd,
-    averageTotalCentsKwh: Math.round(bestAverage * 1000) / 1000,
-    prices: bestWindow,
-  };
+  return buildPriceWindow(bestWindow);
 };

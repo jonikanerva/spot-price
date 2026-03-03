@@ -204,6 +204,8 @@ describe("findCheapestWindow", () => {
     expect(result?.start).toContain("T01:");
     expect(result?.end).toContain("T04:");
     expect(result?.averageTotalCentsKwh).toBe(2); // (2+1+3)/3
+    expect(result?.minTotalCentsKwh).toBe(1);
+    expect(result?.maxTotalCentsKwh).toBe(3);
   });
 
   it("returns null when window is longer than available prices", () => {
@@ -236,6 +238,8 @@ describe("findCheapestWindow", () => {
     expect(result).not.toBeNull();
     expect(result?.prices).toHaveLength(1);
     expect(result?.averageTotalCentsKwh).toBe(3);
+    expect(result?.minTotalCentsKwh).toBe(3);
+    expect(result?.maxTotalCentsKwh).toBe(3);
     expect(result?.start).toContain("T01:");
   });
 
@@ -251,6 +255,8 @@ describe("findCheapestWindow", () => {
     expect(result).not.toBeNull();
     expect(result?.prices).toHaveLength(3);
     expect(result?.averageTotalCentsKwh).toBe(5); // (5+3+7)/3
+    expect(result?.minTotalCentsKwh).toBe(3);
+    expect(result?.maxTotalCentsKwh).toBe(7);
   });
 
   it("is provably optimal — brute-force verification", () => {
