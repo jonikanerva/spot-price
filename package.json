@@ -8,7 +8,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "tsup && pnpm copy:migrations",
     "start": "node dist/index.js",
     "lint": "eslint .",
@@ -20,7 +20,7 @@
     "test:e2e": "playwright test",
     "test:all": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx src/seed.ts",
+    "seed": "tsx --env-file=.env src/seed.ts",
     "copy:migrations": "mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/"
   },
   "dependencies": {
@@ -32,6 +32,7 @@
     "hono": "^4.12.3",
     "hono-rate-limiter": "^0.5.3",
     "node-cron": "^4.2.1",
+    "pg": "^8.20.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -41,6 +42,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.2",
     "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.20.0",
     "eslint": "^10.0.2",
     "prettier": "^3.8.1",
     "tsup": "^8.5.1",
@@ -51,7 +53,6 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "esbuild"
     ]
   }

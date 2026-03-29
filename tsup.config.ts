@@ -9,5 +9,5 @@ export default defineConfig({
   sourcemap: true,
   dts: false,
   splitting: false,
-  external: ["better-sqlite3"],
+  external: ["pg"],
 });
