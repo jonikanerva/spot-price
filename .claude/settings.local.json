@@ -30,9 +30,5 @@
       "Bash(git push origin main:*)",
       "Bash(rm -rf:*)"
     ]
-  },
-  "sandbox": {
-    "allowUnsandboxedCommands": false,
-    "excludedCommands": ["pnpm test:all"]
   }
 }

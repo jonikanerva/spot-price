@@ -30,3 +30,6 @@ Thumbs.db
 # Playwright
 test-results/
 playwright-report/
+
+# Agents
+.claude/worktrees
