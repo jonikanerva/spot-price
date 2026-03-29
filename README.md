@@ -116,17 +116,18 @@ Server starts at `http://localhost:3000`.
 
 ### Available scripts
 
-| Script           | Description                      |
-| ---------------- | -------------------------------- |
-| `pnpm dev`       | Start dev server with hot reload |
-| `pnpm build`     | Production build via tsup        |
-| `pnpm start`     | Run production build             |
-| `pnpm test`      | Run unit tests (Vitest)          |
-| `pnpm test:e2e`  | Run E2E tests (Playwright)       |
-| `pnpm typecheck` | TypeScript type checking         |
-| `pnpm lint`      | ESLint                           |
-| `pnpm format`    | Prettier format                  |
-| `pnpm seed`      | Seed database with sample prices |
+| Script           | Description                                      |
+| ---------------- | ------------------------------------------------ |
+| `pnpm dev`       | Start dev server with hot reload                 |
+| `pnpm build`     | Production build via tsup                        |
+| `pnpm start`     | Run production build                             |
+| `pnpm test`      | Run unit tests (Vitest)                          |
+| `pnpm test:e2e`  | Run E2E tests (Playwright)                       |
+| `pnpm test:all`  | Run all checks (typecheck + lint + test + build) |
+| `pnpm typecheck` | TypeScript type checking                         |
+| `pnpm lint`      | ESLint                                           |
+| `pnpm format`    | Prettier format                                  |
+| `pnpm seed`      | Seed database with sample prices                 |
 
 ### Environment variables
 

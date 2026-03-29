@@ -24,9 +24,6 @@ data/
 # OS
 Thumbs.db
 
-# Worktrees
-.worktrees/
-
 # Logs
 *.log
 
