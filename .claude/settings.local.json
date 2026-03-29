@@ -23,7 +23,8 @@
       "WebFetch(domain:backboard.railway.com)",
       "WebFetch(domain:railway.com)",
       "WebFetch(domain:docs.railway.com)",
-      "WebFetch(domain:registry.npmjs.org)"
+      "WebFetch(domain:registry.npmjs.org)",
+      "Bash(docker compose:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
