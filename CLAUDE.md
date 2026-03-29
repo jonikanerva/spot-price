@@ -6,7 +6,7 @@ Nord Pool spot electricity price API with total price calculation and cheapest w
 
 - **Runtime**: Node.js 24 LTS, TypeScript (strict mode)
 - **Framework**: Hono + @hono/node-server
-- **Database**: SQLite via better-sqlite3 (WAL mode)
+- **Database**: PostgreSQL via pg (node-postgres)
 - **Auth**: Better Auth (self-hosted)
 - **Package manager**: pnpm
 - **Tests**: Vitest (unit) + Playwright (E2E)
@@ -17,6 +17,25 @@ Nord Pool spot electricity price API with total price calculation and cheapest w
 
 - All project artifacts in **English**: code, comments, commits, branch names, PR titles, variable names, error messages.
 - User communication in **Finnish**.
+
+## Local Development
+
+Requires Docker for PostgreSQL.
+
+```bash
+# Start PostgreSQL
+docker compose up -d
+
+# Install dependencies and start dev server
+source ~/.nvm/nvm.sh && nvm use
+pnpm install
+cp .env.example .env
+pnpm dev
+```
+
+The database schema is created automatically on startup via the migration system. Seed data: `pnpm seed`.
+
+To stop: `docker compose down` (data persists in the `pgdata` volume). To reset: `docker compose down -v`.
 
 ## Verification
 
@@ -29,6 +48,8 @@ pnpm test:all
 ```
 
 This runs: `typecheck → lint → test → build`
+
+Tests require PostgreSQL running (`docker compose up -d`).
 
 ## Code Standards
 

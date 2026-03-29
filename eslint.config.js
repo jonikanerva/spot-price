@@ -28,6 +28,7 @@ export default tseslint.config(
       "e2e/",
       "*.config.js",
       "*.config.ts",
+      "scripts/",
     ],
   },
 );
