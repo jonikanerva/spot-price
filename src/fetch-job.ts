@@ -7,7 +7,7 @@ import { formatUtcDate } from "./time.js";
 /** Minimum expected price entries per area per day (DST days may have 23h = 92 entries) */
 const MIN_ENTRIES_PER_AREA = 23;
 
-const getTodayAndTomorrow = (): { today: string; tomorrow: string } => {
+export const getTodayAndTomorrow = (): { today: string; tomorrow: string } => {
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
@@ -31,14 +31,22 @@ const utcDateToRange = (
   endUtc: `${utcDate}T23:59:59.999Z`,
 });
 
-interface FetchResult {
+export interface FetchResult {
   readonly date: string;
   readonly stored: number;
   readonly skipped: boolean;
 }
 
+export interface FetchJobResult {
+  readonly results: readonly FetchResult[];
+  readonly tomorrowAvailable: boolean;
+}
+
 /** Check if all areas already have data for a given date */
-const allAreasPresent = (db: Database.Database, date: string): boolean => {
+export const allAreasPresent = (
+  db: Database.Database,
+  date: string,
+): boolean => {
   const totalAreas = DELIVERY_AREAS.length;
   const { startUtc, endUtc } = utcDateToRange(date);
   const areasWithData = DELIVERY_AREAS.filter(
@@ -83,10 +91,10 @@ const logFetchResult = (date: string, result: FetchResult): void => {
   }
 };
 
-/** Run the daily price fetch job: fetch today + tomorrow for all areas */
+/** Run the price fetch job: fetch today + tomorrow for all areas */
 export const runFetchJob = async (
   db: Database.Database,
-): Promise<readonly FetchResult[]> => {
+): Promise<FetchJobResult> => {
   const { today, tomorrow } = getTodayAndTomorrow();
   const results: FetchResult[] = [];
 
@@ -96,18 +104,18 @@ export const runFetchJob = async (
 
   const todayResult = await fetchForDate(db, today);
   results.push(todayResult);
-
   logFetchResult(today, todayResult);
 
+  let tomorrowAvailable = false;
   try {
     const tomorrowResult = await fetchForDate(db, tomorrow);
     results.push(tomorrowResult);
     logFetchResult(tomorrow, tomorrowResult);
+    tomorrowAvailable = tomorrowResult.skipped || tomorrowResult.stored > 0;
   } catch (error) {
-    // Network errors are not expected — log as warning
     const msg = error instanceof Error ? error.message : "unknown error";
     console.warn(`[fetch-job] ${tomorrow}: fetch failed (${msg})`);
   }
 
-  return results;
+  return { results, tomorrowAvailable };
 };

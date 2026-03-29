@@ -3,39 +3,52 @@ import cron from "node-cron";
 import type Database from "better-sqlite3";
 import { runFetchJob } from "./fetch-job.js";
 
-const MAX_RETRY_ATTEMPTS = 8; // 8 retries × 15 min = 2 hours
-const RETRY_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-
-const retryWithBackoff = async (db: Database.Database): Promise<void> => {
-  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
-    try {
-      await runFetchJob(db);
-      console.log("[scheduler] Fetch job completed successfully");
-      return;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "unknown error";
-      console.error(
-        `[scheduler] Attempt ${String(attempt)}/${String(MAX_RETRY_ATTEMPTS)} failed: ${msg}`,
-      );
-
-      if (attempt < MAX_RETRY_ATTEMPTS) {
-        console.log("[scheduler] Retrying in 15 minutes...");
-        await new Promise((resolve) => setTimeout(resolve, RETRY_INTERVAL_MS));
-      }
+const safeFetch = async (
+  db: Database.Database,
+  label: string,
+): Promise<void> => {
+  try {
+    const result = await runFetchJob(db);
+    const stored = result.results.reduce((sum, r) => sum + r.stored, 0);
+    if (stored > 0) {
+      console.log(`[scheduler] ${label}: stored ${String(stored)} new prices`);
+    } else {
+      console.log(`[scheduler] ${label}: no new data to store`);
     }
+    if (!result.tomorrowAvailable) {
+      console.log(
+        "[scheduler] Tomorrow's prices not yet available — will retry next cycle",
+      );
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "unknown error";
+    console.error(`[scheduler] ${label} failed: ${msg}`);
   }
-  console.error("[scheduler] All retry attempts exhausted");
 };
 
 /**
- * Schedule daily price fetch at 12:00 UTC (14:00 EET winter / 15:00 EET summer).
- * Nord Pool publishes next-day prices at ~12:42 CET (13:42 EET).
- * Running at 14:00 EET gives ~15 min buffer.
+ * Run an immediate fetch on startup so restarts and deploys
+ * do not leave gaps until the next scheduled cycle.
+ */
+export const runStartupFetch = (db: Database.Database): void => {
+  void safeFetch(db, "Startup fetch");
+};
+
+/**
+ * Schedule price fetch every 2 hours.
+ *
+ * Nord Pool publishes next-day prices at ~12:42 CET (13:42 EET / 14:42 EEST).
+ * Instead of a single daily run with complex retry logic, we poll every 2 hours.
+ * Each run is idempotent — already-stored data is skipped via allAreasPresent.
+ * This naturally handles:
+ *   - DST transitions (no publication-time guessing needed)
+ *   - Nord Pool outages (next cycle retries automatically)
+ *   - Service restarts (startup fetch + next cycle fills gaps)
  */
 export const startScheduler = (db: Database.Database): ScheduledTask => {
-  console.log("[scheduler] Daily price fetch scheduled for 12:00 UTC");
+  console.log("[scheduler] Price fetch scheduled every 2 hours");
 
-  return cron.schedule("0 12 * * *", () => {
-    void retryWithBackoff(db);
+  return cron.schedule("0 */2 * * *", () => {
+    void safeFetch(db, "Scheduled fetch");
   });
 };
