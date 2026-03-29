@@ -1,7 +1,6 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch",
       "Bash(pnpm:*)",
       "Bash(gh pr:*)",
       "Bash(gh api:*)",
@@ -16,12 +15,22 @@
       "Bash(git push origin:*)",
       "Bash(git pull:*)",
       "Bash(source ~/.nvm/nvm.sh)",
-      "Bash(nvm use:*)"
+      "Bash(nvm use:*)",
+      "WebFetch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:backboard.railway.com)",
+      "WebFetch(domain:railway.com)",
+      "WebFetch(domain:docs.railway.com)"
     ],
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push origin main:*)",
       "Bash(rm -rf:*)"
     ]
+  },
+  "sandbox": {
+    "allowUnsandboxedCommands": false
   }
 }
