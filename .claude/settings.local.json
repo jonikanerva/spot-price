@@ -31,5 +31,29 @@
       "Bash(git push origin main:*)",
       "Bash(rm -rf:*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'if echo \"$CLAUDE_TOOL_INPUT\" | grep -q \"gh pr create\"; then echo \"PR created. Run /codereview to start review.\"; fi'"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'if echo \"$CLAUDE_TOOL_INPUT\" | grep -qE \"git push.*(origin main|origin HEAD:main)\"; then echo \"BLOCKED: Never push directly to main. Create a PR instead.\" >&2; exit 2; fi'"
+          }
+        ]
+      }
+    ]
   }
 }

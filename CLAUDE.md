@@ -62,6 +62,7 @@ Tests require PostgreSQL running (`docker compose up -d`).
 
 ## Git Workflow
 
+- Use `/implement <task>` for the full branch → implement → test → PR workflow.
 - Every feature gets its own branch. Branch from `main`, PR back to `main`.
 - **NEVER** commit or push directly to `main`.
 - **NEVER** force push (`--force` or `--force-with-lease`).
@@ -98,41 +99,20 @@ Use Claude Code's built-in `/plan` mode for any non-trivial work. Before impleme
 
 ## Code Review
 
-When a PR is ready for review, launch a **separate review subagent** using the Agent tool with this prompt:
+Use `/codereview` (or `/codereview NUMBER`) for the full review loop.
+The skill handles: isolated subagent review → audit trail comment → fix → re-review (max 3 iterations).
 
-> You are a code reviewer. Run these commands for PR #NUMBER:
->
-> 1. `gh pr view NUMBER`
-> 2. `gh pr diff NUMBER`
-> 3. `gh pr checks NUMBER`
-> 4. `gh pr view NUMBER --comments`
->
-> Review criteria:
->
-> - **Scope verification**: does the diff match the PR description? Flag any undocumented changes — especially removals, renames, or architectural shifts. If the PR description is missing or vague, FAIL.
-> - **Code quality**: no `any` types, pure functions, DRY, explicit error handling
-> - **Security**: no secrets, parameterized SQL, input validation
-> - **Architecture**: separation of concerns, consistent patterns
-> - **Commits**: one logical change per commit, clear messages
-> - **Language**: all artifacts in English
-> - **Tests**: new logic has tests, no broken tests
->
-> **CI checks must be green** (`gh pr checks`) before verdict can be PASS.
->
-> Verdict: **PASS** (no critical/important issues, CI green) or **FAIL**.
->
-> **Always** post the full review as a PR comment (`gh pr comment --body [review]`) — this is the audit trail and must never be skipped.
->
-> Then attempt the formal review action (may fail on own PRs — that's OK, the comment is what matters):
-> - For FAIL: `gh pr review --request-changes --body "See review comment above"`
-> - For PASS: `gh pr review --approve --body "See review comment above"`. Do NOT merge.
->
-> Review comment structure:
->
-> - Start with a 1-2 sentence summary of what the PR does
-> - List findings by severity: critical → important → minor
-> - Each finding: `file:line` — what is wrong and why it matters
-> - End with a clear verdict: PASS or FAIL
+Review criteria (used by the review subagent):
+
+- **Scope verification**: diff matches PR description; undocumented changes → FAIL
+- **Code quality**: no `any` types, pure functions, DRY, explicit error handling
+- **Security**: no secrets, parameterized SQL, input validation
+- **Architecture**: separation of concerns, consistent patterns
+- **Commits**: one logical change per commit, clear messages
+- **Language**: all artifacts in English
+- **Tests**: new logic has tests, no broken tests
+
+CI checks must be green before verdict can be PASS.
 
 ## Testing
 
