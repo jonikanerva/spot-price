@@ -1,21 +1,16 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { initTestDatabase, closeDatabase } from "./db.js";
-import BetterSqlite3 from "better-sqlite3";
-import type Database from "better-sqlite3";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import type { Pool } from "pg";
 
 interface TableInfo {
   name: string;
 }
 
 interface ColumnInfo {
-  name: string;
-  type: string;
-  notnull: number;
-  dflt_value: string | null;
-  pk: number;
+  column_name: string;
+  data_type: string;
+  is_nullable: string;
+  column_default: string | null;
 }
 
 interface MigrationRecord {
@@ -23,37 +18,34 @@ interface MigrationRecord {
   name: string;
 }
 
-const getTableNames = (db: Database.Database): readonly string[] => {
-  const rows = db
-    .prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-    )
-    .all() as readonly TableInfo[];
+const getTableNames = async (pool: Pool): Promise<readonly string[]> => {
+  const { rows } = await pool.query<TableInfo>(
+    "SELECT tablename AS name FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename",
+  );
   return rows.map((r) => r.name);
 };
 
-const getColumns = (
-  db: Database.Database,
+const getColumns = async (
+  pool: Pool,
   table: string,
-): readonly ColumnInfo[] => {
-  return db.prepare(`PRAGMA table_info(${table})`).all() as ColumnInfo[];
+): Promise<readonly ColumnInfo[]> => {
+  const { rows } = await pool.query<ColumnInfo>(
+    "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position",
+    [table],
+  );
+  return rows;
 };
 
-const migrationsDir = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "migrations",
-);
-
 describe("migration system", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  it("creates all expected tables", () => {
-    db = initTestDatabase();
-    const tables = getTableNames(db);
+  it("creates all expected tables", async () => {
+    pool = await initTestDatabase();
+    const tables = await getTableNames(pool);
 
     expect(tables).toContain("_migrations");
     expect(tables).toContain("prices");
@@ -66,52 +58,39 @@ describe("migration system", () => {
     expect(tables).toContain("usernames");
   });
 
-  it("records migration versions", () => {
-    db = initTestDatabase();
-    const migrations = db
-      .prepare("SELECT version, name FROM _migrations ORDER BY version")
-      .all() as readonly MigrationRecord[];
+  it("records migration versions", async () => {
+    pool = await initTestDatabase();
+    const { rows: migrations } = await pool.query<MigrationRecord>(
+      "SELECT version, name FROM _migrations ORDER BY version",
+    );
 
-    expect(migrations.length).toBe(7);
+    expect(migrations.length).toBe(1);
     expect(migrations[0]?.version).toBe(1);
-    expect(migrations[0]?.name).toBe("create_prices");
-    expect(migrations[1]?.version).toBe(2);
-    expect(migrations[1]?.name).toBe("create_user_settings");
-    expect(migrations[2]?.version).toBe(3);
-    expect(migrations[2]?.name).toBe("create_api_keys");
-    expect(migrations[3]?.version).toBe(4);
-    expect(migrations[3]?.name).toBe("create_better_auth_tables");
-    expect(migrations[4]?.version).toBe(5);
-    expect(migrations[4]?.name).toBe("create_usernames");
-    expect(migrations[5]?.version).toBe(6);
-    expect(migrations[5]?.name).toBe("harden_api_keys_storage");
-    expect(migrations[6]?.version).toBe(7);
-    expect(migrations[6]?.name).toBe("drop_api_key_hash_and_name");
+    expect(migrations[0]?.name).toBe("baseline");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
-    db = initTestDatabase();
+    pool = await initTestDatabase();
 
-    // runMigrations already ran in initTestDatabase — import and run again
     const { runMigrations } = await import("./migrate.js");
-    const result = runMigrations(db);
+    const result = await runMigrations(pool);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(7);
+    expect(result.total).toBe(1);
   });
 });
 
 describe("prices table", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  it("has expected columns", () => {
-    db = initTestDatabase();
-    const columns = getColumns(db, "prices");
-    const columnNames = columns.map((c) => c.name);
+  it("has expected columns", async () => {
+    pool = await initTestDatabase();
+    const columns = await getColumns(pool, "prices");
+    const columnNames = columns.map((c) => c.column_name);
 
     expect(columnNames).toContain("id");
     expect(columnNames).toContain("delivery_start");
@@ -121,76 +100,72 @@ describe("prices table", () => {
     expect(columnNames).toContain("fetched_at");
   });
 
-  it("enforces unique constraint on delivery_start + area", () => {
-    db = initTestDatabase();
+  it("enforces unique constraint on delivery_start + area", async () => {
+    pool = await initTestDatabase();
 
-    db.prepare(
-      "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES (?, ?, ?, ?)",
-    ).run(
-      "2026-02-24T00:00:00+02:00",
-      "2026-02-24T01:00:00+02:00",
-      45.23,
-      "FI",
+    await pool.query(
+      "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES ($1, $2, $3, $4)",
+      ["2026-02-24T00:00:00+02:00", "2026-02-24T01:00:00+02:00", 45.23, "FI"],
     );
 
-    expect(() => {
-      db.prepare(
-        "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES (?, ?, ?, ?)",
-      ).run(
-        "2026-02-24T00:00:00+02:00",
-        "2026-02-24T01:00:00+02:00",
-        50.0,
-        "FI",
-      );
-    }).toThrow();
+    await expect(
+      pool.query(
+        "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES ($1, $2, $3, $4)",
+        [
+          "2026-02-24T00:00:00+02:00",
+          "2026-02-24T01:00:00+02:00",
+          50.0,
+          "FI",
+        ],
+      ),
+    ).rejects.toThrow();
   });
 
-  it("allows same delivery_start for different areas", () => {
-    db = initTestDatabase();
+  it("allows same delivery_start for different areas", async () => {
+    pool = await initTestDatabase();
 
-    db.prepare(
-      "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES (?, ?, ?, ?)",
-    ).run(
-      "2026-02-24T00:00:00+02:00",
-      "2026-02-24T01:00:00+02:00",
-      45.23,
-      "FI",
+    await pool.query(
+      "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES ($1, $2, $3, $4)",
+      ["2026-02-24T00:00:00+02:00", "2026-02-24T01:00:00+02:00", 45.23, "FI"],
     );
 
-    // Should not throw — different area
-    db.prepare(
-      "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES (?, ?, ?, ?)",
-    ).run(
-      "2026-02-24T00:00:00+02:00",
-      "2026-02-24T01:00:00+02:00",
-      38.1,
-      "SE1",
+    await pool.query(
+      "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES ($1, $2, $3, $4)",
+      [
+        "2026-02-24T00:00:00+02:00",
+        "2026-02-24T01:00:00+02:00",
+        38.1,
+        "SE1",
+      ],
     );
 
-    const count = db.prepare("SELECT COUNT(*) as cnt FROM prices").get() as {
-      cnt: number;
-    };
-    expect(count.cnt).toBe(2);
+    const { rows } = await pool.query<{ cnt: string }>(
+      "SELECT COUNT(*) AS cnt FROM prices",
+    );
+    expect(parseInt(rows[0]?.cnt ?? "0", 10)).toBe(2);
   });
 });
 
 describe("user_settings table", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  it("has correct defaults", () => {
-    db = initTestDatabase();
+  it("has correct defaults", async () => {
+    pool = await initTestDatabase();
 
-    db.prepare("INSERT INTO user_settings (user_id) VALUES (?)").run(
+    await pool.query("INSERT INTO user_settings (user_id) VALUES ($1)", [
       "test-user-1",
-    );
+    ]);
 
-    const row = db
-      .prepare("SELECT * FROM user_settings WHERE user_id = ?")
-      .get("test-user-1") as Record<string, unknown>;
+    const { rows } = await pool.query<Record<string, unknown>>(
+      "SELECT * FROM user_settings WHERE user_id = $1",
+      ["test-user-1"],
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
 
     expect(row["margin_cents_kwh"]).toBe(0.49);
     expect(row["transfer_day_cents_kwh"]).toBe(2.92);
@@ -205,68 +180,30 @@ describe("user_settings table", () => {
 });
 
 describe("api_keys table", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  it("can store and retrieve an API key", () => {
-    db = initTestDatabase();
+  it("can store and retrieve an API key", async () => {
+    pool = await initTestDatabase();
 
-    db.prepare(
-      "INSERT INTO api_keys (id, user_id, key_plaintext) VALUES (?, ?, ?)",
-    ).run("key-1", "user-1", "sp_test_key_123");
+    await pool.query(
+      "INSERT INTO api_keys (id, user_id, key_plaintext) VALUES ($1, $2, $3)",
+      ["key-1", "user-1", "sp_test_key_123"],
+    );
 
-    const row = db
-      .prepare("SELECT * FROM api_keys WHERE id = ?")
-      .get("key-1") as Record<string, unknown>;
+    const { rows } = await pool.query<Record<string, unknown>>(
+      "SELECT * FROM api_keys WHERE id = $1",
+      ["key-1"],
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
 
     expect(row["user_id"]).toBe("user-1");
     expect(row["key_plaintext"]).toBe("sp_test_key_123");
-    expect(row["key_hash"]).toBeUndefined();
-    expect(row["name"]).toBeUndefined();
     expect(row["created_at"]).toBeDefined();
     expect(row["last_used_at"]).toBeNull();
-  });
-
-  it("migration 007 fails fast when api_keys contains null plaintext", () => {
-    const dbLegacy = new BetterSqlite3(":memory:");
-    try {
-      dbLegacy.exec(`
-        CREATE TABLE api_keys (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          key_hash TEXT NOT NULL,
-          key_plaintext TEXT,
-          name TEXT NOT NULL DEFAULT 'Default',
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          last_used_at TEXT
-        );
-      `);
-
-      dbLegacy
-        .prepare(
-          `INSERT INTO api_keys (id, user_id, key_hash, key_plaintext, name, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          "legacy-key",
-          "legacy-user",
-          "deadbeef",
-          null,
-          "Default",
-          new Date().toISOString(),
-        );
-
-      const migrationSql = readFileSync(
-        path.join(migrationsDir, "007_drop_api_key_hash_and_name.sql"),
-        "utf-8",
-      );
-
-      expect(() => dbLegacy.exec(migrationSql)).toThrow();
-    } finally {
-      dbLegacy.close();
-    }
   });
 });

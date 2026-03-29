@@ -5,14 +5,14 @@ import {
   getPricesByRange,
   countPricesByRange,
 } from "./price-store.js";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import type { HourlyPrice } from "./types.js";
 
 describe("price-store", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
   const samplePrices: readonly HourlyPrice[] = [
@@ -36,14 +36,14 @@ describe("price-store", () => {
     },
   ];
 
-  it("stores prices and retrieves them by UTC range", () => {
-    db = initTestDatabase();
-    const count = storePrices(db, samplePrices);
+  it("stores prices and retrieves them by UTC range", async () => {
+    pool = await initTestDatabase();
+    const count = await storePrices(pool, samplePrices);
 
     expect(count).toBe(3);
 
-    const retrieved = getPricesByRange(
-      db,
+    const retrieved = await getPricesByRange(
+      pool,
       "2026-02-24T00:00:00.000Z",
       "2026-02-24T03:00:00.000Z",
       "FI",
@@ -54,9 +54,9 @@ describe("price-store", () => {
     expect(retrieved[2]?.priceEurMwh).toBe(25.1);
   });
 
-  it("upserts — duplicate inserts update price", () => {
-    db = initTestDatabase();
-    storePrices(db, samplePrices);
+  it("upserts — duplicate inserts update price", async () => {
+    pool = await initTestDatabase();
+    await storePrices(pool, samplePrices);
 
     const updated: readonly HourlyPrice[] = [
       {
@@ -66,10 +66,10 @@ describe("price-store", () => {
         area: "FI",
       },
     ];
-    storePrices(db, updated);
+    await storePrices(pool, updated);
 
-    const retrieved = getPricesByRange(
-      db,
+    const retrieved = await getPricesByRange(
+      pool,
       "2026-02-24T00:00:00.000Z",
       "2026-02-24T01:00:00.000Z",
       "FI",
@@ -79,20 +79,20 @@ describe("price-store", () => {
     expect(retrieved[0]?.priceEurMwh).toBe(99.9);
   });
 
-  it("counts prices by UTC range", () => {
-    db = initTestDatabase();
-    storePrices(db, samplePrices);
+  it("counts prices by UTC range", async () => {
+    pool = await initTestDatabase();
+    await storePrices(pool, samplePrices);
 
-    const count = countPricesByRange(
-      db,
+    const count = await countPricesByRange(
+      pool,
       "2026-02-24T00:00:00.000Z",
       "2026-02-25T00:00:00.000Z",
       "FI",
     );
     expect(count).toBe(3);
 
-    const countEmpty = countPricesByRange(
-      db,
+    const countEmpty = await countPricesByRange(
+      pool,
       "2026-02-25T00:00:00.000Z",
       "2026-02-26T00:00:00.000Z",
       "FI",
@@ -100,13 +100,13 @@ describe("price-store", () => {
     expect(countEmpty).toBe(0);
   });
 
-  it("range query is inclusive start, exclusive end", () => {
-    db = initTestDatabase();
-    storePrices(db, samplePrices);
+  it("range query is inclusive start, exclusive end", async () => {
+    pool = await initTestDatabase();
+    await storePrices(pool, samplePrices);
 
     // Exactly at boundary: start inclusive
-    const withStart = getPricesByRange(
-      db,
+    const withStart = await getPricesByRange(
+      pool,
       "2026-02-24T00:00:00Z",
       "2026-02-24T00:30:00Z",
       "FI",
@@ -114,8 +114,8 @@ describe("price-store", () => {
     expect(withStart).toHaveLength(1);
 
     // Exactly at boundary: end exclusive
-    const withoutEnd = getPricesByRange(
-      db,
+    const withoutEnd = await getPricesByRange(
+      pool,
       "2026-02-24T03:00:00Z",
       "2026-02-24T04:00:00Z",
       "FI",

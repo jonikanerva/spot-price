@@ -1,11 +1,11 @@
 import { createApp } from "./app.js";
 import { createAuth } from "./auth.js";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 
-/** Create a test app with an in-memory database and auth instance. */
+/** Create a test app with a PostgreSQL pool and auth instance. */
 export const createTestApp = (
-  db: Database.Database,
+  pool: Pool,
 ): ReturnType<typeof createApp> => {
-  const auth = createAuth(db);
-  return createApp(db, auth);
+  const auth = createAuth(pool);
+  return createApp(pool, auth);
 };

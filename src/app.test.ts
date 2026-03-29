@@ -1,24 +1,24 @@
 import { describe, it, expect, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import { Pool } from "pg";
 import { initTestDatabase, closeDatabase } from "./db.js";
 import { createTestApp } from "./test-utils.js";
 import { isRegistrationOpen, MAX_USERS, getClientIp } from "./middleware.js";
 import { Hono } from "hono";
 
 describe("health endpoint", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      closeDatabase(db);
+      await closeDatabase(pool);
     } catch {
       // DB may already be closed by test
     }
   });
 
   it("returns 200 with ok status when DB is healthy", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
 
     const res = await app.request("/health");
 
@@ -29,9 +29,9 @@ describe("health endpoint", () => {
   });
 
   it("returns 503 when DB is closed", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
-    db.close();
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
+    await pool.end();
 
     const res = await app.request("/health");
 
@@ -42,24 +42,26 @@ describe("health endpoint", () => {
 });
 
 describe("isRegistrationOpen", () => {
-  interface RegistrationCountDb {
-    prepare: (sql: string) => { get: () => { count: number } | undefined };
+  interface MockPool {
+    query: (sql: string) => Promise<{ rows: { count: string }[] }>;
   }
 
-  const mockDbWithCount = (count: number): RegistrationCountDb => ({
-    prepare: () => ({ get: () => ({ count }) }),
+  const mockPoolWithCount = (count: number): MockPool => ({
+    query: () => Promise.resolve({ rows: [{ count: String(count) }] }),
   });
 
-  it("returns true when user count is below MAX_USERS", () => {
-    expect(isRegistrationOpen(mockDbWithCount(0))).toBe(true);
+  it("returns true when user count is below MAX_USERS", async () => {
+    expect(await isRegistrationOpen(mockPoolWithCount(0) as unknown as Pool)).toBe(true);
   });
 
-  it("returns false when user count reaches MAX_USERS", () => {
-    expect(isRegistrationOpen(mockDbWithCount(MAX_USERS))).toBe(false);
+  it("returns false when user count reaches MAX_USERS", async () => {
+    expect(await isRegistrationOpen(mockPoolWithCount(MAX_USERS) as unknown as Pool)).toBe(false);
   });
 
-  it("returns true when just below the cap", () => {
-    expect(isRegistrationOpen(mockDbWithCount(MAX_USERS - 1))).toBe(true);
+  it("returns true when just below the cap", async () => {
+    expect(
+      await isRegistrationOpen(mockPoolWithCount(MAX_USERS - 1) as unknown as Pool),
+    ).toBe(true);
   });
 });
 
