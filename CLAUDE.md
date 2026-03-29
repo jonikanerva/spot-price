@@ -46,7 +46,7 @@ This runs: `typecheck → lint → test → build`
 - **NEVER** force push (`--force` or `--force-with-lease`).
 - Commits must be complete logical units — one logical change per commit.
 - Commit messages: concise, English, focus on "why" not "what".
-- PRs are merged with **merge commit** (`gh pr merge --merge`), not squash.
+- PRs are merged with **merge commit** (`gh pr merge --merge --delete-branch`), not squash. Always delete the branch after merge.
 - **PR as audit trail**: the PR description must fully describe what is being changed and why. Every correction after a failed review must be a separate commit + push + PR comment explaining the fix. Design decisions, trade-offs, and compromises must be documented in PR comments — the PR is the permanent record.
 
 ## Dependencies
