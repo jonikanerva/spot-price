@@ -44,8 +44,12 @@ export const initTestDatabase = async (): Promise<pg.Pool> => {
     );
   }
 
+  // Schema name uses only [a-z0-9_] so it is safe for both SQL identifiers
+  // and the -c search_path= connection option without additional escaping.
   const schemaName = `test_${String(Date.now())}_${Math.random().toString(36).slice(2, 8)}`;
-  const escapedSchema = pg.Client.prototype.escapeIdentifier(schemaName);
+  if (!/^[a-z0-9_]+$/.test(schemaName)) {
+    throw new Error(`Unsafe test schema name: ${schemaName}`);
+  }
 
   // Pass search_path via the PostgreSQL options connection parameter so every
   // connection automatically uses the test schema without a connect listener.
@@ -54,11 +58,11 @@ export const initTestDatabase = async (): Promise<pg.Pool> => {
     options: `-c search_path=${schemaName}`,
   });
 
-  await pool.query(`CREATE SCHEMA ${escapedSchema}`);
+  await pool.query(`CREATE SCHEMA ${schemaName}`);
 
   await runMigrations(pool);
 
-  testSchemas.set(pool, escapedSchema);
+  testSchemas.set(pool, schemaName);
 
   return pool;
 };
