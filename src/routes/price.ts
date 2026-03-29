@@ -274,7 +274,20 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const totals = calculateTotalPrices(prices, settings);
     const window = buildPriceWindow(totals);
     if (!window) {
-      return c.json({ error: "Failed to build price window" }, 404);
+      return c.json(
+        {
+          start: "",
+          end: "",
+          startLocal: "",
+          endLocal: "",
+          minTotalCentsKwh: 0,
+          maxTotalCentsKwh: 0,
+          averageTotalCentsKwh: 0,
+          prices: [],
+          available: false,
+        },
+        200,
+      );
     }
 
     return c.json(
@@ -322,7 +335,21 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const totals = calculateTotalPrices(prices, settings);
     const window = buildPriceWindow(totals);
     if (!window) {
-      return c.json({ error: "Failed to build price window" }, 404 as const);
+      return c.json(
+        {
+          start: "",
+          end: "",
+          startLocal: "",
+          endLocal: "",
+          minTotalCentsKwh: 0,
+          maxTotalCentsKwh: 0,
+          averageTotalCentsKwh: 0,
+          available: false as const,
+          expectedAt: "12:00 UTC",
+          prices: [] as TotalPrice[],
+        },
+        200 as const,
+      );
     }
 
     return c.json(

@@ -8,6 +8,15 @@ import {
   addDays,
   getUtcRangeForLocalDate,
 } from "./time.js";
+import {
+  TotalPriceSchema,
+  PriceWindowSchema,
+  PriceListSchema,
+  PublicSpotSchema,
+  ErrorSchema,
+  UserSettingsResponseSchema,
+  ChartDataSchema,
+} from "./api-schemas.js";
 
 const TEST_USER_ID = "user-1";
 const TEST_API_KEY = "sp_test_key_123";
@@ -835,5 +844,124 @@ describe("OpenAPI spec", () => {
     const body = (await response.json()) as { error: string };
     expect(body.error).toBeDefined();
     expect(typeof body.error).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Response schema conformance — ensures every endpoint returns data matching
+// the declared Zod schemas used for OpenAPI documentation.
+// ---------------------------------------------------------------------------
+
+describe("response schema conformance", () => {
+  let db: Database.Database;
+
+  afterEach(() => {
+    closeDatabase(db);
+  });
+
+  const setup = (): ReturnType<typeof createTestApp> => {
+    db = initTestDatabase();
+    seedUser(db);
+    seedPrices(db);
+    return createTestApp(db);
+  };
+
+  it("GET /api/v1/price/now conforms to TotalPriceSchema", async () => {
+    const app = setup();
+    const res = await app.request("/api/v1/price/now", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const result = TotalPriceSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("GET /api/v1/price/today conforms to PriceListSchema", async () => {
+    const app = setup();
+    const res = await app.request("/api/v1/price/today", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const result = PriceListSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("GET /api/v1/price/tomorrow conforms to PriceListSchema", async () => {
+    const app = setup();
+    const res = await app.request("/api/v1/price/tomorrow", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Tomorrow may not be available — both shapes must conform
+    const result = PriceListSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("GET /api/v1/price/cheapest conforms to PriceWindowSchema", async () => {
+    const app = setup();
+    const res = await app.request("/api/v1/price/cheapest?duration=60", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const result = PriceWindowSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("GET /api/public/spot conforms to PublicSpotSchema", async () => {
+    const app = setup();
+    const res = await app.request("/api/public/spot");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const result = PublicSpotSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("GET /api/v1/me/settings conforms to UserSettingsResponseSchema", async () => {
+    db = initTestDatabase();
+    const app = createTestApp(db);
+    const cookie = await loginOrSignupAndGetCookie(app);
+
+    const res = await app.request("/api/v1/me/settings", {
+      headers: { Cookie: cookie },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const result = UserSettingsResponseSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("GET /api/v1/me/chart conforms to ChartDataSchema", async () => {
+    db = initTestDatabase();
+    seedPrices(db);
+    const app = createTestApp(db);
+    const cookie = await loginOrSignupAndGetCookie(app);
+
+    const res = await app.request("/api/v1/me/chart", {
+      headers: { Cookie: cookie },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const result = ChartDataSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("error responses conform to ErrorSchema", async () => {
+    const app = setup();
+
+    // 401 — missing auth
+    const r1 = await app.request("/api/v1/price/now");
+    expect(r1.status).toBe(401);
+    expect(ErrorSchema.safeParse(await r1.json()).success).toBe(true);
+
+    // 400 — invalid query
+    const r2 = await app.request("/api/v1/price/cheapest?duration=0", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(r2.status).toBe(400);
+    expect(ErrorSchema.safeParse(await r2.json()).success).toBe(true);
   });
 });
