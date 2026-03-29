@@ -127,7 +127,7 @@ const priceTomorrowRoute = createRoute({
   tags: ["Price"],
   summary: "Tomorrow's hourly total prices",
   description:
-    "Returns tomorrow's total prices if available. Prices are typically published after 14:00 EET.",
+    "Returns tomorrow's total prices if available. Prices are typically published after 12:00 UTC.",
   security: [{ BearerAuth: [] }],
   responses: {
     200: {
@@ -312,7 +312,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
           maxTotalCentsKwh: 0,
           averageTotalCentsKwh: 0,
           available: false as const,
-          expectedAt: "14:00 EET",
+          expectedAt: "12:00 UTC",
           prices: [] as TotalPrice[],
         },
         200 as const,

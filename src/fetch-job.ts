@@ -82,7 +82,7 @@ const logFetchResult = (date: string, result: FetchResult): void => {
     );
   } else if (result.stored === 0) {
     console.log(
-      `[fetch-job] ${date}: not available yet (published ~14:00 EET)`,
+      `[fetch-job] ${date}: not available yet (published ~12:00 UTC)`,
     );
   } else {
     console.log(

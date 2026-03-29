@@ -37,7 +37,7 @@ export const runStartupFetch = (db: Database.Database): void => {
 /**
  * Schedule price fetch every 2 hours.
  *
- * Nord Pool publishes next-day prices at ~12:42 CET (13:42 EET / 14:42 EEST).
+ * Nord Pool publishes next-day prices at ~12:00 UTC.
  * Instead of a single daily run with complex retry logic, we poll every 2 hours.
  * Each run is idempotent — already-stored data is skipped via allAreasPresent.
  * This naturally handles:

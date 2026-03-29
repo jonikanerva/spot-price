@@ -58,7 +58,7 @@ export const addDays = (date: Date, days: number): Date => {
  *   startUtc = "2026-02-27T22:00:00.000Z"
  *   endUtc   = "2026-02-28T22:00:00.000Z"
  *
- * This is needed because Nord Pool stores delivery times in CET/CEST offsets,
+ * This is needed because Nord Pool delivery times may start before midnight UTC,
  * and a LIKE 'YYYY-MM-DD%' query on the date prefix misses entries whose UTC
  * representation falls on the previous calendar day.
  */

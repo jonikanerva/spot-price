@@ -365,7 +365,7 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
           'ok',
           response.data.tomorrowAvailable
             ? 'Today + tomorrow loaded'
-            : 'Tomorrow not yet available (published ~14:00 EET)',
+            : 'Tomorrow not yet available (published ~12:00 UTC)',
         )
       }
 
