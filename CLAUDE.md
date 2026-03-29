@@ -100,8 +100,11 @@ When a PR is ready for review, launch a **separate review subagent** using the A
 >
 > Verdict: **PASS** (no critical/important issues, CI green) or **FAIL**.
 >
-> - For FAIL: request changes (`gh pr review --request-changes --body [comment]`).
-> - For PASS: approve PR (`gh pr review --approve --body [comment]`). Do NOT merge.
+> **Always** post the full review as a PR comment (`gh pr comment --body [review]`) — this is the audit trail and must never be skipped.
+>
+> Then attempt the formal review action (may fail on own PRs — that's OK, the comment is what matters):
+> - For FAIL: `gh pr review --request-changes --body "See review comment above"`
+> - For PASS: `gh pr review --approve --body "See review comment above"`. Do NOT merge.
 >
 > Review comment structure:
 >
