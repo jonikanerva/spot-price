@@ -2,6 +2,7 @@ import type { Context, Next } from "hono";
 import { rateLimiter } from "hono-rate-limiter";
 import { resolveApiKey } from "./api-keys.js";
 import type { AppEnv } from "./app.js";
+import type { Pool } from "pg";
 
 /** Extract client IP from request headers (Railway sets X-Real-IP) */
 export const getClientIp = (c: Context): string =>
@@ -62,8 +63,8 @@ export const apiKeyAuth = async (
     );
   }
 
-  const db = c.get("db");
-  const userId = resolveApiKey(db, token);
+  const pool = c.get("db");
+  const userId = await resolveApiKey(pool, token);
 
   if (!userId) {
     return c.json({ error: "Invalid API key" }, 401);
@@ -78,11 +79,9 @@ export const apiKeyAuth = async (
 export const MAX_USERS = 100_000;
 
 /** Check if user registration is open (under the user cap) */
-export const isRegistrationOpen = (db: {
-  prepare: (sql: string) => { get: () => { count: number } | undefined };
-}): boolean => {
-  const row = db.prepare('SELECT COUNT(*) as count FROM "user"').get() as
-    | { count: number }
-    | undefined;
-  return (row?.count ?? 0) < MAX_USERS;
+export const isRegistrationOpen = async (pool: Pool): Promise<boolean> => {
+  const { rows } = await pool.query<{ count: string }>(
+    'SELECT COUNT(*) as count FROM "user"',
+  );
+  return parseInt(rows[0]?.count ?? "0", 10) < MAX_USERS;
 };

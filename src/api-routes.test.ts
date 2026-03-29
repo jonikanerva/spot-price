@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { closeDatabase, initTestDatabase } from "./db.js";
 import { createTestApp } from "./test-utils.js";
 import {
@@ -96,60 +96,66 @@ const loginOrSignupAndGetCookie = async (
   return sessionCookie;
 };
 
-const seedUser = (db: Database.Database): void => {
-  db.prepare(
-    `INSERT OR IGNORE INTO user_settings (
+const seedUser = async (pool: Pool): Promise<void> => {
+  await pool.query(
+    `INSERT INTO user_settings (
       user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
       tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    TEST_USER_ID,
-    0.45,
-    3.02,
-    1.55,
-    2.79372,
-    25.5,
-    22,
-    7,
-    "Europe/Helsinki",
-    "FI",
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ON CONFLICT (user_id) DO NOTHING`,
+    [
+      TEST_USER_ID,
+      0.45,
+      3.02,
+      1.55,
+      2.79372,
+      25.5,
+      22,
+      7,
+      "Europe/Helsinki",
+      "FI",
+    ],
   );
 
-  db.prepare(
-    `INSERT INTO api_keys (id, user_id, key_plaintext) VALUES (?, ?, ?)`,
-  ).run("key-1", TEST_USER_ID, TEST_API_KEY);
+  await pool.query(
+    `INSERT INTO api_keys (id, user_id, key_plaintext) VALUES ($1, $2, $3)
+    ON CONFLICT (user_id) DO NOTHING`,
+    ["key-1", TEST_USER_ID, TEST_API_KEY],
+  );
 };
 
-const seedPrices = (db: Database.Database): void => {
+const seedPrices = async (pool: Pool): Promise<void> => {
   const now = new Date();
   for (let i = 0; i < 24; i++) {
     const start = new Date(now.getTime() + i * 15 * 60 * 1000);
     const end = new Date(start.getTime() + 15 * 60 * 1000);
-    db.prepare(
-      `INSERT OR REPLACE INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
-       VALUES (?, ?, ?, ?)`,
-    ).run(start.toISOString(), end.toISOString(), 30 + i, "FI");
+    await pool.query(
+      `INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (delivery_start, area) DO UPDATE SET delivery_end = EXCLUDED.delivery_end, price_eur_mwh = EXCLUDED.price_eur_mwh`,
+      [start.toISOString(), end.toISOString(), 30 + i, "FI"],
+    );
   }
 };
 
 describe("API routes", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
   it("returns 401 for price endpoint without API key", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
 
     const response = await app.request("/api/v1/price/now");
     expect(response.status).toBe(401);
   });
 
   it("supports login-or-signup and returns session payload", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
 
     const cookie = await loginOrSignupAndGetCookie(app);
     const sessionResponse = await app.request("/api/session", {
@@ -168,8 +174,8 @@ describe("API routes", () => {
   });
 
   it("returns 400 for malformed JSON in login-or-signup", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
 
     const response = await app.request("/api/session/login-or-signup", {
       method: "POST",
@@ -183,8 +189,8 @@ describe("API routes", () => {
   });
 
   it("gets or auto-creates a single API key with session auth", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     // First GET auto-creates a key
@@ -205,8 +211,8 @@ describe("API routes", () => {
   });
 
   it("regenerates API key (new key, old invalidated)", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     // Create initial key
@@ -230,17 +236,17 @@ describe("API routes", () => {
   });
 
   it("returns 401 for key access without session", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
 
     const response = await app.request("/api/keys");
     expect(response.status).toBe(401);
   });
 
   it("returns public spot chart data", async () => {
-    db = initTestDatabase();
-    seedPrices(db);
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    await seedPrices(pool);
+    const app = createTestApp(pool);
 
     const response = await app.request("/api/public/spot");
     expect(response.status).toBe(200);
@@ -255,10 +261,10 @@ describe("API routes", () => {
   });
 
   it("returns current total price with valid API key", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    await seedPrices(pool);
+    const app = createTestApp(pool);
 
     const response = await app.request("/api/v1/price/now", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
@@ -268,10 +274,10 @@ describe("API routes", () => {
   });
 
   it("returns cheapest window with duration", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    await seedPrices(pool);
+    const app = createTestApp(pool);
 
     const response = await app.request("/api/v1/price/cheapest?duration=180", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
@@ -292,8 +298,8 @@ describe("API routes", () => {
   });
 
   it("loads and updates me/settings with session auth", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     const getResponse = await app.request("/api/v1/me/settings", {
@@ -313,9 +319,9 @@ describe("API routes", () => {
   });
 
   it("returns me/chart with session auth", async () => {
-    db = initTestDatabase();
-    seedPrices(db);
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    await seedPrices(pool);
+    const app = createTestApp(pool);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     const response = await app.request("/api/v1/me/chart", {
@@ -325,8 +331,8 @@ describe("API routes", () => {
   });
 
   it("renders homepage with login and chart elements", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
     const response = await app.request("/");
     expect(response.status).toBe(200);
     const html = await response.text();
@@ -339,34 +345,36 @@ describe("API routes", () => {
 // --- Cheapest endpoint: startTime / endTime filtering ---
 
 /** Seed a single price entry */
-const seedPriceEntry = (
-  db: Database.Database,
+const seedPriceEntry = async (
+  pool: Pool,
   deliveryStart: string,
   deliveryEnd: string,
   eurMwh: number,
-): void => {
-  db.prepare(
-    `INSERT OR REPLACE INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
-     VALUES (?, ?, ?, ?)`,
-  ).run(deliveryStart, deliveryEnd, eurMwh, "FI");
+): Promise<void> => {
+  await pool.query(
+    `INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (delivery_start, area) DO UPDATE SET delivery_end = EXCLUDED.delivery_end, price_eur_mwh = EXCLUDED.price_eur_mwh`,
+    [deliveryStart, deliveryEnd, eurMwh, "FI"],
+  );
 };
 
 /**
  * Seed consecutive hourly prices for a Helsinki local date string (hours startH..endH-1).
  * Converts Helsinki local hours to UTC using DST-aware conversion before storing.
  */
-const seedHourlyRange = (
-  db: Database.Database,
+const seedHourlyRange = async (
+  pool: Pool,
   helsinkiDateStr: string,
   startH: number,
   endH: number,
   eurMwh: number,
-): void => {
+): Promise<void> => {
   for (let h = startH; h < endH; h++) {
     const startMs = helsinkiHourToUtcMs(helsinkiDateStr, h);
     const endMs = startMs + 3_600_000;
-    seedPriceEntry(
-      db,
+    await seedPriceEntry(
+      pool,
       new Date(startMs).toISOString(),
       new Date(endMs).toISOString(),
       eurMwh,
@@ -384,16 +392,16 @@ const getHelsinkiDates = (): { today: string; tomorrow: string } => {
 };
 
 describe("cheapest endpoint — startTime / endTime filtering", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  const setup = (): ReturnType<typeof createTestApp> => {
-    db = initTestDatabase();
-    seedUser(db);
-    return createTestApp(db);
+  const setup = async (): Promise<ReturnType<typeof createTestApp>> => {
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    return createTestApp(pool);
   };
 
   const requestCheapest = async (
@@ -407,13 +415,13 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   // --- Requirement 1: duration + startTime ---
 
   it("startTime only: picks cheapest from tomorrow when tomorrow is cheaper", async () => {
-    const app = setup();
+    const app = await setup();
     const { today, tomorrow } = getHelsinkiDates();
 
     // Today 06-22: expensive
-    seedHourlyRange(db, today, 6, 22, 100);
+    await seedHourlyRange(pool, today, 6, 22, 100);
     // Tomorrow 00-22: cheap
-    seedHourlyRange(db, tomorrow, 0, 22, 10);
+    await seedHourlyRange(pool, tomorrow, 0, 22, 10);
 
     const startTime = helsinkiIso(today, 6);
     const res = await requestCheapest(
@@ -433,11 +441,11 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   });
 
   it("startTime only: returns today-only when tomorrow not available", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
     // Only today's prices, no tomorrow
-    seedHourlyRange(db, today, 6, 22, 50);
+    await seedHourlyRange(pool, today, 6, 22, 50);
 
     const startTime = helsinkiIso(today, 6);
     const res = await requestCheapest(
@@ -457,15 +465,15 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   });
 
   it("startTime only: window must not start before startTime", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
     // Hour 8-9: very cheap (5 EUR/MWh) — but will be before startTime
-    seedHourlyRange(db, today, 8, 10, 5);
+    await seedHourlyRange(pool, today, 8, 10, 5);
     // Hours 10-14: expensive (80 EUR/MWh)
-    seedHourlyRange(db, today, 10, 14, 80);
+    await seedHourlyRange(pool, today, 10, 14, 80);
     // Hours 14-16: moderate (40 EUR/MWh) — cheapest AFTER startTime
-    seedHourlyRange(db, today, 14, 16, 40);
+    await seedHourlyRange(pool, today, 14, 16, 40);
 
     const startTime = helsinkiIso(today, 10);
     const res = await requestCheapest(
@@ -486,15 +494,15 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   // --- Requirement 2: duration + endTime ---
 
   it("endTime only: window ends at or before endTime", async () => {
-    const app = setup();
+    const app = await setup();
     const { tomorrow } = getHelsinkiDates();
 
     // Tomorrow 00-08: expensive (80 EUR/MWh)
-    seedHourlyRange(db, tomorrow, 0, 8, 80);
+    await seedHourlyRange(pool, tomorrow, 0, 8, 80);
     // Tomorrow 08-12: moderate (30 EUR/MWh) — cheapest before endTime
-    seedHourlyRange(db, tomorrow, 8, 12, 30);
+    await seedHourlyRange(pool, tomorrow, 8, 12, 30);
     // Tomorrow 12-20: very cheap (5 EUR/MWh) — but after endTime
-    seedHourlyRange(db, tomorrow, 12, 20, 5);
+    await seedHourlyRange(pool, tomorrow, 12, 20, 5);
 
     const startTime = helsinkiIso(tomorrow, 0);
     const endTime = helsinkiIso(tomorrow, 12);
@@ -516,13 +524,13 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   });
 
   it("endTime only (no startTime): respects endTime bound", async () => {
-    const app = setup();
+    const app = await setup();
     const { tomorrow } = getHelsinkiDates();
 
     // Tomorrow 00-10: moderate (40 EUR/MWh) — within endTime
-    seedHourlyRange(db, tomorrow, 0, 10, 40);
+    await seedHourlyRange(pool, tomorrow, 0, 10, 40);
     // Tomorrow 10-20: cheap (5 EUR/MWh) — past endTime
-    seedHourlyRange(db, tomorrow, 10, 20, 5);
+    await seedHourlyRange(pool, tomorrow, 10, 20, 5);
 
     const endTime = helsinkiIso(tomorrow, 10);
     const res = await requestCheapest(
@@ -539,13 +547,13 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   });
 
   it("maxPrice: only returns windows where all intervals are <= maxPrice", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
     // Expensive intervals around a cheap 2-hour block (hours away from DST boundary)
-    seedHourlyRange(db, today, 8, 10, 120);
-    seedHourlyRange(db, today, 10, 12, 20);
-    seedHourlyRange(db, today, 12, 14, 120);
+    await seedHourlyRange(pool, today, 8, 10, 120);
+    await seedHourlyRange(pool, today, 10, 12, 20);
+    await seedHourlyRange(pool, today, 12, 14, 120);
 
     const startTime = helsinkiIso(today, 8);
     const res = await requestCheapest(
@@ -563,14 +571,14 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   });
 
   it("maxPrice: does not bridge filtered gaps (contiguity still required)", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
     // Cheap, then expensive (to be filtered out), then cheap again.
     // After maxPrice filtering, remaining 60-min blocks are not contiguous.
-    seedHourlyRange(db, today, 8, 9, 20);
-    seedHourlyRange(db, today, 9, 10, 120);
-    seedHourlyRange(db, today, 10, 11, 20);
+    await seedHourlyRange(pool, today, 8, 9, 20);
+    await seedHourlyRange(pool, today, 9, 10, 120);
+    await seedHourlyRange(pool, today, 10, 11, 20);
 
     const startTime = helsinkiIso(today, 8);
     const res = await requestCheapest(
@@ -584,11 +592,11 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   });
 
   it("maxPrice: boundary is inclusive (<=)", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
-    seedHourlyRange(db, today, 0, 1, 50);
-    seedHourlyRange(db, today, 1, 2, 80);
+    await seedHourlyRange(pool, today, 0, 1, 50);
+    await seedHourlyRange(pool, today, 1, 2, 80);
 
     const startTime = helsinkiIso(today, 0);
     const baselineRes = await requestCheapest(
@@ -615,11 +623,11 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   // --- Requirement 3: error when no price data in range ---
 
   it("returns error when startTime is in a period with no price data", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
     // Seed only today 08-16
-    seedHourlyRange(db, today, 8, 16, 50);
+    await seedHourlyRange(pool, today, 8, 16, 50);
 
     // Ask for a time range far in the future — no data exists
     const startTime = "2027-06-01T00:00:00+03:00";
@@ -634,11 +642,11 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
   });
 
   it("returns error when endTime constrains to a period with no data", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
     // Seed today 12-20
-    seedHourlyRange(db, today, 12, 20, 50);
+    await seedHourlyRange(pool, today, 12, 20, 50);
 
     // endTime is before any prices exist
     const startTime = helsinkiIso(today, 6);
@@ -655,34 +663,34 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
 });
 
 describe("cross-midnight contiguity", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  const setup = (): ReturnType<typeof createTestApp> => {
-    db = initTestDatabase();
-    seedUser(db);
-    return createTestApp(db);
+  const setup = async (): Promise<ReturnType<typeof createTestApp>> => {
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    return createTestApp(pool);
   };
 
   it("cheapest window spans UTC midnight boundary without gaps", async () => {
-    const app = setup();
+    const app = await setup();
     const { today, tomorrow } = getHelsinkiDates();
 
     // Seed today 00-24 (full day): expensive (100 EUR/MWh)
-    seedHourlyRange(db, today, 0, 24, 100);
+    await seedHourlyRange(pool, today, 0, 24, 100);
     // Seed tomorrow 00-24 (full day): expensive (100 EUR/MWh)
-    seedHourlyRange(db, tomorrow, 0, 24, 100);
+    await seedHourlyRange(pool, tomorrow, 0, 24, 100);
 
     // Now overwrite a cheap 3-hour window that straddles Helsinki midnight
     // Helsinki hours 22, 23 (today) and 00 (tomorrow) = 3 cheap hours
     // These cross the Helsinki day boundary AND the UTC day boundary
     // (Helsinki 22:00 = UTC 20:00, Helsinki 23:00 = UTC 21:00,
     //  Helsinki tomorrow 00:00 = UTC 22:00 — all same UTC date in winter)
-    seedHourlyRange(db, today, 22, 24, 5); // today 22-23 Helsinki = cheap
-    seedHourlyRange(db, tomorrow, 0, 1, 5); // tomorrow 00-01 Helsinki = cheap
+    await seedHourlyRange(pool, today, 22, 24, 5); // today 22-23 Helsinki = cheap
+    await seedHourlyRange(pool, tomorrow, 0, 1, 5); // tomorrow 00-01 Helsinki = cheap
 
     // Request cheapest 3-hour window — should find the 22:00-01:00 window
     const startTime = helsinkiIso(today, 0);
@@ -723,11 +731,11 @@ describe("cross-midnight contiguity", () => {
   });
 
   it("price/today returns full Helsinki day including pre-UTC-midnight hours", async () => {
-    const app = setup();
+    const app = await setup();
     const { today } = getHelsinkiDates();
 
     // Seed full Helsinki day (hours 0-24)
-    seedHourlyRange(db, today, 0, 24, 50);
+    await seedHourlyRange(pool, today, 0, 24, 50);
 
     const res = await app.request("/api/v1/price/today", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
@@ -756,15 +764,15 @@ describe("cross-midnight contiguity", () => {
 });
 
 describe("OpenAPI spec", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
   it("returns valid OpenAPI 3.1 spec with all expected routes", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
 
     const response = await app.request("/api/v1/openapi.json");
     expect(response.status).toBe(200);
@@ -791,10 +799,10 @@ describe("OpenAPI spec", () => {
   });
 
   it("returns 400 with error message for invalid cheapest query", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    await seedPrices(pool);
+    const app = createTestApp(pool);
 
     // duration=0 is below minimum (1)
     const response = await app.request("/api/v1/price/cheapest?duration=0", {
@@ -808,10 +816,10 @@ describe("OpenAPI spec", () => {
   });
 
   it("returns 400 when maxPrice is blank", async () => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    await seedPrices(pool);
+    const app = createTestApp(pool);
 
     const response = await app.request(
       "/api/v1/price/cheapest?duration=60&maxPrice=",
@@ -826,8 +834,8 @@ describe("OpenAPI spec", () => {
   });
 
   it("returns 400 with error message for invalid settings update", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     // vatPercent > 100 is above maximum
@@ -853,21 +861,21 @@ describe("OpenAPI spec", () => {
 // ---------------------------------------------------------------------------
 
 describe("response schema conformance", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  const setup = (): ReturnType<typeof createTestApp> => {
-    db = initTestDatabase();
-    seedUser(db);
-    seedPrices(db);
-    return createTestApp(db);
+  const setup = async (): Promise<ReturnType<typeof createTestApp>> => {
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    await seedPrices(pool);
+    return createTestApp(pool);
   };
 
   it("GET /api/v1/price/now conforms to TotalPriceSchema", async () => {
-    const app = setup();
+    const app = await setup();
     const res = await app.request("/api/v1/price/now", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
     });
@@ -878,7 +886,7 @@ describe("response schema conformance", () => {
   });
 
   it("GET /api/v1/price/today conforms to PriceListSchema", async () => {
-    const app = setup();
+    const app = await setup();
     const res = await app.request("/api/v1/price/today", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
     });
@@ -889,7 +897,7 @@ describe("response schema conformance", () => {
   });
 
   it("GET /api/v1/price/tomorrow conforms to PriceListSchema", async () => {
-    const app = setup();
+    const app = await setup();
     const res = await app.request("/api/v1/price/tomorrow", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
     });
@@ -901,7 +909,7 @@ describe("response schema conformance", () => {
   });
 
   it("GET /api/v1/price/cheapest conforms to PriceWindowSchema", async () => {
-    const app = setup();
+    const app = await setup();
     const res = await app.request("/api/v1/price/cheapest?duration=60", {
       headers: { Authorization: `Bearer ${TEST_API_KEY}` },
     });
@@ -912,7 +920,7 @@ describe("response schema conformance", () => {
   });
 
   it("GET /api/public/spot conforms to PublicSpotSchema", async () => {
-    const app = setup();
+    const app = await setup();
     const res = await app.request("/api/public/spot");
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -921,8 +929,8 @@ describe("response schema conformance", () => {
   });
 
   it("GET /api/v1/me/settings conforms to UserSettingsResponseSchema", async () => {
-    db = initTestDatabase();
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    const app = createTestApp(pool);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     const res = await app.request("/api/v1/me/settings", {
@@ -935,9 +943,9 @@ describe("response schema conformance", () => {
   });
 
   it("GET /api/v1/me/chart conforms to ChartDataSchema", async () => {
-    db = initTestDatabase();
-    seedPrices(db);
-    const app = createTestApp(db);
+    pool = await initTestDatabase();
+    await seedPrices(pool);
+    const app = createTestApp(pool);
     const cookie = await loginOrSignupAndGetCookie(app);
 
     const res = await app.request("/api/v1/me/chart", {
@@ -950,7 +958,7 @@ describe("response schema conformance", () => {
   });
 
   it("error responses conform to ErrorSchema", async () => {
-    const app = setup();
+    const app = await setup();
 
     // 401 — missing auth
     const r1 = await app.request("/api/v1/price/now");

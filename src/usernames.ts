@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 
 const USERNAME_REGEX = /^[a-z0-9_-]{3,32}$/;
 
@@ -11,34 +11,38 @@ export const validateUsername = (value: string): boolean =>
 export const toInternalEmail = (username: string): string =>
   `${normalizeUsername(username)}@local.spot`;
 
-export const getUserIdByUsername = (
-  db: Database.Database,
+export const getUserIdByUsername = async (
+  pool: Pool,
   username: string,
-): string | null => {
+): Promise<string | null> => {
   const normalized = normalizeUsername(username);
-  const row = db
-    .prepare("SELECT user_id FROM usernames WHERE username = ?")
-    .get(normalized) as { user_id: string } | undefined;
-  return row?.user_id ?? null;
+  const { rows } = await pool.query<{ user_id: string }>(
+    "SELECT user_id FROM usernames WHERE username = $1",
+    [normalized],
+  );
+  return rows[0]?.user_id ?? null;
 };
 
-export const assignUsername = (
-  db: Database.Database,
+export const assignUsername = async (
+  pool: Pool,
   userId: string,
   username: string,
-): void => {
+): Promise<void> => {
   const normalized = normalizeUsername(username);
-  db.prepare(
-    "INSERT OR REPLACE INTO usernames (user_id, username) VALUES (?, ?)",
-  ).run(userId, normalized);
+  await pool.query(
+    `INSERT INTO usernames (user_id, username) VALUES ($1, $2)
+     ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username`,
+    [userId, normalized],
+  );
 };
 
-export const getUsernameByUserId = (
-  db: Database.Database,
+export const getUsernameByUserId = async (
+  pool: Pool,
   userId: string,
-): string | null => {
-  const row = db
-    .prepare("SELECT username FROM usernames WHERE user_id = ?")
-    .get(userId) as { username: string } | undefined;
-  return row?.username ?? null;
+): Promise<string | null> => {
+  const { rows } = await pool.query<{ username: string }>(
+    "SELECT username FROM usernames WHERE user_id = $1",
+    [userId],
+  );
+  return rows[0]?.username ?? null;
 };

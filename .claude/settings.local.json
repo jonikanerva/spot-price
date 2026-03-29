@@ -22,7 +22,8 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:backboard.railway.com)",
       "WebFetch(domain:railway.com)",
-      "WebFetch(domain:docs.railway.com)"
+      "WebFetch(domain:docs.railway.com)",
+      "WebFetch(domain:registry.npmjs.org)"
     ],
     "deny": [
       "Bash(git push --force:*)",
@@ -31,6 +32,7 @@
     ]
   },
   "sandbox": {
-    "allowUnsandboxedCommands": false
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": ["pnpm test:all"]
   }
 }

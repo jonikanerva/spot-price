@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { createAuth } from "./auth.js";
 import { closeDatabase, initTestDatabase } from "./db.js";
 
@@ -30,41 +30,41 @@ const restoreEnv = (): void => {
 };
 
 describe("createAuth", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  afterEach(() => {
+  afterEach(async () => {
     restoreEnv();
-    closeDatabase(db);
+    await closeDatabase(pool);
   });
 
-  it("throws in production when BETTER_AUTH_SECRET is missing", () => {
-    db = initTestDatabase();
+  it("throws in production when BETTER_AUTH_SECRET is missing", async () => {
+    pool = await initTestDatabase();
     process.env["NODE_ENV"] = "production";
     process.env["BETTER_AUTH_URL"] = "https://spot.example.com";
     delete process.env["BETTER_AUTH_SECRET"];
 
-    expect(() => createAuth(db)).toThrow(
+    expect(() => createAuth(pool)).toThrow(
       "BETTER_AUTH_SECRET is required in production",
     );
   });
 
-  it("throws in production when BETTER_AUTH_URL is missing", () => {
-    db = initTestDatabase();
+  it("throws in production when BETTER_AUTH_URL is missing", async () => {
+    pool = await initTestDatabase();
     process.env["NODE_ENV"] = "production";
     process.env["BETTER_AUTH_SECRET"] = "a-very-long-production-secret-value";
     delete process.env["BETTER_AUTH_URL"];
 
-    expect(() => createAuth(db)).toThrow(
+    expect(() => createAuth(pool)).toThrow(
       "BETTER_AUTH_URL is required in production",
     );
   });
 
-  it("allows dev mode defaults", () => {
-    db = initTestDatabase();
+  it("allows dev mode defaults", async () => {
+    pool = await initTestDatabase();
     process.env["NODE_ENV"] = "development";
     delete process.env["BETTER_AUTH_URL"];
     delete process.env["BETTER_AUTH_SECRET"];
 
-    expect(() => createAuth(db)).not.toThrow();
+    expect(() => createAuth(pool)).not.toThrow();
   });
 });

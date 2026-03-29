@@ -17,30 +17,30 @@ const getPort = (): number => {
   return DEFAULT_PORT;
 };
 
-const main = (): void => {
-  const db = initDatabase();
-  const auth = createAuth(db);
-  const app = createApp(db, auth);
+const main = async (): Promise<void> => {
+  const pool = await initDatabase();
+  const auth = createAuth(pool);
+  const app = createApp(pool, auth);
   const port = getPort();
 
   // Start price fetch scheduler (every 2 hours) + immediate startup fetch
-  const schedulerTask = startScheduler(db);
-  runStartupFetch(db);
+  const schedulerTask = startScheduler(pool);
+  runStartupFetch(pool);
 
-  // Graceful shutdown: stop scheduler, close DB
-  const shutdown = (): void => {
+  // Graceful shutdown: stop scheduler, close DB, then exit
+  const shutdown = async (): Promise<void> => {
     console.log("Shutting down gracefully...");
     void schedulerTask.stop();
-    closeDatabase(db);
+    await closeDatabase(pool);
     process.exit(0);
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", () => void shutdown());
+  process.on("SIGINT", () => void shutdown());
 
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`Server running on http://localhost:${String(info.port)}`);
   });
 };
 
-main();
+void main();

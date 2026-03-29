@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { initTestDatabase, closeDatabase } from "./db.js";
 import { storePrices } from "./price-store.js";
 import { allAreasPresent } from "./fetch-job.js";
@@ -27,37 +27,37 @@ const generateDayPrices = (
 };
 
 describe("allAreasPresent", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  beforeEach(() => {
-    db = initTestDatabase();
+  beforeEach(async () => {
+    pool = await initTestDatabase();
   });
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
   });
 
-  it("returns false when no data exists for the date", () => {
-    expect(allAreasPresent(db, "2026-03-29")).toBe(false);
+  it("returns false when no data exists for the date", async () => {
+    expect(await allAreasPresent(pool, "2026-03-29")).toBe(false);
   });
 
-  it("returns false when only some areas have data", () => {
+  it("returns false when only some areas have data", async () => {
     const prices = generateDayPrices("2026-03-29T00:00:00.000Z", "FI");
-    storePrices(db, prices);
+    await storePrices(pool, prices);
 
-    expect(allAreasPresent(db, "2026-03-29")).toBe(false);
+    expect(await allAreasPresent(pool, "2026-03-29")).toBe(false);
   });
 
-  it("returns true when all areas have sufficient data", () => {
+  it("returns true when all areas have sufficient data", async () => {
     for (const area of DELIVERY_AREAS) {
       const prices = generateDayPrices("2026-03-29T00:00:00.000Z", area.code);
-      storePrices(db, prices);
+      await storePrices(pool, prices);
     }
 
-    expect(allAreasPresent(db, "2026-03-29")).toBe(true);
+    expect(await allAreasPresent(pool, "2026-03-29")).toBe(true);
   });
 
-  it("returns true with 23 hourly entries (DST spring forward day)", () => {
+  it("returns true with 23 hourly entries (DST spring forward day)", async () => {
     // DST day has 23 hours = 92 quarter-hourly entries
     for (const area of DELIVERY_AREAS) {
       const start = new Date("2026-03-29T00:00:00.000Z");
@@ -72,22 +72,22 @@ describe("allAreasPresent", () => {
           area: area.code,
         });
       }
-      storePrices(db, prices);
+      await storePrices(pool, prices);
     }
 
-    expect(allAreasPresent(db, "2026-03-29")).toBe(true);
+    expect(await allAreasPresent(pool, "2026-03-29")).toBe(true);
   });
 });
 
 describe("runFetchJob", () => {
-  let db: Database.Database;
+  let pool: Pool;
 
-  beforeEach(() => {
-    db = initTestDatabase();
+  beforeEach(async () => {
+    pool = await initTestDatabase();
   });
 
-  afterEach(() => {
-    closeDatabase(db);
+  afterEach(async () => {
+    await closeDatabase(pool);
     vi.restoreAllMocks();
   });
 
@@ -98,7 +98,7 @@ describe("runFetchJob", () => {
     const nordpool = await import("./nordpool.js");
     vi.spyOn(nordpool, "fetchDayAheadPrices").mockResolvedValue([]);
 
-    const result = await runFetchJob(db);
+    const result = await runFetchJob(pool);
 
     expect(result.tomorrowAvailable).toBe(false);
   });
@@ -113,14 +113,14 @@ describe("runFetchJob", () => {
     const today = new Date();
     const todayStr = today.toISOString().slice(0, 10);
     for (const area of DELIVERY_AREAS) {
-      storePrices(
-        db,
+      await storePrices(
+        pool,
         generateDayPrices(`${todayStr}T00:00:00.000Z`, area.code),
       );
     }
 
     const { runFetchJob } = await import("./fetch-job.js");
-    const result = await runFetchJob(db);
+    const result = await runFetchJob(pool);
 
     expect(result.tomorrowAvailable).toBe(true);
   });
@@ -138,7 +138,7 @@ describe("runFetchJob", () => {
     });
 
     const { runFetchJob } = await import("./fetch-job.js");
-    const result = await runFetchJob(db);
+    const result = await runFetchJob(pool);
 
     expect(result.tomorrowAvailable).toBe(false);
   });
@@ -152,18 +152,18 @@ describe("runFetchJob", () => {
     const tomorrowStr = tomorrow.toISOString().slice(0, 10);
 
     for (const area of DELIVERY_AREAS) {
-      storePrices(
-        db,
+      await storePrices(
+        pool,
         generateDayPrices(`${todayStr}T00:00:00.000Z`, area.code),
       );
-      storePrices(
-        db,
+      await storePrices(
+        pool,
         generateDayPrices(`${tomorrowStr}T00:00:00.000Z`, area.code),
       );
     }
 
     const { runFetchJob } = await import("./fetch-job.js");
-    const result = await runFetchJob(db);
+    const result = await runFetchJob(pool);
 
     expect(result.tomorrowAvailable).toBe(true);
     // Both should be skipped

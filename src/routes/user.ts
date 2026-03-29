@@ -76,15 +76,15 @@ const chartRoute = createRoute({
 // ---------------------------------------------------------------------------
 
 export const registerUserRoutes = (app: OpenAPIHono<AppEnv>): void => {
-  app.openapi(settingsGetRoute, (c) => {
+  app.openapi(settingsGetRoute, async (c) => {
     const userId = c.get("sessionUser").id;
-    const settings = ensureUserSettings(c.get("db"), userId);
+    const settings = await ensureUserSettings(c.get("db"), userId);
     return c.json(settings);
   });
 
-  app.openapi(settingsPutRoute, (c) => {
+  app.openapi(settingsPutRoute, async (c) => {
     const userId = c.get("sessionUser").id;
-    const current = ensureUserSettings(c.get("db"), userId);
+    const current = await ensureUserSettings(c.get("db"), userId);
     const payload = c.req.valid("json");
 
     const next: UserSettings = {
@@ -102,26 +102,26 @@ export const registerUserRoutes = (app: OpenAPIHono<AppEnv>): void => {
       area: payload.area ?? current.area,
     };
 
-    upsertUserSettings(c.get("db"), next);
+    await upsertUserSettings(c.get("db"), next);
     return c.json(next, 200);
   });
 
-  app.openapi(chartRoute, (c) => {
+  app.openapi(chartRoute, async (c) => {
     const userId = c.get("sessionUser").id;
-    const settings = ensureUserSettings(c.get("db"), userId);
+    const settings = await ensureUserSettings(c.get("db"), userId);
 
     const tz = settings.timezone;
     const { today, tomorrow } = getCurrentAndNextDate(tz);
     const todayUtc = getUtcRangeForLocalDate(today, tz);
     const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
 
-    const todaySpot = getPricesByRange(
+    const todaySpot = await getPricesByRange(
       c.get("db"),
       todayUtc.startUtc,
       todayUtc.endUtc,
       settings.area,
     );
-    const tomorrowSpot = getPricesByRange(
+    const tomorrowSpot = await getPricesByRange(
       c.get("db"),
       tomorrowUtc.startUtc,
       tomorrowUtc.endUtc,

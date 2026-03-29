@@ -1,14 +1,14 @@
 import type { ScheduledTask } from "node-cron";
 import cron from "node-cron";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { runFetchJob } from "./fetch-job.js";
 
 const safeFetch = async (
-  db: Database.Database,
+  pool: Pool,
   label: string,
 ): Promise<void> => {
   try {
-    const result = await runFetchJob(db);
+    const result = await runFetchJob(pool);
     const stored = result.results.reduce((sum, r) => sum + r.stored, 0);
     if (stored > 0) {
       console.log(`[scheduler] ${label}: stored ${String(stored)} new prices`);
@@ -30,8 +30,8 @@ const safeFetch = async (
  * Run an immediate fetch on startup so restarts and deploys
  * do not leave gaps until the next scheduled cycle.
  */
-export const runStartupFetch = (db: Database.Database): void => {
-  void safeFetch(db, "Startup fetch");
+export const runStartupFetch = (pool: Pool): void => {
+  void safeFetch(pool, "Startup fetch");
 };
 
 /**
@@ -45,10 +45,10 @@ export const runStartupFetch = (db: Database.Database): void => {
  *   - Nord Pool outages (next cycle retries automatically)
  *   - Service restarts (startup fetch + next cycle fills gaps)
  */
-export const startScheduler = (db: Database.Database): ScheduledTask => {
+export const startScheduler = (pool: Pool): ScheduledTask => {
   console.log("[scheduler] Price fetch scheduled every 2 hours");
 
   return cron.schedule("0 */2 * * *", () => {
-    void safeFetch(db, "Scheduled fetch");
+    void safeFetch(pool, "Scheduled fetch");
   });
 };

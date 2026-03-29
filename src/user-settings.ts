@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import type { UserSettings } from "./types.js";
 
 interface UserSettingsRow {
@@ -28,43 +28,53 @@ const rowToSettings = (row: UserSettingsRow): UserSettings => ({
 });
 
 /** Get settings for a user, or null if not configured */
-export const getUserSettings = (
-  db: Database.Database,
+export const getUserSettings = async (
+  pool: Pool,
   userId: string,
-): UserSettings | null => {
-  const row = db
-    .prepare(`SELECT * FROM user_settings WHERE user_id = ?`)
-    .get(userId) as UserSettingsRow | undefined;
+): Promise<UserSettings | null> => {
+  const { rows } = await pool.query<UserSettingsRow>(
+    `SELECT * FROM user_settings WHERE user_id = $1`,
+    [userId],
+  );
 
-  if (!row) {
-    return null;
-  }
-
-  return rowToSettings(row);
+  const row = rows[0];
+  return row ? rowToSettings(row) : null;
 };
 
 /** Create or update user settings */
-export const upsertUserSettings = (
-  db: Database.Database,
+export const upsertUserSettings = async (
+  pool: Pool,
   settings: UserSettings,
-): void => {
-  db.prepare(
-    `INSERT OR REPLACE INTO user_settings
+): Promise<void> => {
+  await pool.query(
+    `INSERT INTO user_settings
      (user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
       tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    settings.userId,
-    settings.marginCentsKwh,
-    settings.transferDayCentsKwh,
-    settings.transferNightCentsKwh,
-    settings.taxCentsKwh,
-    settings.vatPercent,
-    settings.nightStartHour,
-    settings.nightEndHour,
-    settings.timezone,
-    settings.area,
-    new Date().toISOString(),
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     ON CONFLICT (user_id)
+     DO UPDATE SET margin_cents_kwh = EXCLUDED.margin_cents_kwh,
+                   transfer_day_cents_kwh = EXCLUDED.transfer_day_cents_kwh,
+                   transfer_night_cents_kwh = EXCLUDED.transfer_night_cents_kwh,
+                   tax_cents_kwh = EXCLUDED.tax_cents_kwh,
+                   vat_percent = EXCLUDED.vat_percent,
+                   night_start_hour = EXCLUDED.night_start_hour,
+                   night_end_hour = EXCLUDED.night_end_hour,
+                   timezone = EXCLUDED.timezone,
+                   area = EXCLUDED.area,
+                   updated_at = EXCLUDED.updated_at`,
+    [
+      settings.userId,
+      settings.marginCentsKwh,
+      settings.transferDayCentsKwh,
+      settings.transferNightCentsKwh,
+      settings.taxCentsKwh,
+      settings.vatPercent,
+      settings.nightStartHour,
+      settings.nightEndHour,
+      settings.timezone,
+      settings.area,
+      new Date().toISOString(),
+    ],
   );
 };
 
@@ -82,19 +92,19 @@ const DEFAULT_SETTINGS: Omit<UserSettings, "userId"> = {
 };
 
 /** Ensure a user has default settings (create if missing) */
-export const ensureUserSettings = (
-  db: Database.Database,
+export const ensureUserSettings = async (
+  pool: Pool,
   userId: string,
-): UserSettings => {
-  const existing = getUserSettings(db, userId);
+): Promise<UserSettings> => {
+  const existing = await getUserSettings(pool, userId);
   if (existing) {
     return existing;
   }
 
   const settings: UserSettings = { userId, ...DEFAULT_SETTINGS };
-  upsertUserSettings(db, settings);
+  await upsertUserSettings(pool, settings);
 
-  const created = getUserSettings(db, userId);
+  const created = await getUserSettings(pool, userId);
   if (!created) {
     throw new Error("Failed to create default user settings");
   }

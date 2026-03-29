@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { fetchDayAheadPrices } from "./nordpool.js";
 import { storePrices, countPricesByRange } from "./price-store.js";
 import { DELIVERY_AREAS } from "./areas.js";
@@ -43,25 +43,28 @@ export interface FetchJobResult {
 }
 
 /** Check if all areas already have data for a given date */
-export const allAreasPresent = (
-  db: Database.Database,
+export const allAreasPresent = async (
+  pool: Pool,
   date: string,
-): boolean => {
+): Promise<boolean> => {
   const totalAreas = DELIVERY_AREAS.length;
   const { startUtc, endUtc } = utcDateToRange(date);
-  const areasWithData = DELIVERY_AREAS.filter(
-    (a) =>
-      countPricesByRange(db, startUtc, endUtc, a.code) >= MIN_ENTRIES_PER_AREA,
-  ).length;
+  let areasWithData = 0;
+  for (const a of DELIVERY_AREAS) {
+    const count = await countPricesByRange(pool, startUtc, endUtc, a.code);
+    if (count >= MIN_ENTRIES_PER_AREA) {
+      areasWithData++;
+    }
+  }
   return areasWithData >= totalAreas;
 };
 
 /** Fetch prices for all areas for a single date if not already complete */
 const fetchForDate = async (
-  db: Database.Database,
+  pool: Pool,
   date: string,
 ): Promise<FetchResult> => {
-  if (allAreasPresent(db, date)) {
+  if (await allAreasPresent(pool, date)) {
     return { date, stored: 0, skipped: true };
   }
 
@@ -71,7 +74,7 @@ const fetchForDate = async (
     return { date, stored: 0, skipped: false };
   }
 
-  const count = storePrices(db, prices);
+  const count = await storePrices(pool, prices);
   return { date, stored: count, skipped: false };
 };
 
@@ -93,7 +96,7 @@ const logFetchResult = (date: string, result: FetchResult): void => {
 
 /** Run the price fetch job: fetch today + tomorrow for all areas */
 export const runFetchJob = async (
-  db: Database.Database,
+  pool: Pool,
 ): Promise<FetchJobResult> => {
   const { today, tomorrow } = getTodayAndTomorrow();
   const results: FetchResult[] = [];
@@ -102,13 +105,13 @@ export const runFetchJob = async (
     `[fetch-job] Fetching prices for ${today} and ${tomorrow} (${String(DELIVERY_AREAS.length)} areas)...`,
   );
 
-  const todayResult = await fetchForDate(db, today);
+  const todayResult = await fetchForDate(pool, today);
   results.push(todayResult);
   logFetchResult(today, todayResult);
 
   let tomorrowAvailable = false;
   try {
-    const tomorrowResult = await fetchForDate(db, tomorrow);
+    const tomorrowResult = await fetchForDate(pool, tomorrow);
     results.push(tomorrowResult);
     logFetchResult(tomorrow, tomorrowResult);
     tomorrowAvailable = tomorrowResult.skipped || tomorrowResult.stored > 0;

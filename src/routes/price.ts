@@ -59,9 +59,9 @@ const getCurrentPrice = (
   return null;
 };
 
-const getSettings = (c: {
+const getSettings = async (c: {
   get: (key: "db" | "userId") => AppEnv["Variables"]["db"] | string;
-}): UserSettings | null => {
+}): Promise<UserSettings | null> => {
   const userId = c.get("userId");
   const db = c.get("db");
   if (typeof userId !== "string") {
@@ -70,7 +70,7 @@ const getSettings = (c: {
   if (typeof db === "string") {
     return null;
   }
-  return getUserSettings(db, userId);
+  return await getUserSettings(db, userId);
 };
 
 // ---------------------------------------------------------------------------
@@ -186,7 +186,7 @@ const priceCheapestRoute = createRoute({
 export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   // --- Public spot (no auth) ------------------------------------------------
 
-  app.openapi(publicSpotRoute, (c) => {
+  app.openapi(publicSpotRoute, async (c) => {
     const { area } = c.req.valid("query");
 
     const tz = getDefaultTimezone(area);
@@ -194,20 +194,24 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const todayUtc = getUtcRangeForLocalDate(today, tz);
     const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
 
-    const todayPrices = getPricesByRange(
-      c.get("db"),
-      todayUtc.startUtc,
-      todayUtc.endUtc,
-      area,
+    const todayPrices = (
+      await getPricesByRange(
+        c.get("db"),
+        todayUtc.startUtc,
+        todayUtc.endUtc,
+        area,
+      )
     ).map((p) => ({
       ...p,
       spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
     }));
-    const tomorrowPrices = getPricesByRange(
-      c.get("db"),
-      tomorrowUtc.startUtc,
-      tomorrowUtc.endUtc,
-      area,
+    const tomorrowPrices = (
+      await getPricesByRange(
+        c.get("db"),
+        tomorrowUtc.startUtc,
+        tomorrowUtc.endUtc,
+        area,
+      )
     ).map((p) => ({
       ...p,
       spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
@@ -225,8 +229,8 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
 
   // --- Price endpoints (API key-protected) ----------------------------------
 
-  app.openapi(priceNowRoute, (c) => {
-    const settings = getSettings(c);
+  app.openapi(priceNowRoute, async (c) => {
+    const settings = await getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404);
     }
@@ -235,7 +239,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const { today, tomorrow } = getCurrentAndNextDate(tz);
     const todayUtc = getUtcRangeForLocalDate(today, tz);
     const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
-    const prices = getPricesByRange(
+    const prices = await getPricesByRange(
       c.get("db"),
       todayUtc.startUtc,
       tomorrowUtc.endUtc,
@@ -251,8 +255,8 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     return c.json(total, 200);
   });
 
-  app.openapi(priceTodayRoute, (c) => {
-    const settings = getSettings(c);
+  app.openapi(priceTodayRoute, async (c) => {
+    const settings = await getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404);
     }
@@ -260,7 +264,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const tz = settings.timezone;
     const today = formatDateInTimeZone(new Date(), tz);
     const todayUtc = getUtcRangeForLocalDate(today, tz);
-    const prices = getPricesByRange(
+    const prices = await getPricesByRange(
       c.get("db"),
       todayUtc.startUtc,
       todayUtc.endUtc,
@@ -285,8 +289,8 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     );
   });
 
-  app.openapi(priceTomorrowRoute, (c) => {
-    const settings = getSettings(c);
+  app.openapi(priceTomorrowRoute, async (c) => {
+    const settings = await getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404 as const);
     }
@@ -294,7 +298,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const tz = settings.timezone;
     const tomorrow = formatDateInTimeZone(addDays(new Date(), 1), tz);
     const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
-    const prices = getPricesByRange(
+    const prices = await getPricesByRange(
       c.get("db"),
       tomorrowUtc.startUtc,
       tomorrowUtc.endUtc,
@@ -325,8 +329,8 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     );
   });
 
-  app.openapi(priceCheapestRoute, (c) => {
-    const settings = getSettings(c);
+  app.openapi(priceCheapestRoute, async (c) => {
+    const settings = await getSettings(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404 as const);
     }
@@ -347,7 +351,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     // data across midnight (avoids the LIKE prefix gap bug)
     const todayRange = getUtcRangeForLocalDate(today, tz);
     const tomorrowRange = getUtcRangeForLocalDate(tomorrow, tz);
-    const prices = getPricesByRange(
+    const prices = await getPricesByRange(
       c.get("db"),
       todayRange.startUtc,
       tomorrowRange.endUtc,

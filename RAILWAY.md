@@ -4,13 +4,13 @@
 
 1. Create a Railway project from this repository.
 2. Add one service for the Node app.
-3. Attach a volume mounted at `/app/data`.
+3. Add a PostgreSQL plugin (Railway provides managed Postgres).
 
 ## Required environment variables
 
 - `NODE_ENV=production`
 - `PORT=3000`
-- `DATABASE_PATH=/app/data/spot-price.db`
+- `DATABASE_URL` — automatically set by Railway when you add the PostgreSQL plugin
 - `BETTER_AUTH_SECRET=<32+ char random secret>`
 - `BETTER_AUTH_URL=https://spot.calmdonut.com`
 
@@ -22,6 +22,7 @@
 ## Backup checklist (optional)
 
 For this hobby project, backups are optional because runtime data is non-critical and can be recreated.
+Railway's managed PostgreSQL includes automatic backups.
 
 ## Smoke test after deploy
 

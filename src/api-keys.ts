@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 
 const KEY_PREFIX = "sp_";
 const KEY_BYTE_LENGTH = 32;
@@ -26,17 +26,17 @@ interface ApiKeyRow {
 }
 
 /** Get the current (single) API key for a user, or null if no key exists. */
-export const getCurrentApiKey = (
-  db: Database.Database,
+export const getCurrentApiKey = async (
+  pool: Pool,
   userId: string,
-): ApiKeyInfo | null => {
-  const row = db
-    .prepare(
-      `SELECT id, user_id, key_plaintext, created_at, last_used_at
-       FROM api_keys WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(userId) as ApiKeyRow | undefined;
+): Promise<ApiKeyInfo | null> => {
+  const { rows } = await pool.query<ApiKeyRow>(
+    `SELECT id, user_id, key_plaintext, created_at, last_used_at
+     FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [userId],
+  );
 
+  const row = rows[0];
   if (!row || !row.key_plaintext) {
     return null;
   }
@@ -52,24 +52,30 @@ export const getCurrentApiKey = (
 
 /** Create or regenerate the single API key for a user.
  *  Deletes any existing keys first, then creates a new one. */
-export const regenerateApiKey = (
-  db: Database.Database,
+export const regenerateApiKey = async (
+  pool: Pool,
   userId: string,
-): ApiKeyInfo => {
+): Promise<ApiKeyInfo> => {
   const rawKey = generateApiKey();
   const id = randomBytes(16).toString("hex");
-
   const createdAt = new Date().toISOString();
 
-  const regenerate = db.transaction(() => {
-    db.prepare(`DELETE FROM api_keys WHERE user_id = ?`).run(userId);
-    db.prepare(
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM api_keys WHERE user_id = $1`, [userId]);
+    await client.query(
       `INSERT INTO api_keys (id, user_id, key_plaintext, created_at)
-       VALUES (?, ?, ?, ?)`,
-    ).run(id, userId, rawKey, createdAt);
-  });
-
-  regenerate();
+       VALUES ($1, $2, $3, $4)`,
+      [id, userId, rawKey, createdAt],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return {
     id,
@@ -81,21 +87,24 @@ export const regenerateApiKey = (
 };
 
 /** Resolve a raw API key to a user ID (returns null if invalid) */
-export const resolveApiKey = (
-  db: Database.Database,
+export const resolveApiKey = async (
+  pool: Pool,
   rawKey: string,
-): string | null => {
-  const row = db
-    .prepare(`SELECT user_id FROM api_keys WHERE key_plaintext = ?`)
-    .get(rawKey) as { user_id: string } | undefined;
+): Promise<string | null> => {
+  const { rows } = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM api_keys WHERE key_plaintext = $1`,
+    [rawKey],
+  );
 
+  const row = rows[0];
   if (!row) {
     return null;
   }
 
-  db.prepare(
-    `UPDATE api_keys SET last_used_at = ? WHERE key_plaintext = ?`,
-  ).run(new Date().toISOString(), rawKey);
+  await pool.query(
+    `UPDATE api_keys SET last_used_at = $1 WHERE key_plaintext = $2`,
+    [new Date().toISOString(), rawKey],
+  );
 
   return row.user_id;
 };
