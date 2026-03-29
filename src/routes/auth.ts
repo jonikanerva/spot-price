@@ -58,7 +58,7 @@ export const registerAuthRoutes = (
       );
     }
 
-    const existingUserId = getUserIdByUsername(c.get("db"), username);
+    const existingUserId = await getUserIdByUsername(c.get("db"), username);
     const email = toInternalEmail(username);
 
     if (existingUserId) {
@@ -70,7 +70,7 @@ export const registerAuthRoutes = (
       return signInResponse;
     }
 
-    if (!isRegistrationOpen(c.get("db"))) {
+    if (!(await isRegistrationOpen(c.get("db")))) {
       return c.json({ error: "Registration is currently closed." }, 403);
     }
 
@@ -81,13 +81,15 @@ export const registerAuthRoutes = (
     });
 
     if (signUpResponse.ok) {
-      const newUserRow = c
+      const { rows } = await c
         .get("db")
-        .prepare('SELECT id FROM "user" WHERE email = ?')
-        .get(email) as { id: string } | undefined;
-      if (newUserRow?.id) {
-        assignUsername(c.get("db"), newUserRow.id, username);
-        ensureUserSettings(c.get("db"), newUserRow.id);
+        .query<{ id: string }>('SELECT id FROM "user" WHERE email = $1', [
+          email,
+        ]);
+      const newUserId = rows[0]?.id;
+      if (newUserId) {
+        await assignUsername(c.get("db"), newUserId, username);
+        await ensureUserSettings(c.get("db"), newUserId);
       }
     }
 
@@ -112,7 +114,9 @@ export const registerAuthRoutes = (
     });
     const userId =
       (session as { user?: { id?: string } } | null)?.user?.id ?? null;
-    const username = userId ? getUsernameByUserId(c.get("db"), userId) : null;
+    const username = userId
+      ? await getUsernameByUserId(c.get("db"), userId)
+      : null;
     return c.json({ session, username });
   });
 
@@ -121,22 +125,22 @@ export const registerAuthRoutes = (
   app.use("/api/keys", sessionAuth);
   app.use("/api/keys/*", sessionAuth);
 
-  app.get("/api/keys", (c) => {
+  app.get("/api/keys", async (c) => {
     const userId = c.get("sessionUser").id;
-    ensureUserSettings(c.get("db"), userId);
-    const existing = getCurrentApiKey(c.get("db"), userId);
+    await ensureUserSettings(c.get("db"), userId);
+    const existing = await getCurrentApiKey(c.get("db"), userId);
     if (existing) {
       return c.json({ apiKey: existing.key, createdAt: existing.createdAt });
     }
     // No key exists at all — create the first one
-    const created = regenerateApiKey(c.get("db"), userId);
+    const created = await regenerateApiKey(c.get("db"), userId);
     return c.json({ apiKey: created.key, createdAt: created.createdAt }, 201);
   });
 
-  app.post("/api/keys/regenerate", (c) => {
+  app.post("/api/keys/regenerate", async (c) => {
     const userId = c.get("sessionUser").id;
-    ensureUserSettings(c.get("db"), userId);
-    const created = regenerateApiKey(c.get("db"), userId);
+    await ensureUserSettings(c.get("db"), userId);
+    const created = await regenerateApiKey(c.get("db"), userId);
     return c.json({ apiKey: created.key, createdAt: created.createdAt });
   });
 };

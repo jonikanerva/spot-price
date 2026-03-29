@@ -1,7 +1,7 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { Scalar } from "@scalar/hono-api-reference";
 import { logger } from "hono/logger";
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { apiKeyAuth, apiKeyRateLimit, globalRateLimit } from "./middleware.js";
 import { renderHomePage } from "./ui.js";
 import type { AuthSessionUser } from "./session-auth.js";
@@ -12,7 +12,7 @@ import { registerUserRoutes } from "./routes/user.js";
 
 export interface AppEnv {
   Variables: {
-    db: Database.Database;
+    db: Pool;
     userId: string;
     sessionUser: AuthSessionUser;
   };
@@ -39,7 +39,7 @@ export interface AuthInstance {
 }
 
 export const createApp = (
-  db: Database.Database,
+  pool: Pool,
   auth: AuthInstance,
 ): OpenAPIHono<AppEnv> => {
   const sessionAuth = createSessionAuth(auth);
@@ -61,7 +61,7 @@ export const createApp = (
   app.use(logger());
 
   app.use(async (c, next) => {
-    c.set("db", db);
+    c.set("db", pool);
     await next();
   });
 
@@ -69,14 +69,12 @@ export const createApp = (
 
   // --- Non-OpenAPI routes (health, HTML) -----------------------------------
 
-  app.get("/health", (c) => {
+  app.get("/health", async (c) => {
     try {
-      const dbInstance = c.get("db");
-      const result = dbInstance.prepare("SELECT 1 as ok").get() as
-        | { ok: number }
-        | undefined;
+      const dbPool = c.get("db");
+      const { rows } = await dbPool.query<{ ok: number }>("SELECT 1 as ok");
 
-      if (result?.ok === 1) {
+      if (rows[0]?.ok === 1) {
         return c.json({ status: "ok", db: "connected" });
       }
       return c.json({ status: "error", db: "query failed" }, 503);
