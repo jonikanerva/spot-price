@@ -4,7 +4,7 @@ import type Database from "better-sqlite3";
 const KEY_PREFIX = "sp_";
 const KEY_BYTE_LENGTH = 32;
 /** Generate a random API key with prefix */
-export const generateApiKey = (): string => {
+const generateApiKey = (): string => {
   const bytes = randomBytes(KEY_BYTE_LENGTH);
   return `${KEY_PREFIX}${bytes.toString("hex")}`;
 };

@@ -47,7 +47,7 @@ export const PriceWindowSchema = z
 
 export const PriceListSchema = PriceWindowSchema.extend({
   available: z.boolean().openapi({ example: true }),
-  expectedAt: z.string().optional().openapi({ example: "14:00 EET" }),
+  expectedAt: z.string().optional().openapi({ example: "12:00 UTC" }),
 }).openapi("PriceList");
 
 const SpotPriceEntrySchema = z

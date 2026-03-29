@@ -15,7 +15,19 @@ import {
   getCurrentAndNextDate,
   getUtcRangeForLocalDate,
 } from "../time.js";
-import type { HourlyPrice, TotalPrice, UserSettings } from "../types.js";
+import type { HourlyPrice, PriceWindow, UserSettings } from "../types.js";
+
+const EMPTY_PRICE_LIST: PriceWindow & { available: false } = {
+  start: "",
+  end: "",
+  startLocal: "",
+  endLocal: "",
+  minTotalCentsKwh: 0,
+  maxTotalCentsKwh: 0,
+  averageTotalCentsKwh: 0,
+  prices: [],
+  available: false,
+};
 import { getDefaultTimezone } from "../areas.js";
 import {
   CheapestQuerySchema,
@@ -127,7 +139,7 @@ const priceTomorrowRoute = createRoute({
   tags: ["Price"],
   summary: "Tomorrow's hourly total prices",
   description:
-    "Returns tomorrow's total prices if available. Prices are typically published after 14:00 EET.",
+    "Returns tomorrow's total prices if available. Prices are typically published after 12:00 UTC.",
   security: [{ BearerAuth: [] }],
   responses: {
     200: {
@@ -255,28 +267,18 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
       settings.area,
     );
     if (prices.length === 0) {
-      return c.json(
-        {
-          start: "",
-          end: "",
-          startLocal: "",
-          endLocal: "",
-          minTotalCentsKwh: 0,
-          maxTotalCentsKwh: 0,
-          averageTotalCentsKwh: 0,
-          prices: [],
-          available: false,
-        },
-        200,
-      );
+      return c.json(EMPTY_PRICE_LIST, 200);
     }
 
     const totals = calculateTotalPrices(prices, settings);
     const window = buildPriceWindow(totals);
+    if (!window) {
+      return c.json(EMPTY_PRICE_LIST, 200);
+    }
 
     return c.json(
       {
-        ...window!,
+        ...window,
         available: true,
       },
       200,
@@ -300,28 +302,23 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     );
     if (prices.length === 0) {
       return c.json(
-        {
-          start: "",
-          end: "",
-          startLocal: "",
-          endLocal: "",
-          minTotalCentsKwh: 0,
-          maxTotalCentsKwh: 0,
-          averageTotalCentsKwh: 0,
-          available: false as const,
-          expectedAt: "14:00 EET",
-          prices: [] as TotalPrice[],
-        },
+        { ...EMPTY_PRICE_LIST, expectedAt: "12:00 UTC" },
         200 as const,
       );
     }
 
     const totals = calculateTotalPrices(prices, settings);
     const window = buildPriceWindow(totals);
+    if (!window) {
+      return c.json(
+        { ...EMPTY_PRICE_LIST, expectedAt: "12:00 UTC" },
+        200 as const,
+      );
+    }
 
     return c.json(
       {
-        ...window!,
+        ...window,
         available: true as const,
       },
       200 as const,

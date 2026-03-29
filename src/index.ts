@@ -2,8 +2,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { createAuth } from "./auth.js";
 import { initDatabase, closeDatabase } from "./db.js";
-import { runFetchJob } from "./fetch-job.js";
-import { startScheduler } from "./scheduler.js";
+import { startScheduler, runStartupFetch } from "./scheduler.js";
 
 const DEFAULT_PORT = 3000;
 
@@ -24,14 +23,9 @@ const main = (): void => {
   const app = createApp(db, auth);
   const port = getPort();
 
-  // Start daily price fetch scheduler
+  // Start price fetch scheduler (every 2 hours) + immediate startup fetch
   const schedulerTask = startScheduler(db);
-
-  // Fetch today's prices on startup if not already in DB
-  void runFetchJob(db).catch((error: unknown) => {
-    const msg = error instanceof Error ? error.message : "unknown error";
-    console.error(`[startup] Initial price fetch failed: ${msg}`);
-  });
+  runStartupFetch(db);
 
   // Graceful shutdown: stop scheduler, close DB
   const shutdown = (): void => {
