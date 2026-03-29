@@ -31,6 +31,9 @@ export const initDatabase = async (): Promise<pg.Pool> => {
   return pool;
 };
 
+/** WeakMap to track test schema names for cleanup without monkey-patching Pool */
+const testSchemas = new WeakMap<pg.Pool, string>();
+
 /** Create a test database using a unique schema for isolation */
 export const initTestDatabase = async (): Promise<pg.Pool> => {
   const connectionString =
@@ -42,27 +45,26 @@ export const initTestDatabase = async (): Promise<pg.Pool> => {
   }
 
   const schemaName = `test_${String(Date.now())}_${Math.random().toString(36).slice(2, 8)}`;
-  const pool = new Pool({ connectionString });
+  const escapedSchema = pg.Client.prototype.escapeIdentifier(schemaName);
 
-  await pool.query(`CREATE SCHEMA ${schemaName}`);
-  await pool.query(`SET search_path TO ${schemaName}`);
-
-  // Ensure all new connections also use the test schema
-  pool.on("connect", (client) => {
-    void client.query(`SET search_path TO ${schemaName}`);
+  // Pass search_path via the PostgreSQL options connection parameter so every
+  // connection automatically uses the test schema without a connect listener.
+  const pool = new Pool({
+    connectionString,
+    options: `-c search_path=${schemaName}`,
   });
+
+  await pool.query(`CREATE SCHEMA ${escapedSchema}`);
 
   await runMigrations(pool);
 
-  // Store schema name for cleanup
-  (pool as pg.Pool & { _testSchema?: string })._testSchema = schemaName;
+  testSchemas.set(pool, escapedSchema);
 
   return pool;
 };
 
 export const closeDatabase = async (pool: pg.Pool): Promise<void> => {
-  // Drop test schema if present
-  const testSchema = (pool as pg.Pool & { _testSchema?: string })._testSchema;
+  const testSchema = testSchemas.get(pool);
   if (testSchema) {
     await pool.query(`DROP SCHEMA IF EXISTS ${testSchema} CASCADE`);
   }

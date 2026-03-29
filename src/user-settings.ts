@@ -37,15 +37,8 @@ export const getUserSettings = async (
     [userId],
   );
 
-  if (rows.length === 0) {
-    return null;
-  }
-
   const row = rows[0];
-  if (!row) {
-    return null;
-  }
-  return rowToSettings(row);
+  return row ? rowToSettings(row) : null;
 };
 
 /** Create or update user settings */

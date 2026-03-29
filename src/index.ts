@@ -27,16 +27,16 @@ const main = async (): Promise<void> => {
   const schedulerTask = startScheduler(pool);
   runStartupFetch(pool);
 
-  // Graceful shutdown: stop scheduler, close DB
-  const shutdown = (): void => {
+  // Graceful shutdown: stop scheduler, close DB, then exit
+  const shutdown = async (): Promise<void> => {
     console.log("Shutting down gracefully...");
     void schedulerTask.stop();
-    void closeDatabase(pool);
+    await closeDatabase(pool);
     process.exit(0);
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", () => void shutdown());
+  process.on("SIGINT", () => void shutdown());
 
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`Server running on http://localhost:${String(info.port)}`);
