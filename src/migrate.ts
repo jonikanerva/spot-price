@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,20 +14,22 @@ const MIGRATIONS_DIR = path.join(
   "migrations",
 );
 
-const ensureMigrationsTable = (db: Database.Database): void => {
-  db.exec(`
+const ensureMigrationsTable = async (pool: Pool): Promise<void> => {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS _migrations (
       version INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
-      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
 };
 
-const getAppliedVersions = (db: Database.Database): ReadonlySet<number> => {
-  const rows = db
-    .prepare("SELECT version FROM _migrations ORDER BY version")
-    .all() as readonly MigrationRecord[];
+const getAppliedVersions = async (
+  pool: Pool,
+): Promise<ReadonlySet<number>> => {
+  const { rows } = await pool.query<MigrationRecord>(
+    "SELECT version FROM _migrations ORDER BY version",
+  );
   return new Set(rows.map((r) => r.version));
 };
 
@@ -62,10 +64,10 @@ export interface MigrationResult {
   readonly total: number;
 }
 
-export const runMigrations = (db: Database.Database): MigrationResult => {
-  ensureMigrationsTable(db);
+export const runMigrations = async (pool: Pool): Promise<MigrationResult> => {
+  await ensureMigrationsTable(pool);
 
-  const applied = getAppliedVersions(db);
+  const applied = await getAppliedVersions(pool);
   const migrations = discoverMigrations();
   const pending = migrations.filter((m) => !applied.has(m.version));
 
@@ -73,21 +75,26 @@ export const runMigrations = (db: Database.Database): MigrationResult => {
 
   for (const migration of pending) {
     const sql = readFileSync(migration.filePath, "utf-8");
+    const client = await pool.connect();
 
-    db.transaction(() => {
-      db.exec(sql);
-      db.prepare("INSERT INTO _migrations (version, name) VALUES (?, ?)").run(
-        migration.version,
-        migration.name,
+    try {
+      await client.query("BEGIN");
+      await client.query(sql);
+      await client.query(
+        "INSERT INTO _migrations (version, name) VALUES ($1, $2)",
+        [migration.version, migration.name],
       );
-    })();
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
 
-    appliedNames.push(
-      `${String(migration.version).padStart(3, "0")}_${migration.name}`,
-    );
-    console.log(
-      `Migration applied: ${String(migration.version).padStart(3, "0")}_${migration.name}`,
-    );
+    const label = `${String(migration.version).padStart(3, "0")}_${migration.name}`;
+    appliedNames.push(label);
+    console.log(`Migration applied: ${label}`);
   }
 
   return {
