@@ -7,7 +7,7 @@ import { formatUtcDate } from "./time.js";
 /** Minimum expected price entries per area per day (DST days may have 23h = 92 entries) */
 const MIN_ENTRIES_PER_AREA = 23;
 
-export const getTodayAndTomorrow = (): { today: string; tomorrow: string } => {
+const getTodayAndTomorrow = (): { today: string; tomorrow: string } => {
   const now = new Date();
   const tomorrow = new Date(now);
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
