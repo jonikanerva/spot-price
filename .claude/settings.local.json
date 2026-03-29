@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(*)",
+      "WebFetch",
       "Bash(pnpm:*)",
       "Bash(gh pr:*)",
       "Bash(gh api:*)",
