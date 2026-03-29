@@ -4,6 +4,7 @@ import { closeDatabase, initTestDatabase } from "./db.js";
 import { createTestApp } from "./test-utils.js";
 import {
   formatDateInTimeZone,
+  formatDateTimeInTimeZone,
   addDays,
   getUtcRangeForLocalDate,
 } from "./time.js";
@@ -11,6 +12,52 @@ import {
 const TEST_USER_ID = "user-1";
 const TEST_API_KEY = "sp_test_key_123";
 const HELSINKI_TZ = "Europe/Helsinki";
+
+/** Convert Helsinki local date + hour to UTC ms, correctly handling DST */
+const helsinkiHourToUtcMs = (date: string, hour: number): number => {
+  const { startUtc } = getUtcRangeForLocalDate(date, HELSINKI_TZ);
+  const midnightMs = new Date(startUtc).getTime();
+  const candidateMs = midnightMs + hour * 3_600_000;
+
+  const actualHour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: HELSINKI_TZ,
+      hour: "2-digit",
+      hour12: false,
+    }).format(new Date(candidateMs)),
+  );
+
+  // Normalize diff to [-12, 12) to handle midnight wrapping
+  let diff = actualHour - hour;
+  if (diff > 12) diff -= 24;
+  if (diff < -12) diff += 24;
+  if (diff === 0) return candidateMs;
+  return candidateMs - diff * 3_600_000;
+};
+
+/** Number of actual hours in a Helsinki local day (23 on spring forward, 25 on fall back) */
+const helsinkiDayHours = (date: string): number => {
+  const { startUtc } = getUtcRangeForLocalDate(date, HELSINKI_TZ);
+  const nextDate = formatDateInTimeZone(
+    addDays(new Date(`${date}T12:00:00Z`), 1),
+    HELSINKI_TZ,
+  );
+  const { startUtc: nextMidnight } = getUtcRangeForLocalDate(
+    nextDate,
+    HELSINKI_TZ,
+  );
+  return (
+    (new Date(nextMidnight).getTime() - new Date(startUtc).getTime()) /
+    3_600_000
+  );
+};
+
+/** Format Helsinki date + hour as ISO 8601 with correct tz offset */
+const helsinkiIso = (date: string, hour: number): string =>
+  formatDateTimeInTimeZone(
+    new Date(helsinkiHourToUtcMs(date, hour)).toISOString(),
+    HELSINKI_TZ,
+  );
 
 const loginOrSignupAndGetCookie = async (
   app: ReturnType<typeof createTestApp>,
@@ -297,8 +344,7 @@ const seedPriceEntry = (
 
 /**
  * Seed consecutive hourly prices for a Helsinki local date string (hours startH..endH-1).
- * Converts Helsinki local hours to UTC Z format before storing, matching production data.
- * Helsinki winter = UTC+2, so Helsinki hour 14 is stored as UTC hour 12.
+ * Converts Helsinki local hours to UTC using DST-aware conversion before storing.
  */
 const seedHourlyRange = (
   db: Database.Database,
@@ -307,13 +353,9 @@ const seedHourlyRange = (
   endH: number,
   eurMwh: number,
 ): void => {
-  // Get the UTC instant for midnight of this Helsinki date
-  const { startUtc } = getUtcRangeForLocalDate(helsinkiDateStr, HELSINKI_TZ);
-  const midnightUtcMs = new Date(startUtc).getTime();
-
   for (let h = startH; h < endH; h++) {
-    const startMs = midnightUtcMs + h * 60 * 60 * 1000;
-    const endMs = startMs + 60 * 60 * 1000;
+    const startMs = helsinkiHourToUtcMs(helsinkiDateStr, h);
+    const endMs = startMs + 3_600_000;
     seedPriceEntry(
       db,
       new Date(startMs).toISOString(),
@@ -364,7 +406,7 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     // Tomorrow 00-22: cheap
     seedHourlyRange(db, tomorrow, 0, 22, 10);
 
-    const startTime = `${today}T06:00:00+02:00`;
+    const startTime = helsinkiIso(today, 6);
     const res = await requestCheapest(
       app,
       `duration=60&startTime=${encodeURIComponent(startTime)}`,
@@ -388,7 +430,7 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     // Only today's prices, no tomorrow
     seedHourlyRange(db, today, 6, 22, 50);
 
-    const startTime = `${today}T06:00:00+02:00`;
+    const startTime = helsinkiIso(today, 6);
     const res = await requestCheapest(
       app,
       `duration=60&startTime=${encodeURIComponent(startTime)}`,
@@ -416,7 +458,7 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     // Hours 14-16: moderate (40 EUR/MWh) — cheapest AFTER startTime
     seedHourlyRange(db, today, 14, 16, 40);
 
-    const startTime = `${today}T10:00:00+02:00`;
+    const startTime = helsinkiIso(today, 10);
     const res = await requestCheapest(
       app,
       `duration=60&startTime=${encodeURIComponent(startTime)}`,
@@ -428,12 +470,8 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     const startBound = new Date(startTime).getTime();
     // Window must start at or after startTime
     expect(windowStart).toBeGreaterThanOrEqual(startBound);
-    // Should pick Helsinki hour 14 (cheapest after startTime).
-    // Helsinki hour 14 in winter = UTC hour 12. Verify via UTC instant comparison:
-    // the expected UTC start is midnight-UTC-of-Helsinki-date + 14 hours
-    const { startUtc } = getUtcRangeForLocalDate(today, HELSINKI_TZ);
-    const expectedUtcMs = new Date(startUtc).getTime() + 14 * 60 * 60 * 1000;
-    expect(windowStart).toBe(expectedUtcMs);
+    // Should pick Helsinki hour 14 (cheapest after startTime)
+    expect(windowStart).toBe(helsinkiHourToUtcMs(today, 14));
   });
 
   // --- Requirement 2: duration + endTime ---
@@ -449,8 +487,8 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     // Tomorrow 12-20: very cheap (5 EUR/MWh) — but after endTime
     seedHourlyRange(db, tomorrow, 12, 20, 5);
 
-    const startTime = `${tomorrow}T00:00:00+02:00`;
-    const endTime = `${tomorrow}T12:00:00+02:00`;
+    const startTime = helsinkiIso(tomorrow, 0);
+    const endTime = helsinkiIso(tomorrow, 12);
     const res = await requestCheapest(
       app,
       `duration=60&startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`,
@@ -462,11 +500,10 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     const endBound = new Date(endTime).getTime();
     // Window must end at or before endTime
     expect(windowEnd).toBeLessThanOrEqual(endBound);
-    // Should pick Helsinki hour 08 (30 EUR), not hour 12+ (5 EUR which is past endTime).
-    // Verify via UTC instant: Helsinki hour 8 = midnight-UTC + 8h
-    const { startUtc } = getUtcRangeForLocalDate(tomorrow, HELSINKI_TZ);
-    const expectedUtcMs = new Date(startUtc).getTime() + 8 * 60 * 60 * 1000;
-    expect(new Date(body.start).getTime()).toBe(expectedUtcMs);
+    // Should pick Helsinki hour 08 (30 EUR), not hour 12+ (5 EUR which is past endTime)
+    expect(new Date(body.start).getTime()).toBe(
+      helsinkiHourToUtcMs(tomorrow, 8),
+    );
   });
 
   it("endTime only (no startTime): respects endTime bound", async () => {
@@ -478,7 +515,7 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     // Tomorrow 10-20: cheap (5 EUR/MWh) — past endTime
     seedHourlyRange(db, tomorrow, 10, 20, 5);
 
-    const endTime = `${tomorrow}T10:00:00+02:00`;
+    const endTime = helsinkiIso(tomorrow, 10);
     const res = await requestCheapest(
       app,
       `duration=60&endTime=${encodeURIComponent(endTime)}`,
@@ -496,12 +533,12 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     const app = setup();
     const { today } = getHelsinkiDates();
 
-    // Expensive intervals around a cheap 2-hour block
-    seedHourlyRange(db, today, 0, 2, 120);
-    seedHourlyRange(db, today, 2, 4, 20);
-    seedHourlyRange(db, today, 4, 6, 120);
+    // Expensive intervals around a cheap 2-hour block (hours away from DST boundary)
+    seedHourlyRange(db, today, 8, 10, 120);
+    seedHourlyRange(db, today, 10, 12, 20);
+    seedHourlyRange(db, today, 12, 14, 120);
 
-    const startTime = `${today}T00:00:00+02:00`;
+    const startTime = helsinkiIso(today, 8);
     const res = await requestCheapest(
       app,
       `duration=120&startTime=${encodeURIComponent(startTime)}&maxPrice=12`,
@@ -522,11 +559,11 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
 
     // Cheap, then expensive (to be filtered out), then cheap again.
     // After maxPrice filtering, remaining 60-min blocks are not contiguous.
-    seedHourlyRange(db, today, 0, 1, 20);
-    seedHourlyRange(db, today, 1, 2, 120);
-    seedHourlyRange(db, today, 2, 3, 20);
+    seedHourlyRange(db, today, 8, 9, 20);
+    seedHourlyRange(db, today, 9, 10, 120);
+    seedHourlyRange(db, today, 10, 11, 20);
 
-    const startTime = `${today}T00:00:00+02:00`;
+    const startTime = helsinkiIso(today, 8);
     const res = await requestCheapest(
       app,
       `duration=120&startTime=${encodeURIComponent(startTime)}&maxPrice=12`,
@@ -544,7 +581,7 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     seedHourlyRange(db, today, 0, 1, 50);
     seedHourlyRange(db, today, 1, 2, 80);
 
-    const startTime = `${today}T00:00:00+02:00`;
+    const startTime = helsinkiIso(today, 0);
     const baselineRes = await requestCheapest(
       app,
       `duration=60&startTime=${encodeURIComponent(startTime)}`,
@@ -595,8 +632,8 @@ describe("cheapest endpoint — startTime / endTime filtering", () => {
     seedHourlyRange(db, today, 12, 20, 50);
 
     // endTime is before any prices exist
-    const startTime = `${today}T06:00:00+02:00`;
-    const endTime = `${today}T08:00:00+02:00`;
+    const startTime = helsinkiIso(today, 6);
+    const endTime = helsinkiIso(today, 8);
     const res = await requestCheapest(
       app,
       `duration=60&startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`,
@@ -639,7 +676,7 @@ describe("cross-midnight contiguity", () => {
     seedHourlyRange(db, tomorrow, 0, 1, 5); // tomorrow 00-01 Helsinki = cheap
 
     // Request cheapest 3-hour window — should find the 22:00-01:00 window
-    const startTime = `${today}T00:00:00+02:00`;
+    const startTime = helsinkiIso(today, 0);
     const res = await app.request(
       `/api/v1/price/cheapest?duration=180&startTime=${encodeURIComponent(startTime)}`,
       {
@@ -670,22 +707,10 @@ describe("cross-midnight contiguity", () => {
     }
 
     // The window should start at Helsinki hour 22 of today
-    const { startUtc: todayMidnightUtc } = getUtcRangeForLocalDate(
-      today,
-      HELSINKI_TZ,
-    );
-    const expectedStartMs =
-      new Date(todayMidnightUtc).getTime() + 22 * 60 * 60 * 1000;
-    expect(new Date(body.start).getTime()).toBe(expectedStartMs);
+    expect(new Date(body.start).getTime()).toBe(helsinkiHourToUtcMs(today, 22));
 
     // The window should end at Helsinki hour 01 of tomorrow
-    const { startUtc: tomorrowMidnightUtc } = getUtcRangeForLocalDate(
-      tomorrow,
-      HELSINKI_TZ,
-    );
-    const expectedEndMs =
-      new Date(tomorrowMidnightUtc).getTime() + 1 * 60 * 60 * 1000;
-    expect(new Date(body.end).getTime()).toBe(expectedEndMs);
+    expect(new Date(body.end).getTime()).toBe(helsinkiHourToUtcMs(tomorrow, 1));
   });
 
   it("price/today returns full Helsinki day including pre-UTC-midnight hours", async () => {
@@ -706,8 +731,8 @@ describe("cross-midnight contiguity", () => {
     };
 
     expect(body.available).toBe(true);
-    // Full Helsinki day = 24 hourly entries
-    expect(body.prices.length).toBe(24);
+    // Full Helsinki day: 24 on normal days, 23 on spring forward, 25 on fall back
+    expect(body.prices.length).toBe(helsinkiDayHours(today));
 
     // First entry should be at Helsinki midnight (= UTC 22:00 previous day in winter)
     const { startUtc } = getUtcRangeForLocalDate(today, HELSINKI_TZ);
