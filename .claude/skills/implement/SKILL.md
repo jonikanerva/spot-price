@@ -60,6 +60,11 @@ before writing code.
 
 ### Step 4: Run verification
 
+**Sandbox note**: `pnpm test:all` requires sandbox bypass (PostgreSQL
+uses localhost:5432 TCP which the sandbox blocks). Use
+`dangerouslyDisableSandbox: true` directly — do not attempt without it
+first, and do not try workarounds.
+
 ```
 pnpm test:all
 ```
@@ -91,6 +96,10 @@ Each commit must be one complete logical unit. If multiple logical
 changes were made, create separate commits for each.
 
 ### Step 6: Push
+
+**Sandbox note**: `git push` and `gh` commands require sandbox bypass
+(TLS certificate validation). Use `dangerouslyDisableSandbox: true`
+directly — do not attempt without it first, and do not try workarounds.
 
 ```
 git push -u origin <branch-name>

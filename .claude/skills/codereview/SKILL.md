@@ -82,6 +82,11 @@ be read-only. Pass this exact prompt to the Agent tool:
 
 Replace NUMBER with the actual PR number in the prompt.
 
+**Sandbox note**: All `gh` commands (`gh pr comment`, `gh pr review`)
+and `pnpm test:all` require sandbox bypass. Use
+`dangerouslyDisableSandbox: true` directly — do not attempt without it
+first, and do not try workarounds.
+
 ### Step 3: Post review comment — REQUIRED, NEVER SKIP
 
 Take the review text from the subagent and post it as a PR comment.

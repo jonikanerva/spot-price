@@ -24,13 +24,19 @@
       "WebFetch(domain:railway.com)",
       "WebFetch(domain:docs.railway.com)",
       "WebFetch(domain:registry.npmjs.org)",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(git push:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push origin main:*)",
       "Bash(rm -rf:*)"
     ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["~/.gnupg"]
+    }
   },
   "hooks": {
     "PostToolUse": [
