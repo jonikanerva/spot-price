@@ -146,7 +146,7 @@ Server starts at `http://localhost:3000`.
 
 ## Data source
 
-Spot prices are sourced from the [Nord Pool Data Portal API](https://dataportal-api.nordpoolgroup.com/api) — the same API used by Home Assistant's official Nord Pool integration. Data is owned by Nord Pool.
+Spot prices are sourced from the [Nord Pool Data Portal API](https://dataportal-api.nordpoolgroup.com/api) — the same API used by Home Assistant's official Nord Pool integration ([pynordpool](https://github.com/gjohansson-ST/pynordpool)). Data is owned by Nord Pool.
 
 ## License
 
