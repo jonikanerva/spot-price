@@ -23,14 +23,14 @@ const main = async (): Promise<void> => {
   const app = createApp(pool, auth);
   const port = getPort();
 
-  // Start price fetch scheduler (every 2 hours) + immediate startup fetch
-  const schedulerTask = startScheduler(pool);
+  // Start price fetch scheduler (2h baseline + 10min burst during publication window)
+  const scheduler = startScheduler(pool);
   runStartupFetch(pool);
 
   // Graceful shutdown: stop scheduler, close DB, then exit
   const shutdown = async (): Promise<void> => {
     console.log("Shutting down gracefully...");
-    void schedulerTask.stop();
+    scheduler.stop();
     await closeDatabase(pool);
     process.exit(0);
   };

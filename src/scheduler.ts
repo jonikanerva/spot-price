@@ -1,12 +1,13 @@
-import type { ScheduledTask } from "node-cron";
 import cron from "node-cron";
 import type { Pool } from "pg";
 import { runFetchJob } from "./fetch-job.js";
+import { formatUtcDate, addDays } from "./time.js";
 
-const safeFetch = async (
-  pool: Pool,
-  label: string,
-): Promise<void> => {
+/**
+ * Run a fetch job and return whether tomorrow's data is available.
+ * Errors are caught and logged — never throws.
+ */
+const safeFetch = async (pool: Pool, label: string): Promise<boolean> => {
   try {
     const result = await runFetchJob(pool);
     const stored = result.results.reduce((sum, r) => sum + r.stored, 0);
@@ -20,9 +21,11 @@ const safeFetch = async (
         "[scheduler] Tomorrow's prices not yet available — will retry next cycle",
       );
     }
+    return result.tomorrowAvailable;
   } catch (error) {
     const msg = error instanceof Error ? error.message : "unknown error";
     console.error(`[scheduler] ${label} failed: ${msg}`);
+    return false;
   }
 };
 
@@ -34,21 +37,61 @@ export const runStartupFetch = (pool: Pool): void => {
   void safeFetch(pool, "Startup fetch");
 };
 
-/**
- * Schedule price fetch every 2 hours.
- *
- * Nord Pool publishes next-day prices at ~12:00 UTC.
- * Instead of a single daily run with complex retry logic, we poll every 2 hours.
- * Each run is idempotent — already-stored data is skipped via allAreasPresent.
- * This naturally handles:
- *   - DST transitions (no publication-time guessing needed)
- *   - Nord Pool outages (next cycle retries automatically)
- *   - Service restarts (startup fetch + next cycle fills gaps)
- */
-export const startScheduler = (pool: Pool): ScheduledTask => {
-  console.log("[scheduler] Price fetch scheduled every 2 hours");
+/** Handle for stopping all scheduled tasks. */
+export interface SchedulerHandle {
+  readonly stop: () => void;
+}
 
-  return cron.schedule("0 */2 * * *", () => {
+/**
+ * Schedule price fetching with two strategies:
+ *
+ * 1. Standard: every 2 hours — reliable baseline and safety net.
+ * 2. Burst: every 10 minutes during 12:00–13:59 CET — catches next-day
+ *    price publication quickly. Stops once tomorrow's data is found.
+ *
+ * Nord Pool publishes day-ahead prices at ~12:55 CET (after gate closure
+ * at 12:00 CET). Delays can push publication to ~13:45 CET. The burst
+ * schedule uses Europe/Oslo timezone so DST is handled automatically.
+ *
+ * A date-based flag prevents redundant fetches: once tomorrow's prices
+ * are captured, remaining burst ticks for that day are skipped.
+ * Each run is idempotent — already-stored data is skipped via allAreasPresent.
+ */
+export const startScheduler = (pool: Pool): SchedulerHandle => {
+  let lastCapturedTomorrow: string | null = null;
+
+  console.log(
+    "[scheduler] Price fetch scheduled: every 2h + burst every 10min during 12:00–13:59 CET",
+  );
+
+  const standard = cron.schedule("0 */2 * * *", () => {
     void safeFetch(pool, "Scheduled fetch");
   });
+
+  const burst = cron.schedule(
+    "*/10 12-13 * * *",
+    () => {
+      const tomorrow = formatUtcDate(addDays(new Date(), 1));
+      if (lastCapturedTomorrow === tomorrow) {
+        return;
+      }
+      void (async () => {
+        const available = await safeFetch(pool, "Publication-window fetch");
+        if (available) {
+          lastCapturedTomorrow = tomorrow;
+          console.log(
+            "[scheduler] Tomorrow's prices captured — burst polling paused for today",
+          );
+        }
+      })();
+    },
+    { timezone: "Europe/Oslo" },
+  );
+
+  return {
+    stop: () => {
+      void standard.stop();
+      void burst.stop();
+    },
+  };
 };
