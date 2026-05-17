@@ -95,8 +95,10 @@ Finland (FI), Sweden (SE1-SE4), Norway (NO1-NO5), Denmark (DK1-DK2), Estonia (EE
 
 ### Prerequisites
 
-- Node.js >= 24
-- pnpm
+- Node.js >= 24.15.0 (LTS) — pinned in `.nvmrc`, `mise.toml`, and `package.json` `engines`
+- pnpm 10 — pinned in `mise.toml` and `package.json` `packageManager`
+
+If you use [mise](https://mise.jdx.dev), run `mise install` in the repo root and both Node and pnpm are set up. Otherwise any Node version manager (`nvm`, `fnm`, `volta`) reads `.nvmrc`; `corepack enable` activates the pinned pnpm from `packageManager`.
 
 ### Setup
 
