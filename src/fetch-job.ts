@@ -60,10 +60,7 @@ export const allAreasPresent = async (
 };
 
 /** Fetch prices for all areas for a single date if not already complete */
-const fetchForDate = async (
-  pool: Pool,
-  date: string,
-): Promise<FetchResult> => {
+const fetchForDate = async (pool: Pool, date: string): Promise<FetchResult> => {
   if (await allAreasPresent(pool, date)) {
     return { date, stored: 0, skipped: true };
   }
@@ -95,9 +92,7 @@ const logFetchResult = (date: string, result: FetchResult): void => {
 };
 
 /** Run the price fetch job: fetch today + tomorrow for all areas */
-export const runFetchJob = async (
-  pool: Pool,
-): Promise<FetchJobResult> => {
+export const runFetchJob = async (pool: Pool): Promise<FetchJobResult> => {
   const { today, tomorrow } = getTodayAndTomorrow();
   const results: FetchResult[] = [];
 

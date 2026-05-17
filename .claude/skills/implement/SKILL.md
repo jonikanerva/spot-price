@@ -3,103 +3,95 @@ name: implement
 description: >
   Full implement-and-ship workflow. Use when asked to implement a feature,
   fix a bug, or make any code change that should be shipped as a PR.
-  Does not include planning — use /plan mode first for non-trivial work.
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Agent
 argument-hint: <description of what to implement>
 ---
 
 # Implement and Ship Workflow
 
-Complete workflow for implementing a change and shipping it as a PR.
-The task description comes from `$ARGUMENTS`.
+Complete workflow for implementing a change and shipping it as a PR. The task description comes from `$ARGUMENTS`.
 
-Communicate in Finnish with the user. All code artifacts (commits,
-branch names, PR text, code comments) in English per project policy.
+Communicate in Finnish with the user. All code artifacts (commits, branch names, PR text, code comments) in English per project policy (`CLAUDE.md → Language`).
 
 ## Procedure
 
 Follow these steps in order. Do not skip steps.
 
-### Step 1: Activate Node.js
+### Step 1: Run the VISION decision filter
 
-```
-source ~/.nvm/nvm.sh && nvm use
-```
+Before writing any code, read `VISION.md → Decision Filter` and answer all four questions verbatim.
+
+If the answer to any question is "no", **stop and surface the conflict in the PR description** (or, if no PR exists yet, on the issue / discussion that proposed the change) — list the proposed change and which decision-filter answer was "no". If the rejection establishes a binding constraint future agents must respect, also add a row to `ROADMAP.md → Strategic decisions in force`. Then propose the smallest framework-native alternative that passes the filter — that becomes the new task. Do NOT silently violate `VISION.md`.
+
+Also scan `AGENTS.md §13 "Reject changes that…"` and `STACK.md → Stack-specific reject-list additions`. If the task falls into any rejected category, stop, document, and rewrite the task to the smallest acceptable shape.
 
 ### Step 2: Ensure feature branch
-
-Check the current branch:
 
 ```
 git branch --show-current
 ```
 
-- If on `main`: create and switch to a feature branch. Derive the
-  branch name from the task. Use `feat/<slug>`, `fix/<slug>`, or
-  `chore/<slug>`. Keep under 50 characters, lowercase, hyphens only.
-- If already on a feature branch: stay on it. Run
-  `git log main..HEAD --oneline` to understand the current state.
+- If on `main`: create and switch to a feature branch. Derive the branch name from the task: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`, `docs/<slug>`. Max 50 characters, lowercase, hyphens only.
+- If already on a feature branch: stay on it. Run `git log main..HEAD --oneline` to understand the current state.
 
-**NEVER commit or push to `main` directly.**
+**NEVER commit or push to `main` directly.** Hooks and the deny-list will block this, but do not rely on them — use the right branch.
 
 ### Step 3: Implement the change
 
-Implement what is described in `$ARGUMENTS`. Follow all project
-standards from CLAUDE.md:
+Implement what is described in `$ARGUMENTS`, following all project standards:
 
-- Strong TypeScript: no `any`, no `unknown` as bypass
-- Pure functions, side effects only at I/O boundaries
-- DRY: reuse existing code, never copy-paste
-- Single-purpose functions
-- Descriptive English names
-- UTC everywhere internally
-- Every new feature or behavior change must have tests
+- `AGENTS.md §3` — Architecture (presentation models, phase enums, service actors / wrappers). No `ViewModel`-per-view boilerplate, no DI frameworks.
+- `AGENTS.md §4` — Concurrency (C1–C13). UI thread / event-loop isolation; thread-safe primitives for shared mutable non-UI state; cancellation-aware structured concurrency.
+- `AGENTS.md §5` — UI / API responsiveness. Stay inside the budgets declared in `STACK.md`; no expensive work in render functions; UI thread stays fluid.
+- `AGENTS.md §6` — Side effects. Wrap external systems behind services; explicit degraded phases.
+- `AGENTS.md §7` — Resource budget.
+- `AGENTS.md §8` — Privacy. Never log PII; never persist data forbidden by `VISION.md → Persistence and Privacy Posture` or `STACK.md → Persistence shape`.
+- `AGENTS.md §10` — Code conventions. Value types by default; no force-unwrap / non-null assertions; no `print` / `console.log`; no global mutable state; hot paths allocation-light.
+- Every new feature or behavior change must have tests (`AGENTS.md §9`). Pure domain code gets the deepest tests — edge cases.
+- Every UI surface that gains new states gets preview / story coverage for each state listed in the screen-local enumeration.
 
-If the task is unclear or ambiguous, ask the user for clarification
-before writing code.
+### Step 3.1: Autonomy fallback (no AskUserQuestion)
+
+If the task is unclear or ambiguous:
+
+1. Pick the smallest-surface, most-conservative interpretation that satisfies the `VISION.md` decision filter.
+2. Document the choice in the PR description (alternatives considered + rationale). If it introduces a binding constraint for future agents, also add a row to `ROADMAP.md → Strategic decisions in force`.
+3. Proceed.
+
+**Do not call `AskUserQuestion`.** The autonomous flow depends on this.
 
 ### Step 4: Run verification
 
-**Sandbox note**: `pnpm test:all` requires sandbox bypass (PostgreSQL
-uses localhost:5432 TCP which the sandbox blocks). Use
-`dangerouslyDisableSandbox: true` directly — do not attempt without it
-first, and do not try workarounds.
-
 ```
-pnpm test:all
+$VERIFY_CMD
 ```
 
-This runs: typecheck → lint → test → build. **All must pass.**
+The exact command is declared in `STACK.md`. **All must pass.**
 
 If verification fails:
 
-1. Read the error output carefully
-2. Fix the issue
-3. Re-run `pnpm test:all`
-4. Repeat until all checks pass
-5. Maximum 5 fix attempts — if still failing, stop and ask the user
+1. Read the error output carefully.
+2. Fix the underlying issue — do NOT suppress warnings with `@unchecked Sendable`, `nonisolated(unsafe)`, `@preconcurrency`, `MainActor.assumeIsolated`, `as any`, `@ts-ignore`, or any equivalent escape hatch (see `AGENTS.md §4 C13` and `§13`).
+3. Re-run `$VERIFY_CMD`.
+4. Repeat until all checks pass.
+5. **Maximum 10 fix attempts.** If still failing on attempt 11, do not loop indefinitely — create a `chore/abandoned-<task>` branch with the work-in-progress, push it, and describe the failure mode and what was tried in the draft PR (or on the existing PR). The PR / branch on GitHub is the audit trail for the next teammate to pick up. Do **not** call `AskUserQuestion`.
 
 ### Step 5: Commit
 
-Stage only the files related to this change. Never use `git add -A`
-or `git add .` blindly. Review what is being staged.
+Stage only the files related to this change. **NEVER** use `git add -A` or `git add .`.
 
-Never commit `.env` files, credentials, or secrets.
+**NEVER** commit `.env` files, credentials, or secrets.
 
-Write a commit message that:
+Write commit messages that:
 
-- Is concise (1-2 sentences)
-- Focuses on "why" not "what"
-- Is in English
+- Follow Conventional Commits: `<type>(<scope>): <summary>`.
+- Are concise (1-2 sentences).
+- Focus on "why" not "what".
+- Are in English.
 
-Each commit must be one complete logical unit. If multiple logical
-changes were made, create separate commits for each.
+Each commit must be one complete logical unit. If multiple logical changes were made, create separate commits — one per logical unit.
 
 ### Step 6: Push
-
-**Sandbox note**: `git push` and `gh` commands require sandbox bypass
-(TLS certificate validation). Use `dangerouslyDisableSandbox: true`
-directly — do not attempt without it first, and do not try workarounds.
 
 ```
 git push -u origin <branch-name>
@@ -113,16 +105,18 @@ Check if a PR already exists for this branch:
 gh pr list --head <branch-name> --json number,url --jq '.[0]'
 ```
 
-**If no PR exists**, create one:
+**If no PR exists**, create one using `gh pr create --title "<title>" --body "<body>"`. The body must follow `.github/pull_request_template.md`:
 
-```
-gh pr create --title "<concise title>" --body "<description>"
-```
+- **Why** — motivation; which `VISION.md` / `AGENTS.md` / `STACK.md` section is at play.
+- **What** — brief technical summary of changes.
+- **VISION decision filter** — all four questions answered verbatim with a one-line rationale each.
+- **AGENTS.md / STACK.md rules** — list the specific sections and sub-rules touched (e.g. `§4 C2, C7`, `§5.1`, `§6.3`).
+- **Verification** — `$VERIFY_CMD` passed; any preview / story states added; tests added; privacy declaration updated if applicable.
+- **States handled** — if the change affects UI, list the states handled (loading, success, empty, degraded, permission-blocked, error, plus product-specific).
 
-The PR body must describe what is being changed and why. Note any
-design decisions or trade-offs. Keep the title under 70 characters.
+Keep the title under 70 characters.
 
-**If a PR already exists**, add a comment describing what changed:
+**If a PR already exists**, add a comment summarising what changed:
 
 ```
 gh pr comment <number> --body "<what changed and why>"
@@ -130,18 +124,19 @@ gh pr comment <number> --body "<what changed and why>"
 
 ### Step 8: Report to user
 
-Tell the user (in Finnish):
+Tell the user in Finnish (the only Finnish artifact — everything written to the repo or GitHub is English):
 
-- Summary of what was implemented
-- Verification results (all passing)
-- PR URL
-- Suggest: "Aja `/codereview` kun olet valmis reviewiin."
+- Summary of what was implemented.
+- Verification results (all passing).
+- PR URL.
+- Suggest that the user run `/codereview` when ready for review (or note that `/project-manager` will dispatch `qa-enforcer` automatically when running in `autonomous-build` or `milestone` mode).
 
 ## Rules
 
-- **NEVER** force push
-- **NEVER** push to main
-- **NEVER** add dependencies without explicit user approval
-- **NEVER** commit secrets or credentials
-- **NEVER** merge the PR — that happens after review
-- If `pnpm test:all` does not pass, do NOT push or create PR
+- **NEVER** push to `main`.
+- **NEVER** commit secrets, credentials, `.env` files, or values forbidden by `VISION.md → Persistence and Privacy Posture`.
+- **NEVER** merge the PR — that happens after review and manual testing (`gh pr merge` is allowed only when the user explicitly asks).
+- **NEVER** weaken the strictness mode declared in `STACK.md`, the minimum runtime version, or the language version.
+- If `$VERIFY_CMD` does not pass within 10 attempts, do NOT push or create the PR — abandon the branch per Step 4.
+- If the VISION decision filter fails, do NOT implement — document, surface, and rewrite the task to the smallest acceptable shape.
+- **NEVER** call `AskUserQuestion`.

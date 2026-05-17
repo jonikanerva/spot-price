@@ -1,4 +1,5 @@
 import pg from "pg";
+import { loadEnv } from "./env.js";
 import { runMigrations } from "./migrate.js";
 
 const { Pool, types } = pg;
@@ -11,11 +12,11 @@ types.setTypeParser(1184, (val: string) => new Date(val).toISOString());
 types.setTypeParser(1114, (val: string) => new Date(val + "Z").toISOString());
 
 const getConnectionString = (): string => {
-  const url = process.env["DATABASE_URL"];
-  if (!url) {
+  const { DATABASE_URL } = loadEnv();
+  if (!DATABASE_URL) {
     throw new Error("DATABASE_URL environment variable is required");
   }
-  return url;
+  return DATABASE_URL;
 };
 
 export const initDatabase = async (): Promise<pg.Pool> => {
@@ -36,8 +37,8 @@ const testSchemas = new WeakMap<pg.Pool, string>();
 
 /** Create a test database using a unique schema for isolation */
 export const initTestDatabase = async (): Promise<pg.Pool> => {
-  const connectionString =
-    process.env["TEST_DATABASE_URL"] ?? process.env["DATABASE_URL"];
+  const { TEST_DATABASE_URL, DATABASE_URL } = loadEnv();
+  const connectionString = TEST_DATABASE_URL ?? DATABASE_URL;
   if (!connectionString) {
     throw new Error(
       "TEST_DATABASE_URL or DATABASE_URL environment variable is required for tests",

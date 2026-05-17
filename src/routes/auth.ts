@@ -81,11 +81,9 @@ export const registerAuthRoutes = (
     });
 
     if (signUpResponse.ok) {
-      const { rows } = await c
-        .get("db")
-        .query<{ id: string }>('SELECT id FROM "user" WHERE email = $1', [
-          email,
-        ]);
+      const { rows } = await c.get("db").query<{
+        id: string;
+      }>('SELECT id FROM "user" WHERE email = $1', [email]);
       const newUserId = rows[0]?.id;
       if (newUserId) {
         await assignUsername(c.get("db"), newUserId, username);

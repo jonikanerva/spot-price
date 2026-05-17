@@ -51,16 +51,22 @@ describe("isRegistrationOpen", () => {
   });
 
   it("returns true when user count is below MAX_USERS", async () => {
-    expect(await isRegistrationOpen(mockPoolWithCount(0) as unknown as Pool)).toBe(true);
+    expect(
+      await isRegistrationOpen(mockPoolWithCount(0) as unknown as Pool),
+    ).toBe(true);
   });
 
   it("returns false when user count reaches MAX_USERS", async () => {
-    expect(await isRegistrationOpen(mockPoolWithCount(MAX_USERS) as unknown as Pool)).toBe(false);
+    expect(
+      await isRegistrationOpen(mockPoolWithCount(MAX_USERS) as unknown as Pool),
+    ).toBe(false);
   });
 
   it("returns true when just below the cap", async () => {
     expect(
-      await isRegistrationOpen(mockPoolWithCount(MAX_USERS - 1) as unknown as Pool),
+      await isRegistrationOpen(
+        mockPoolWithCount(MAX_USERS - 1) as unknown as Pool,
+      ),
     ).toBe(true);
   });
 });

@@ -111,12 +111,7 @@ describe("prices table", () => {
     await expect(
       pool.query(
         "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES ($1, $2, $3, $4)",
-        [
-          "2026-02-24T00:00:00+02:00",
-          "2026-02-24T01:00:00+02:00",
-          50.0,
-          "FI",
-        ],
+        ["2026-02-24T00:00:00+02:00", "2026-02-24T01:00:00+02:00", 50.0, "FI"],
       ),
     ).rejects.toThrow();
   });
@@ -131,12 +126,7 @@ describe("prices table", () => {
 
     await pool.query(
       "INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area) VALUES ($1, $2, $3, $4)",
-      [
-        "2026-02-24T00:00:00+02:00",
-        "2026-02-24T01:00:00+02:00",
-        38.1,
-        "SE1",
-      ],
+      ["2026-02-24T00:00:00+02:00", "2026-02-24T01:00:00+02:00", 38.1, "SE1"],
     );
 
     const { rows } = await pool.query<{ cnt: string }>(
