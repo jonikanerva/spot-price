@@ -1,133 +1,80 @@
-# CLAUDE.md — spot-price
+@AGENTS.md
+@VISION.md
+@STACK.md
+@ROADMAP.md
 
-## Project Overview
+# Claude Code workflow
 
-Nord Pool spot electricity price API with total price calculation and cheapest window finder.
+`VISION.md`, `AGENTS.md`, `STACK.md`, and `ROADMAP.md` are the single sources of truth for product, technical, and milestone rules. This file only adds Claude-Code-specific operational rules (skills, verification, git workflow, safeguards, decision rights). Nothing is duplicated from the other documents.
 
-- **Runtime**: Node.js 24 LTS, TypeScript (strict mode)
-- **Framework**: Hono + @hono/node-server
-- **Database**: PostgreSQL via pg (node-postgres)
-- **Auth**: Better Auth (self-hosted)
-- **Package manager**: pnpm
-- **Tests**: Vitest (unit) + Playwright (E2E)
-- **Build**: tsup
-- **Hosting**: Railway
+## Autonomy
 
-## Language Policy
+This project runs on the autonomous "default agent stack" pattern. Invoke the `/project-manager` skill — it is the team-lead entry point. The skill runs in two phases: an interactive Phase A where it interprets your prompt, asks any genuinely ambiguous clarifying questions, and waits for explicit plan approval; and an autonomous Phase B where it spawns the four-teammate agent team (`architect`, `lead-dev`, `qa-enforcer`, `ux-guardian`) and drives the work to completion without further prompts. The PM role itself lives in the skill — the lead is the PM in agent-teams mode.
 
-- All project artifacts in **English**: code, comments, commits, branch names, PR titles, variable names, error messages.
-- User communication in **Finnish**.
+The autonomy fallback rule from `AGENTS.md §14.1` applies in Phase B: when a decision is ambiguous, pick the smallest-surface, most-conservative interpretation that satisfies the `VISION.md` decision filter, document the choice in the PR description (and, if it introduces a binding constraint for future work, add a row to `ROADMAP.md → Strategic decisions in force`), and proceed. Do not call `AskUserQuestion` in Phase B. The only exceptions are (1) Phase A of the `/project-manager` skill, which is interactive by design, and (2) direct edits to `VISION.md` or `AGENTS.md`, which always require an explicit user request.
 
-## Local Development
+## Language
 
-Requires Docker for PostgreSQL.
+Everything that lives in the repository or ever reaches GitHub is written in English. That includes:
 
-```bash
-# Start PostgreSQL
-docker compose up -d
+- Source code, tests, and code comments
+- Git commit messages and branch names
+- PR titles, PR descriptions, PR review comments, PR inline comments
+- Issue titles and issue bodies
+- Any documentation, including this file
 
-# Install dependencies and start dev server
-source ~/.nvm/nvm.sh && nvm use
-pnpm install
-cp .env.example .env
-pnpm dev
-```
-
-The database schema is created automatically on startup via the migration system. Seed data: `pnpm seed`.
-
-To stop: `docker compose down` (data persists in the `pgdata` volume). To reset: `docker compose down -v`.
+The _only_ exception is Claude's spoken replies back to the user in the chat window — those are in Finnish. The moment text is about to be written into a file, staged, pushed, or posted to GitHub, it is in English.
 
 ## Verification
 
-Node.js and pnpm are managed via nvm. Always activate first: `source ~/.nvm/nvm.sh && nvm use`
+Run before every commit and PR — all must pass:
 
-Run before every commit and PR — all must pass, no exceptions:
-
-```
-pnpm test:all
+```sh
+$VERIFY_CMD
 ```
 
-This runs: `typecheck → lint → test → build`
+`$VERIFY_CMD` is declared in `STACK.md`. It is the single source of truth for how to verify, lint, build, and test this project. Never invent raw tool invocations (`swift-format`, `xcodebuild`, `eslint`, `tsc`, etc.) in commits, CI, or agent scripts — always go through the named command in `STACK.md`.
 
-Tests require PostgreSQL running (`docker compose up -d`).
+## Git workflow
 
-## Code Standards
+- Use `/implement <task>` for the feature-branch workflow.
+- Conventional Commits: `<type>(<scope>): <summary>`.
+- Every commit authored by an agent ends with a `Co-Authored-By: <agent display name> <noreply@anthropic.com>` trailer (one trailer per agent that contributed to that commit). Human commits do not need the trailer.
+- Branch names: `feat/<topic>`, `fix/<topic>`, `chore/<topic>`, `docs/<topic>` (max 50 chars, lowercase, hyphens only).
+- **Always merge to `main` with a merge commit — never squash.** The PR keeps its full commit history as the audit trail. This is enforced in the GitHub repo settings.
+- Every PR description covers _why_ and _what_, the relevant `AGENTS.md` sections, and the `VISION.md → Decision Filter` outcome. The PR is the permanent audit trail.
+- Delete the branch after merge.
+- **Never** commit or push directly to `main`.
+- **Trivial PR exception** — for typo fixes, dependency bumps, dead-code removals, formatting-only PRs, and other non-feature PRs (no behavioral change, no new state, no new dependency, no new persisted/transmitted data, no new external system), the `VISION decision filter`, `States handled`, and `AGENTS.md / STACK.md sections involved` blocks of the PR template may be filled with a single line: `N/A — trivial change, no behavioral surface affected.` The `Why`, `What`, and `Verification` sections are still mandatory. The `qa-enforcer` applies the `AGENTS.md §15` checklist as usual; if any rule does apply (e.g. a "typo fix" turns out to touch a privacy-relevant log line), the trivial-PR exception is forfeit and the full template fields are required.
 
-- **Strong TypeScript**: no `any`, no `unknown` as bypass. Every parameter and return value explicitly typed.
-- **Functional programming**: pure functions preferred, side effects only at I/O boundaries (database, HTTP, file I/O).
-- **DRY**: if logic is similar to existing code, refactor to reuse. Never copy-paste.
-- **Single-purpose functions**: each function does one thing.
-- **Naming**: descriptive, intention-revealing, English.
-- **UTC everywhere**: all internal code, database storage, and logs use UTC timestamps. Timezone conversion happens only at the edge — inbound requests convert to UTC immediately, outbound responses/UI convert at the last moment.
+## Skills
 
-## Git Workflow
+- `/project-manager <prompt>` — orchestration entry point. Free-form prompt; the skill classifies it into a mode (autonomous-build, single milestone, bootstrap, audit, PR review, investigation, custom), clarifies if needed, proposes a plan, and only spawns the team after explicit user approval. The skill itself owns `ROADMAP.md` stewardship (status transitions, Strategic decisions in force, Open risks).
+- `/implement <task>` — feature branch → change → `$VERIFY_CMD` → commit → push → PR. Enforces the `VISION.md` decision filter and the `AGENTS.md §14` workflow rules. The `lead-dev` teammate calls this once per milestone.
+- `/codereview` — isolated subagent review of the current branch against `main`. It applies the project governance files first, then risk-based review lenses for correctness, architecture, concurrency, security, privacy, reliability, performance, tests, supply chain, and operability. It posts a plain-text PASS or FAIL PR comment as the audit-trail entry. Every FAIL finding must include evidence, impact, violated local rule, minimum fix, and verification; external standards such as OWASP, CWE, NIST SSDF, SLSA, 12-Factor, ISO/IEC 25010, OpenTelemetry, or OWASP LLM Top 10 are cited only when materially relevant. The `qa-enforcer` teammate calls this after each `/implement` finishes.
 
-- Use `/implement <task>` for the full branch → implement → test → PR workflow.
-- Every feature gets its own branch. Branch from `main`, PR back to `main`.
-- **NEVER** commit or push directly to `main`.
-- **NEVER** force push (`--force` or `--force-with-lease`).
-- Commits must be complete logical units — one logical change per commit.
-- Commit messages: concise, English, focus on "why" not "what".
-- PRs are merged with **merge commit** (`gh pr merge --merge --delete-branch`), not squash. Always delete the branch after merge.
-- **PR as audit trail**: the PR description must fully describe what is being changed and why. Every correction after a failed review must be a separate commit + push + PR comment explaining the fix. Design decisions, trade-offs, and compromises must be documented in PR comments — the PR is the permanent record.
+## Roadmap
 
-## Dependencies
+`ROADMAP.md` at the repository root is the **forward-looking** plan: milestones, active strategic constraints, open risks, milestone scopes. It is **not** an audit log — the audit trail of what happened and why is the git history of `main` (merge commits, never squash) plus PR descriptions and comments.
 
-**NEVER** add a new dependency without research and explicit human approval.
+Every milestone PR must update it before being merged:
 
-When proposing a dependency, provide:
+1. When the branch is opened, move that milestone's row from `Todo` to `In progress`.
+2. Before merging, move the row to `Done` and fill in the PR link.
+3. If a new binding constraint surfaces mid-PR, add a row to `Strategic decisions in force` (rewrite or remove rows when superseded — do not maintain an append-only ledger). If a risk surfaces, add it to `Open risks`; when it is mitigated, delete the row.
 
-- Name and purpose
-- Bundle size impact
-- Maintenance status (last release, open issues)
-- Alternatives considered and why this one wins
+The full rationale for any decision lives in the PR that introduced it — not in `ROADMAP.md`. Never write PII or any data forbidden by `VISION.md → Persistence and Privacy Posture` into `ROADMAP.md`.
 
 ## Safeguards
 
-- **NEVER** read `.env` files (`.env`, `.env.*`, `.env.local`, `.env.production`).
-- **NEVER** commit secrets, credentials, API keys, or tokens.
-- **NEVER** run `rm -rf` on project directories.
-- **NEVER** merge a PR without all verification passing.
+Safeguards are implemented in `.claude/settings.json` (permissions + hooks). The list below is a reminder; the authoritative enforcement lives in settings.json.
 
-## Planning
+- `git push --force` and `git push origin main|HEAD:main`: blocked by the `PreToolUse` Bash hook and the deny list.
+- `rm -rf`: deny-listed (requires an explicit permission prompt).
+- `gh pr merge`: **never run on the agent's own initiative.** Merging always requires an explicit user request. The command itself is not deny-listed, so the agent may execute it _when asked by the user_, but never autonomously.
 
-Use Claude Code's built-in `/plan` mode for any non-trivial work. Before implementation, research:
+## Decision rights
 
-- Modern TypeScript patterns relevant to the change
-- Existing project patterns that should be followed
-- Architecture impact
-
-## Code Review
-
-Use `/codereview` (or `/codereview NUMBER`) for the full review loop.
-The skill handles: isolated subagent review → audit trail comment → fix → re-review (max 3 iterations).
-
-Review criteria (used by the review subagent):
-
-- **Scope verification**: diff matches PR description; undocumented changes → FAIL
-- **Code quality**: no `any` types, pure functions, DRY, explicit error handling
-- **Security**: no secrets, parameterized SQL, input validation
-- **Architecture**: separation of concerns, consistent patterns
-- **Commits**: one logical change per commit, clear messages
-- **Language**: all artifacts in English
-- **Tests**: new logic has tests, no broken tests
-
-CI checks must be green before verdict can be PASS.
-
-## Testing
-
-- Every new feature or behavior change must have tests. No exceptions.
-- Edge cases must be explicitly tested — not just the happy path.
-- `src/api-schemas.ts` is the single source of truth for the public API contract and OpenAPI documentation. Response schema conformance tests must exist and pass — API responses must never diverge from the declared schemas.
-- Existing tests must not be deleted or weakened without justification.
-
-## Implementation Discipline
-
-- Minimal scoped fixes: change only what is necessary.
-- No unrelated refactors during fixes — document them as follow-ups.
-
-## Key Paths
-
-- Deployment: `RAILWAY.md` — production runs on Railway, use `railway` CLI for logs/status queries
-- Smoke test: `pnpm smoke` (runs `scripts/smoke-local.sh`)
-- E2E tests: `pnpm test:e2e`
+- **Auto-allow**: read-only commands, `STACK.md` build/test/lint commands, feature-branch operations (create, commit, push origin `<branch>`), PR creation, `gh pr view` / `comment` / `diff` / `review`, `ROADMAP.md` / `STACK.md` edits.
+- **Ask first**: edits to `VISION.md` or `AGENTS.md`, `gh api` calls that modify repo settings. `gh pr merge` is allowed only when the user explicitly asks for it.
+- **Never**: force push, push to `main`, bypass hooks (`--no-verify` etc.), `rm -rf` anything inside the project, violate any guardrail in `AGENTS.md §13`, persist or transmit data forbidden by `VISION.md → Persistence and Privacy Posture`.
