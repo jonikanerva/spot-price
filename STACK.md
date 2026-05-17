@@ -76,9 +76,9 @@ Default answer to "should we add a library?" is **no**. New entries require a `S
 | Dependency                   | Version | Why it earns its place                                                    | Approver  | Date       |
 | ---------------------------- | ------- | ------------------------------------------------------------------------- | --------- | ---------- |
 | `hono`                       | `^4.12` | Backend HTTP framework — the project's chosen default                     | (default) | (template) |
-| `@hono/node-server`          | `^1.19` | Node adapter for Hono                                                     | (default) | (template) |
+| `@hono/node-server`          | `^2.0`  | Node adapter for Hono                                                     | (default) | (template) |
 | `@hono/zod-openapi`          | `^1.2`  | Schema-first route definitions + OpenAPI document generation              | (default) | (template) |
-| `@scalar/hono-api-reference` | `^0.9`  | Renders the OpenAPI reference UI at `/reference`                          | (default) | (template) |
+| `@scalar/hono-api-reference` | `^0.10` | Renders the OpenAPI reference UI at `/reference`                          | (default) | (template) |
 | `better-auth`                | `^1.4`  | Self-hosted email/password auth backed by the same `pg` pool              | (default) | (template) |
 | `hono-rate-limiter`          | `^0.5`  | In-memory per-instance rate limiting                                      | (default) | (template) |
 | `node-cron`                  | `^4.2`  | In-process cron for the day-ahead price fetch jobs                        | (default) | (template) |

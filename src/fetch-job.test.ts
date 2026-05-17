@@ -106,7 +106,7 @@ describe("runFetchJob", () => {
   it("returns tomorrowAvailable: true when tomorrow data is stored", async () => {
     const nordpool = await import("./nordpool.js");
     vi.spyOn(nordpool, "fetchDayAheadPrices").mockResolvedValue(
-      generateDayPrices("2026-03-30T00:00:00.000Z", "FI") as HourlyPrice[],
+      generateDayPrices("2026-03-30T00:00:00.000Z", "FI"),
     );
 
     // Pre-fill all areas for today so it skips
