@@ -2,26 +2,18 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { createAuth } from "./auth.js";
 import { initDatabase, closeDatabase } from "./db.js";
+import { loadEnv } from "./env.js";
 import { startScheduler, runStartupFetch } from "./scheduler.js";
 
-const DEFAULT_PORT = 3000;
-
-const getPort = (): number => {
-  const envPort = process.env["PORT"];
-  if (envPort) {
-    const parsed = parseInt(envPort, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return DEFAULT_PORT;
-};
-
 const main = async (): Promise<void> => {
+  // Validate the environment up front so the process fails fast with a clear
+  // error before any service is constructed or the HTTP listener opens.
+  const env = loadEnv();
+
   const pool = await initDatabase();
   const auth = createAuth(pool);
   const app = createApp(pool, auth);
-  const port = getPort();
+  const port = env.PORT;
 
   // Start price fetch scheduler (2h baseline + 10min burst during publication window)
   const scheduler = startScheduler(pool);
