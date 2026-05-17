@@ -24,9 +24,7 @@ const ensureMigrationsTable = async (pool: Pool): Promise<void> => {
   `);
 };
 
-const getAppliedVersions = async (
-  pool: Pool,
-): Promise<ReadonlySet<number>> => {
+const getAppliedVersions = async (pool: Pool): Promise<ReadonlySet<number>> => {
   const { rows } = await pool.query<MigrationRecord>(
     "SELECT version FROM _migrations ORDER BY version",
   );

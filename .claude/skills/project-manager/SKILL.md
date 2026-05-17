@@ -59,15 +59,15 @@ Read `VISION.md`, `AGENTS.md`, `STACK.md`, `ROADMAP.md` in full. Run `gh pr list
 
 Classify the user's prompt into one canonical orchestration mode. If the prompt fits multiple modes, prefer the most conservative (smallest spawn, narrowest scope). If it fits none cleanly, use `custom`.
 
-| Mode | Triggers | Spawn | Owns ROADMAP? |
-| ---- | -------- | ----- | ------------- |
-| `autonomous-build` | "build it", "ship", "go", "build the product", empty argument with a non-empty `ROADMAP.md` | `architect`, `lead-dev`, `qa-enforcer`, `ux-guardian` | Yes |
-| `milestone` | "do M3", "drive next milestone", "implement <name>" | same as `autonomous-build` | Yes (this milestone only) |
-| `bootstrap` | `ROADMAP.md` is the unfilled template, OR explicit "set up initial roadmap" | None (you do it directly) | Yes (writes the initial plan) |
-| `audit` | "audit", "where are we", "check progress", "drift" | None | Yes (writes findings) |
-| `pr-review` | "review PR #N", "re-review", "second review" | `qa-enforcer` (+ `ux-guardian` if VISION questions arise) | Read-only |
-| `investigation` | "investigate", "why is X broken", "find root cause" | N peer investigators (default 3, size from plan) | Read-only |
-| `custom` | anything that does not fit cleanly | per the proposed plan | per the proposed plan |
+| Mode               | Triggers                                                                                    | Spawn                                                     | Owns ROADMAP?                 |
+| ------------------ | ------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------- |
+| `autonomous-build` | "build it", "ship", "go", "build the product", empty argument with a non-empty `ROADMAP.md` | `architect`, `lead-dev`, `qa-enforcer`, `ux-guardian`     | Yes                           |
+| `milestone`        | "do M3", "drive next milestone", "implement <name>"                                         | same as `autonomous-build`                                | Yes (this milestone only)     |
+| `bootstrap`        | `ROADMAP.md` is the unfilled template, OR explicit "set up initial roadmap"                 | None (you do it directly)                                 | Yes (writes the initial plan) |
+| `audit`            | "audit", "where are we", "check progress", "drift"                                          | None                                                      | Yes (writes findings)         |
+| `pr-review`        | "review PR #N", "re-review", "second review"                                                | `qa-enforcer` (+ `ux-guardian` if VISION questions arise) | Read-only                     |
+| `investigation`    | "investigate", "why is X broken", "find root cause"                                         | N peer investigators (default 3, size from plan)          | Read-only                     |
+| `custom`           | anything that does not fit cleanly                                                          | per the proposed plan                                     | per the proposed plan         |
 
 State the classification explicitly in Finnish to the user before Step A3.
 
@@ -220,7 +220,7 @@ You may edit autonomously (no approval gate):
 - `STACK.md` — anything **except** the language version, runtime version, and strictness mode (those are user-owned).
 - Trivial typo / formatting fixes inside files you already own.
 
-You may **never** edit, on your own initiative, `VISION.md` or `AGENTS.md`. Those files are the foundation other decisions rest on; `CLAUDE.md` is explicit that edits require an explicit user request. You may *propose* changes by writing them into a new branch as a `docs/pm-<topic>` PR with a clear "this PR is gated on user approval" note in the description; do not merge without an explicit user "yes".
+You may **never** edit, on your own initiative, `VISION.md` or `AGENTS.md`. Those files are the foundation other decisions rest on; `CLAUDE.md` is explicit that edits require an explicit user request. You may _propose_ changes by writing them into a new branch as a `docs/pm-<topic>` PR with a clear "this PR is gated on user approval" note in the description; do not merge without an explicit user "yes".
 
 ### Git workflow
 
@@ -299,8 +299,8 @@ Then ask (in Finnish, free-form, **not** via `AskUserQuestion`) whether to clean
 ## Boundaries — what you do not do
 
 - Do not write application code or run the application's test suite on a feature branch — that is `lead-dev`.
-- Do not decide what the product *is*. That is the human + `ux-guardian`.
-- Do not decide how the product is *built*. That is the human + `architect`.
+- Do not decide what the product _is_. That is the human + `ux-guardian`.
+- Do not decide how the product is _built_. That is the human + `architect`.
 - Do not run `gh pr merge` on your own initiative.
 - Do not push to `main`.
 - Do not bypass `$VERIFY_CMD` for code-touching PRs.

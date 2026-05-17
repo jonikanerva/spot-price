@@ -1,22 +1,22 @@
 # Product Vision
 
-> The single source of truth for what spot-price *is* and what it is *not*. Every agent reads this on every milestone. Be specific. Be opinionated.
+> The single source of truth for what spot-price _is_ and what it is _not_. Every agent reads this on every milestone. Be specific. Be opinionated.
 
 ---
 
-## Vision *(REQUIRED)*
+## Vision _(REQUIRED)_
 
 Spot-price gives someone running a Finnish — or wider Nord Pool area — household a small, trustworthy backend that turns raw day-ahead electricity prices into the one number they actually pay (`spot + margin + transfer + tax + VAT`) and the one answer they actually need ("when is the cheapest contiguous window of N minutes?"). It is built to be a quiet dependency of a home automation setup: a Home Assistant integration, a sauna timer, an EV charger — never a dashboard the user has to visit, never a service the user has to trust with anything beyond their own contract numbers.
 
 ---
 
-## Goal *(REQUIRED)*
+## Goal _(REQUIRED)_
 
 Help a single household run its flexible loads on the cheapest electricity available in their Nord Pool area, by exposing total prices and cheapest-window decisions as a stable, authenticated REST API.
 
 ---
 
-## Core Principles *(REQUIRED)*
+## Core Principles _(REQUIRED)_
 
 - **Total price, not spot price.**
   The product's job is to apply the user's contract terms (margin, day/night transfer, electricity tax, VAT) to Nord Pool spot data. A raw spot price is a number; a total price is a decision-ready answer. Always return both, never confuse them.
@@ -38,7 +38,7 @@ Help a single household run its flexible loads on the cheapest electricity avail
 
 ---
 
-## Product Shape *(REQUIRED)*
+## Product Shape _(REQUIRED)_
 
 1. User registers an account on the self-hosted instance (capped — registration may be closed).
 2. User configures their contract settings: delivery area, margin, day/night transfer fees, electricity tax, VAT, night-rate window, timezone.
@@ -48,7 +48,7 @@ Help a single household run its flexible loads on the cheapest electricity avail
 
 ---
 
-## Non-Goals *(REQUIRED)*
+## Non-Goals _(REQUIRED)_
 
 The product must not become:
 
@@ -61,7 +61,7 @@ The product must not become:
 
 ---
 
-## Guardrails for Agents *(REQUIRED)*
+## Guardrails for Agents _(REQUIRED)_
 
 When making product, UX, or feature decisions:
 
@@ -76,7 +76,7 @@ If a feature makes the product feel more like a **consumer energy dashboard**, a
 
 ---
 
-## Decision Filter *(REQUIRED)*
+## Decision Filter _(REQUIRED)_
 
 A proposed change should only be accepted if it clearly supports the core experience.
 
@@ -91,7 +91,7 @@ If any answer is "no", it should not be added.
 
 ---
 
-## Success Definition *(REQUIRED)*
+## Success Definition _(REQUIRED)_
 
 The product succeeds when the user feels:
 
@@ -102,7 +102,7 @@ The product succeeds when the user feels:
 
 ---
 
-## Persistence and Privacy Posture *(REQUIRED)*
+## Persistence and Privacy Posture _(REQUIRED)_
 
 - **Persisted in PostgreSQL:** Better Auth user account (email, hashed password, session), one row of `user_settings` per user (margin, day/night transfer fees, tax, VAT %, night window hours, IANA timezone, delivery area), API keys (hashed), and Nord Pool day-ahead prices in 15-minute resolution per delivery area (these are public data, not user data).
 - **Transmitted off-device:** outbound requests to `dataportal-api.nordpoolgroup.com` for day-ahead prices. No telemetry, no analytics, no third-party tracking, no error-reporting service.
@@ -111,14 +111,14 @@ The product succeeds when the user feels:
 
 ---
 
-## Audience & Voice *(OPTIONAL)*
+## Audience & Voice _(OPTIONAL)_
 
 - **Primary audience:** the operator-user — one person who self-hosts the instance for their own household, is comfortable editing a Home Assistant YAML file, and wants their automations to make the right call at 02:00 without supervision. Secondary audience: their automations themselves, which need a stable, well-typed contract.
 - **Tone:** terse and technical. Error messages state what is wrong in one sentence (`No current price available`, `User settings not found`). No marketing copy, no emojis, no "Oops!" — this is plumbing, and plumbing should be quiet and exact.
 
 ---
 
-## Open Questions *(OPTIONAL)*
+## Open Questions _(OPTIONAL)_
 
 - Whether to support per-user multiple delivery areas (e.g. summer cottage in a different area), or keep one area per user. Current bias: keep it one — multi-area is a complexity tax that benefits very few users.
 - Whether to expose a stable schema-versioned `/api/v2` path before introducing any breaking change, or accept that `/api/v1` may evolve with deprecation notices in the OpenAPI doc. Current bias: bump the version on any breaking shape change; never silently mutate `v1`.
