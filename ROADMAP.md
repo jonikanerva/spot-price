@@ -8,9 +8,9 @@ The product is **in production** at the user's self-hosted Railway instance. The
 
 ## Milestones
 
-| #   | Status      | Milestone                            | Scope summary                                                                                                                                       | PR  |
-| --- | ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
-| 1   | In progress | Authenticated price-history endpoint | Read-only GET /api/v1/price/history?from=&to= returning total prices for a past local-date range; JSON-only, 31-day cap, current-settings semantics |     |
+| #   | Status      | Milestone                            | Scope summary                                                                                                                                       | PR                                                       |
+| --- | ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| 1   | In progress | Authenticated price-history endpoint | Read-only GET /api/v1/price/history?from=&to= returning total prices for a past local-date range; JSON-only, 31-day cap, current-settings semantics | [#53](https://github.com/jonikanerva/spot-price/pull/53) |
 
 Statuses: `Todo` · `In progress` · `Done` · `Blocked` · `Needs human`.
 
