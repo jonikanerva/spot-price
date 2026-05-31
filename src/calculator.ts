@@ -21,17 +21,34 @@ export const isNightHour = (
   return hour >= nightStartHour && hour < nightEndHour;
 };
 
+// An `Intl.DateTimeFormat` instance is stateless across the dates passed to
+// `formatToParts`, so it can be reused. `calculateTotalPrices` invokes this for
+// every interval (up to ~2976 at the price-history 31-day cap); memoising the
+// formatter per timezone keeps construction O(timezones) instead of
+// O(intervals) and stays inside the STACK.md §4 100 ms p99 budget.
+const hourFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+const getHourFormatter = (timeZone: string): Intl.DateTimeFormat => {
+  const cached = hourFormatterCache.get(timeZone);
+  if (cached) {
+    return cached;
+  }
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    hour12: false,
+  });
+  hourFormatterCache.set(timeZone, formatter);
+  return formatter;
+};
+
 /** Extract hour (0-23) in a specific IANA timezone */
 const extractHourInTimeZone = (
   isoDateTime: string,
   timeZone: string,
 ): number => {
   const date = new Date(isoDateTime);
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "2-digit",
-    hour12: false,
-  });
+  const formatter = getHourFormatter(timeZone);
   const hourPart = formatter
     .formatToParts(date)
     .find((part) => part.type === "hour")?.value;

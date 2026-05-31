@@ -143,6 +143,55 @@ export const CheapestQuerySchema = z.object({
     }),
 });
 
+/** Inclusive maximum span of a price-history query, in calendar days. */
+const MAX_HISTORY_SPAN_DAYS = 31;
+
+/**
+ * Count of inclusive calendar days between two YYYY-MM-DD strings.
+ *
+ * Uses `Date.UTC` on the parsed calendar-label parts (same `Number(str.slice(...))`
+ * pattern as `getUtcRangeForLocalDate`), so the count is pure calendar arithmetic
+ * and DST-immune — no wall-clock offset ever enters the computation.
+ */
+const inclusiveDaySpan = (from: string, to: string): number => {
+  const fromMs = Date.UTC(
+    Number(from.slice(0, 4)),
+    Number(from.slice(5, 7)) - 1,
+    Number(from.slice(8, 10)),
+  );
+  const toMs = Date.UTC(
+    Number(to.slice(0, 4)),
+    Number(to.slice(5, 7)) - 1,
+    Number(to.slice(8, 10)),
+  );
+  return (toMs - fromMs) / 86_400_000 + 1;
+};
+
+export const PriceHistoryQuerySchema = z
+  .object({
+    from: z.iso.date().openapi({
+      example: "2026-04-01",
+      description:
+        "Inclusive range start, YYYY-MM-DD, interpreted in the user's timezone.",
+    }),
+    to: z.iso.date().openapi({
+      example: "2026-05-01",
+      description:
+        "Inclusive range end, YYYY-MM-DD, interpreted in the user's timezone.",
+    }),
+  })
+  // Ordering is compared lexicographically on the validated YYYY-MM-DD strings
+  // (lexicographic === chronological for zero-padded ISO dates), so no Date is
+  // constructed for the comparison itself.
+  .refine((v) => v.from <= v.to, {
+    message: "from must be on or before to",
+    path: ["from"],
+  })
+  .refine((v) => inclusiveDaySpan(v.from, v.to) <= MAX_HISTORY_SPAN_DAYS, {
+    message: "date range must not exceed 31 days",
+    path: ["to"],
+  });
+
 export const SpotQuerySchema = z.object({
   area: z.enum(areaCodes).optional().default("FI").openapi({
     example: "FI",

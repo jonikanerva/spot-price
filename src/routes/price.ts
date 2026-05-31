@@ -14,6 +14,7 @@ import {
   formatDateInTimeZone,
   getCurrentAndNextDate,
   getUtcRangeForLocalDate,
+  getUtcRangeForLocalDateSpan,
 } from "../time.js";
 import type { HourlyPrice, PriceWindow, UserSettings } from "../types.js";
 
@@ -33,6 +34,7 @@ import {
   CheapestQuerySchema,
   PriceWindowSchema,
   ErrorSchema,
+  PriceHistoryQuerySchema,
   PriceListSchema,
   PublicSpotSchema,
   SpotQuerySchema,
@@ -175,6 +177,38 @@ const priceCheapestRoute = createRoute({
       content: { "application/json": { schema: ErrorSchema } },
       description:
         "No price data available or insufficient data for requested window",
+    },
+  },
+});
+
+const priceHistoryRoute = createRoute({
+  method: "get",
+  path: "/api/v1/price/history",
+  tags: ["Price"],
+  summary: "Historical total prices for a local date range",
+  description:
+    "Returns all stored total prices for the inclusive local date range " +
+    "[from, to]. Totals apply the user's CURRENT contract settings to the " +
+    "historical public spot prices — there is no historical settings " +
+    "versioning. Dates are YYYY-MM-DD interpreted in the user's timezone; " +
+    "the maximum span is 31 days (inclusive). Check the 'available' field: it " +
+    "is false with an empty 'prices' array when no data is stored for the range.",
+  security: [{ BearerAuth: [] }],
+  request: { query: PriceHistoryQuerySchema },
+  responses: {
+    200: {
+      content: { "application/json": { schema: PriceListSchema } },
+      description:
+        "Historical prices for the range (check 'available'; false + empty when no data stored)",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description:
+        "Invalid query parameters (bad date, from after to, or span over 31 days)",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description: "User settings not found",
     },
   },
 });
@@ -397,5 +431,39 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     }
 
     return c.json(window, 200 as const);
+  });
+
+  app.openapi(priceHistoryRoute, async (c) => {
+    const settings = await getSettings(c);
+    if (!settings) {
+      return c.json({ error: "User settings not found" }, 404 as const);
+    }
+
+    const { from, to } = c.req.valid("query");
+    const { startUtc, endUtc } = getUtcRangeForLocalDateSpan(
+      from,
+      to,
+      settings.timezone,
+    );
+    const prices = await getPricesByRange(
+      c.get("db"),
+      startUtc,
+      endUtc,
+      settings.area,
+    );
+    // An empty-but-valid range is a real state, not an error: /history is a
+    // list endpoint like /today, so respond 200 with available:false (404 is
+    // reserved for settings-not-found). Matches VISION's "not yet, never a guess".
+    if (prices.length === 0) {
+      return c.json(EMPTY_PRICE_LIST, 200 as const);
+    }
+
+    const totals = calculateTotalPrices(prices, settings);
+    const window = buildPriceWindow(totals);
+    if (!window) {
+      return c.json(EMPTY_PRICE_LIST, 200 as const);
+    }
+
+    return c.json({ ...window, available: true as const }, 200 as const);
   });
 };
