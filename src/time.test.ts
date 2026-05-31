@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { getUtcRangeForLocalDate } from "./time.js";
+import {
+  getUtcRangeForLocalDate,
+  getUtcRangeForLocalDateSpan,
+} from "./time.js";
 
 describe("getUtcRangeForLocalDate", () => {
   it("converts Helsinki date to correct UTC range (UTC+2 winter)", () => {
@@ -85,5 +88,70 @@ describe("getUtcRangeForLocalDate", () => {
 
     expect(startUtc).toBe("2026-03-28T23:00:00.000Z");
     expect(endUtc).toBe("2026-03-29T23:00:00.000Z");
+  });
+});
+
+describe("getUtcRangeForLocalDateSpan", () => {
+  it("spans a multi-day Helsinki winter range (UTC+2 throughout)", () => {
+    // 2026-02-01 .. 2026-02-05 inclusive, all EET (UTC+2)
+    // start = 2026-02-01 00:00 Helsinki = 2026-01-31 22:00 UTC
+    // end   = 2026-02-05 end           = 2026-02-05 22:00 UTC
+    const { startUtc, endUtc } = getUtcRangeForLocalDateSpan(
+      "2026-02-01",
+      "2026-02-05",
+      "Europe/Helsinki",
+    );
+
+    expect(startUtc).toBe("2026-01-31T22:00:00.000Z");
+    expect(endUtc).toBe("2026-02-05T22:00:00.000Z");
+  });
+
+  it("resolves each endpoint's own offset across a spring-forward DST span", () => {
+    // Span from before the 2026-03-29 spring-forward to after it.
+    // from = 2026-03-20 (EET, +02:00): midnight = 2026-03-19 22:00 UTC
+    // to   = 2026-04-05 (EEST, +03:00): end     = 2026-04-05 21:00 UTC
+    // The +2 start offset and +3 end offset prove the span is not computed
+    // from a single shared offset.
+    const span = getUtcRangeForLocalDateSpan(
+      "2026-03-20",
+      "2026-04-05",
+      "Europe/Helsinki",
+    );
+
+    expect(span.startUtc).toBe(
+      getUtcRangeForLocalDate("2026-03-20", "Europe/Helsinki").startUtc,
+    );
+    expect(span.endUtc).toBe(
+      getUtcRangeForLocalDate("2026-04-05", "Europe/Helsinki").endUtc,
+    );
+    // Explicit offsets: start at -02:00 (22:00 prev day), end at -03:00 (21:00).
+    expect(span.startUtc).toBe("2026-03-19T22:00:00.000Z");
+    expect(span.endUtc).toBe("2026-04-05T21:00:00.000Z");
+  });
+
+  it("equals getUtcRangeForLocalDate for a single-day span (from === to)", () => {
+    const single = getUtcRangeForLocalDateSpan(
+      "2026-02-25",
+      "2026-02-25",
+      "Europe/Helsinki",
+    );
+    const day = getUtcRangeForLocalDate("2026-02-25", "Europe/Helsinki");
+
+    expect(single.startUtc).toBe(day.startUtc);
+    expect(single.endUtc).toBe(day.endUtc);
+  });
+
+  it("is not Helsinki-hard-coded — works for Europe/Oslo (UTC+1 winter)", () => {
+    // Oslo winter is CET (UTC+1), same as Berlin.
+    // from = 2026-02-01 midnight Oslo = 2026-01-31 23:00 UTC
+    // to   = 2026-02-03 end           = 2026-02-03 23:00 UTC
+    const { startUtc, endUtc } = getUtcRangeForLocalDateSpan(
+      "2026-02-01",
+      "2026-02-03",
+      "Europe/Oslo",
+    );
+
+    expect(startUtc).toBe("2026-01-31T23:00:00.000Z");
+    expect(endUtc).toBe("2026-02-03T23:00:00.000Z");
   });
 });

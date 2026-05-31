@@ -763,6 +763,175 @@ describe("cross-midnight contiguity", () => {
   });
 });
 
+describe("price/history endpoint", () => {
+  let pool: Pool;
+
+  afterEach(async () => {
+    await closeDatabase(pool);
+  });
+
+  const setup = async (): Promise<ReturnType<typeof createTestApp>> => {
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    return createTestApp(pool);
+  };
+
+  const requestHistory = async (
+    app: ReturnType<typeof createTestApp>,
+    params: string,
+  ): Promise<Response> =>
+    app.request(`/api/v1/price/history?${params}`, {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+
+  it("returns 401 without an API key", async () => {
+    const app = await setup();
+    const res = await app.request(
+      "/api/v1/price/history?from=2026-04-01&to=2026-04-05",
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("returns the seeded prices for a valid range (PriceListSchema, available:true)", async () => {
+    const app = await setup();
+    // Seed three full past Helsinki days.
+    await seedHourlyRange(pool, "2026-02-10", 0, 24, 30);
+    await seedHourlyRange(pool, "2026-02-11", 0, 24, 40);
+    await seedHourlyRange(pool, "2026-02-12", 0, 24, 50);
+
+    const res = await requestHistory(app, "from=2026-02-10&to=2026-02-12");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { available: boolean };
+    expect(PriceListSchema.safeParse(body).success).toBe(true);
+    expect(body.available).toBe(true);
+
+    const expectedCount =
+      helsinkiDayHours("2026-02-10") +
+      helsinkiDayHours("2026-02-11") +
+      helsinkiDayHours("2026-02-12");
+    const typed = body as unknown as { prices: readonly unknown[] };
+    expect(typed.prices.length).toBe(expectedCount);
+  });
+
+  it("returns 200 available:false with empty prices for an empty valid range", async () => {
+    const app = await setup();
+    const res = await requestHistory(app, "from=2026-02-10&to=2026-02-12");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      available: boolean;
+      prices: readonly unknown[];
+    };
+    expect(body.available).toBe(false);
+    expect(body.prices).toEqual([]);
+  });
+
+  it("returns 400 for invalid date formats", async () => {
+    const app = await setup();
+    const r1 = await requestHistory(app, "from=2026-13-40&to=2026-04-05");
+    expect(r1.status).toBe(400);
+    const r2 = await requestHistory(app, "from=not-a-date&to=2026-04-05");
+    expect(r2.status).toBe(400);
+  });
+
+  it("returns 400 when a datetime is supplied instead of a date", async () => {
+    const app = await setup();
+    const res = await requestHistory(
+      app,
+      `from=${encodeURIComponent("2026-04-01T00:00:00Z")}&to=2026-04-05`,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when from is after to", async () => {
+    const app = await setup();
+    const res = await requestHistory(app, "from=2026-04-05&to=2026-04-01");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("from must be on or before to");
+  });
+
+  it("returns 400 when the span exceeds 31 days", async () => {
+    const app = await setup();
+    const res = await requestHistory(app, "from=2026-01-01&to=2026-03-01");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("31 days");
+  });
+
+  it("accepts exactly 31 inclusive days but rejects 32", async () => {
+    const app = await setup();
+    // 2026-04-01 .. 2026-05-01 = 31 inclusive days (valid, no data -> available:false)
+    const ok = await requestHistory(app, "from=2026-04-01&to=2026-05-01");
+    expect(ok.status).toBe(200);
+    // 2026-04-01 .. 2026-05-02 = 32 inclusive days (rejected)
+    const tooWide = await requestHistory(app, "from=2026-04-01&to=2026-05-02");
+    expect(tooWide.status).toBe(400);
+  });
+
+  it("returns 404 when user settings are not found", async () => {
+    // No seedUser here, so the API key (and thus userId) does not resolve to
+    // settings. Provide a key row without settings to reach the handler.
+    pool = await initTestDatabase();
+    await pool.query(
+      `INSERT INTO api_keys (id, user_id, key_plaintext) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO NOTHING`,
+      ["key-1", TEST_USER_ID, TEST_API_KEY],
+    );
+    const app = createTestApp(pool);
+
+    const res = await requestHistory(app, "from=2026-04-01&to=2026-04-05");
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("User settings not found");
+  });
+
+  it("is DST-correct across a spring-forward span", async () => {
+    const app = await setup();
+    // Helsinki spring-forward is 2026-03-29 (23-hour local day).
+    // Seed two days spanning the transition.
+    await seedHourlyRange(pool, "2026-03-28", 0, 24, 60);
+    await seedHourlyRange(pool, "2026-03-29", 0, 24, 70);
+
+    const res = await requestHistory(app, "from=2026-03-28&to=2026-03-29");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      available: boolean;
+      prices: readonly { deliveryStart: string }[];
+    };
+    expect(body.available).toBe(true);
+
+    // Count must equal the sum of actual local-day hours (24 + 23 on this span).
+    const expectedCount =
+      helsinkiDayHours("2026-03-28") + helsinkiDayHours("2026-03-29");
+    expect(body.prices.length).toBe(expectedCount);
+
+    // First delivery must start at the from-date's local midnight in UTC.
+    const { startUtc } = getUtcRangeForLocalDate("2026-03-28", HELSINKI_TZ);
+    const first = body.prices[0];
+    expect(first).toBeDefined();
+    if (first) {
+      expect(new Date(first.deliveryStart).getTime()).toBe(
+        new Date(startUtc).getTime(),
+      );
+    }
+  });
+
+  it("returns partial data within a valid range as available:true", async () => {
+    const app = await setup();
+    // Seed only the middle day of a three-day range.
+    await seedHourlyRange(pool, "2026-02-11", 0, 24, 45);
+
+    const res = await requestHistory(app, "from=2026-02-10&to=2026-02-12");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      available: boolean;
+      prices: readonly unknown[];
+    };
+    expect(body.available).toBe(true);
+    expect(body.prices.length).toBe(helsinkiDayHours("2026-02-11"));
+  });
+});
+
 describe("OpenAPI spec", () => {
   let pool: Pool;
 
@@ -793,6 +962,7 @@ describe("OpenAPI spec", () => {
     expect(paths).toContain("/api/v1/price/today");
     expect(paths).toContain("/api/v1/price/tomorrow");
     expect(paths).toContain("/api/v1/price/cheapest");
+    expect(paths).toContain("/api/v1/price/history");
     expect(paths).toContain("/api/public/spot");
     expect(paths).toContain("/api/v1/me/settings");
     expect(paths).toContain("/api/v1/me/chart");
@@ -916,6 +1086,23 @@ describe("response schema conformance", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     const result = PriceWindowSchema.safeParse(body);
+    expect(result.success).toBe(true);
+  });
+
+  it("GET /api/v1/price/history conforms to PriceListSchema", async () => {
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    const app = createTestApp(pool);
+    // Seed a fixed past Helsinki day so the response carries real entries.
+    await seedHourlyRange(pool, "2026-04-10", 0, 24, 42);
+
+    const res = await app.request(
+      "/api/v1/price/history?from=2026-04-10&to=2026-04-10",
+      { headers: { Authorization: `Bearer ${TEST_API_KEY}` } },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const result = PriceListSchema.safeParse(body);
     expect(result.success).toBe(true);
   });
 

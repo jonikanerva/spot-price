@@ -110,14 +110,37 @@ export const getUtcRangeForLocalDate = (
 };
 
 /**
- * Format an ISO datetime string as a valid ISO 8601 timestamp with timezone offset.
- * Example: "2026-02-24T14:00:00+02:00"
+ * Convert an inclusive local date span (fromDate..toDate, YYYY-MM-DD) + timezone
+ * into a single UTC ISO range covering every delivery interval in those local days.
+ *
+ * The start is the UTC instant of `fromDate` midnight local; the end is the UTC
+ * instant of the moment immediately after `toDate` ends local (i.e. `toDate`'s
+ * `endUtc`). Each endpoint resolves its own UTC offset independently via
+ * `getUtcRangeForLocalDate`, so a span crossing a DST transition stays correct
+ * by construction (no shared offset is assumed across the span).
  */
-export const formatDateTimeInTimeZone = (
-  isoDateTime: string,
+export const getUtcRangeForLocalDateSpan = (
+  fromDate: string,
+  toDate: string,
   timeZone: string,
-): string => {
-  const date = new Date(isoDateTime);
+): { startUtc: string; endUtc: string } => ({
+  startUtc: getUtcRangeForLocalDate(fromDate, timeZone).startUtc,
+  endUtc: getUtcRangeForLocalDate(toDate, timeZone).endUtc,
+});
+
+// `Intl.DateTimeFormat` construction is comparatively expensive, but a given
+// instance is stateless across the dates passed to `formatToParts`. The
+// price-history endpoint formats up to ~2976 intervals (two calls each) per
+// request; building a fresh formatter per call breaches the STACK.md §4 100 ms
+// p99 budget (measured ~335 ms). Memoising per timezone keeps the formatter
+// construction O(timezones) instead of O(intervals).
+const offsetFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+const getOffsetFormatter = (timeZone: string): Intl.DateTimeFormat => {
+  const cached = offsetFormatterCache.get(timeZone);
+  if (cached) {
+    return cached;
+  }
   const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone,
     year: "numeric",
@@ -129,6 +152,20 @@ export const formatDateTimeInTimeZone = (
     hour12: false,
     timeZoneName: "longOffset",
   });
+  offsetFormatterCache.set(timeZone, formatter);
+  return formatter;
+};
+
+/**
+ * Format an ISO datetime string as a valid ISO 8601 timestamp with timezone offset.
+ * Example: "2026-02-24T14:00:00+02:00"
+ */
+export const formatDateTimeInTimeZone = (
+  isoDateTime: string,
+  timeZone: string,
+): string => {
+  const date = new Date(isoDateTime);
+  const formatter = getOffsetFormatter(timeZone);
 
   const parts = formatter.formatToParts(date);
   const get = (type: Intl.DateTimeFormatPartTypes): string =>
