@@ -4,14 +4,13 @@
 
 ## Status
 
-The product is **in production** at the user's self-hosted Railway instance. There are currently **no planned next milestones**. New work is added here only when a concrete milestone is scoped.
+The product is **in production** at the user's self-hosted Railway instance. There is currently **one milestone in progress**: the authenticated price-history endpoint. New work is added here only when a concrete milestone is scoped.
 
 ## Milestones
 
-| #   | Status | Milestone | Scope summary | PR  |
-| --- | ------ | --------- | ------------- | --- |
-
-_No milestones currently planned._
+| #   | Status      | Milestone                            | Scope summary                                                                                                                                       | PR  |
+| --- | ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| 1   | In progress | Authenticated price-history endpoint | Read-only GET /api/v1/price/history?from=&to= returning total prices for a past local-date range; JSON-only, 31-day cap, current-settings semantics |     |
 
 Statuses: `Todo` · `In progress` · `Done` · `Blocked` · `Needs human`.
 
@@ -23,6 +22,7 @@ _Active architectural and product constraints that bind future work. When a deci
 - **Server-rendered HTML UI, not a SPA.** The web UI is HTML strings emitted by Hono routes (`src/ui.ts`) plus a small inline client script (`src/ui-client.ts`). No React, no Vite, no client-side framework. Why it binds future work: `VISION.md` defines the UI as a setup surface only ("the API is the product, the UI is for setup"); a SPA stack would add complexity without product value.
 - **Raw `pg` driver + numbered SQL migrations.** No ORM (no Drizzle, no Prisma). Migrations live as `.sql` files under `src/migrations/` and are applied by `src/migrate.ts`. Why it binds future work: PR #48 completed the SQLite-to-PostgreSQL migration with this shape; introducing an ORM now would re-do that work for no measured benefit.
 - **`console.*` logging to stdout/stderr.** No `pino`, no structured-logging middleware. Railway captures stdout/stderr as the operational log sink. Why it binds future work: keeps the dependency surface minimal; PII discipline is enforced manually per `STACK.md §8`.
+- **`price/history` endpoint is JSON-only, ≤31-day span, no UI browser, no range aggregation.** Totals apply the user's CURRENT contract settings to historical public spot data; no historical settings versioning. Why it binds future work: `VISION.md` Guardrails reject historical price browsers and a general home-energy dashboard — re-run the `VISION.md` decision filter before any history feature crosses these four lines.
 
 ## Open risks
 
