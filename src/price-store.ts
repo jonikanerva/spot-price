@@ -72,6 +72,25 @@ export const getPricesByRange = async (
 };
 
 /**
+ * Latest published `delivery_start` for an area as a UTC ISO 8601 string, or
+ * null when none are stored. Used by the forecast to anchor its series one
+ * quarter after the last real price so it never overlaps published data.
+ */
+export const getLatestDeliveryStart = async (
+  pool: Pool,
+  area: string,
+): Promise<string | null> => {
+  const { rows } = await pool.query<{ delivery_start: string }>(
+    `SELECT delivery_start FROM prices
+     WHERE area = $1
+     ORDER BY delivery_start DESC
+     LIMIT 1`,
+    [area],
+  );
+  return rows[0]?.delivery_start ?? null;
+};
+
+/**
  * Count prices within a UTC time range.
  * All parameters must be UTC ISO 8601 strings.
  */
