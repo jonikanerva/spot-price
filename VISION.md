@@ -1,124 +1,96 @@
 # Product Vision
 
-> The single source of truth for what spot-price _is_ and what it is _not_. Every agent reads this on every milestone. Be specific. Be opinionated.
+> What spot-price is, and what it isn't. Read it before each milestone. Keep it short and honest.
 
 ---
 
 ## Vision _(REQUIRED)_
 
-Spot-price gives someone running a Finnish — or wider Nord Pool area — household a small, trustworthy backend that turns raw day-ahead electricity prices into the one number they actually pay (`spot + margin + transfer + tax + VAT`) and the one answer they actually need ("when is the cheapest contiguous window of N minutes?"). It is built to be a quiet dependency of a home automation setup: a Home Assistant integration, a sauna timer, an EV charger — never a dashboard the user has to visit, never a service the user has to trust with anything beyond their own contract numbers.
+Spot-price is a small, self-hosted backend for Home Assistant enthusiasts who want to follow Nord Pool electricity prices and run their flexible loads — sauna, EV, heating — during the cheapest hours. It turns raw day-ahead spot prices into the number you actually pay (`spot + margin + transfer + tax + VAT`) and answers the practical question "when is the cheapest window of N minutes?". On top of that it serves one light forecast of Finnish electricity prices for the days Nord Pool hasn't published yet, so an automation can look a little further ahead. It's meant to be a quiet dependency, not a dashboard you visit.
 
 ---
 
 ## Goal _(REQUIRED)_
 
-Help a single household run its flexible loads on the cheapest electricity available in their Nord Pool area, by exposing total prices and cheapest-window decisions as a stable, authenticated REST API.
+Help a single household shift its flexible loads to the cheapest electricity in their Nord Pool area, through a stable, authenticated REST API that home automations can poll.
 
 ---
 
 ## Core Principles _(REQUIRED)_
 
-- **Total price, not spot price.**
-  The product's job is to apply the user's contract terms (margin, day/night transfer, electricity tax, VAT) to Nord Pool spot data. A raw spot price is a number; a total price is a decision-ready answer. Always return both, never confuse them.
-
-- **The API is the product. The UI is for setup.**
-  Every feature must serve a machine consumer first (Home Assistant, scripts, automations). The web UI exists only to register, configure contract settings, and read an API key. If a feature only makes sense in a browser, it does not belong here.
-
-- **Self-hosted, single-tenant by design.**
-  This runs on one person's Railway instance for that one person's home. Registration is capped. There is no growth funnel, no multi-tenant isolation theatre, no admin console. Operational simplicity beats scale.
-
-- **UTC internally, local time only at the edge.**
-  All storage, scheduling, and calculation is UTC. Conversion to `Europe/Helsinki` (or whichever IANA zone the user picked) happens at the response boundary. Drift here breaks night-rate detection and DST handling — defend it.
-
-- **One trusted upstream.**
-  Prices come from the Nord Pool Data Portal API, the same source Home Assistant's official integration uses. Do not add fallback providers, do not blend sources, do not cache "estimates". If Nord Pool has not published, the answer is "not yet" — never a guess.
-
-- **Strict TypeScript, pure calculations.**
-  Price math is a pure function of `(HourlyPrice, UserSettings)`. No `any`, no `unknown` as bypass, no hidden state in calculators. The calculator must be testable without a database, a clock, or a network.
+- **Total price, not just spot.** Apply the user's contract terms to Nord Pool data so the API returns the cents they actually pay, not just the raw spot number. Return both.
+- **The API is the product; the UI is for setup.** Features should serve an automation first. The web UI just registers an account, configures contract settings, and shows an API key.
+- **Self-hosted and single-tenant.** One instance, one household. No multi-tenant machinery, no growth funnel — keep it simple to run.
+- **UTC inside, local time at the edge.** Store, schedule and calculate in UTC; convert to the user's timezone only in the response. This is what keeps night-rate and DST handling correct.
+- **Nord Pool is the price source.** Published prices come from the Nord Pool Data Portal. We don't blend in other price feeds or invent a price when Nord Pool is silent — the price endpoints just say "not published yet". The forecast is a clearly-labelled estimate, kept separate from real prices.
+- **Simple, typed, testable math.** Price and forecast calculations are pure functions, strictly typed, and testable without a database or network.
 
 ---
 
 ## Product Shape _(REQUIRED)_
 
-1. User registers an account on the self-hosted instance (capped — registration may be closed).
-2. User configures their contract settings: delivery area, margin, day/night transfer fees, electricity tax, VAT, night-rate window, timezone.
-3. User generates a personal API key from the web UI.
-4. A daily cron (with burst polling during the Nord Pool publication window) fetches day-ahead prices for all supported areas into PostgreSQL.
-5. The user's home automation calls `/api/v1/price/now`, `/today`, `/tomorrow`, or `/cheapest?duration=N` with their bearer token and acts on the response.
+1. Register on the self-hosted instance (registration can be capped or closed).
+2. Configure contract settings: area, margin, day/night transfer, tax, VAT, night-rate window, timezone.
+3. Generate an API key in the web UI.
+4. A cron fetches Nord Pool day-ahead prices into PostgreSQL; a lighter job fetches Finnish grid data (Fingrid) for the forecast.
+5. Home automation calls `/api/v1/price/now`, `/today`, `/tomorrow`, `/cheapest?duration=N`, or the forecast endpoint, and acts on the response.
+
+---
+
+## The forecast _(REQUIRED)_
+
+A light, optional extra. For the days Nord Pool hasn't published yet, spot-price estimates Finnish (FI) prices from public Fingrid grid data (wind + consumption) and our own stored price history, using simple, transparent math — not machine learning. Because it's an estimate, it lives on its own endpoint, is clearly marked as a forecast, and isn't mixed into the real-price answers or the cheapest-window decisions. If the data isn't good enough, it says so rather than guessing. Finland only, since Fingrid is the Finnish grid operator.
 
 ---
 
 ## Non-Goals _(REQUIRED)_
 
-The product must not become:
+Spot-price isn't trying to be:
 
-- **A consumer-facing price-comparison or contract-switching site.** No "find the best electricity contract" flows, no affiliate links, no provider rankings.
-- **A multi-tenant SaaS.** No team accounts, no per-organisation billing, no admin tenant management. Single-tenant self-hosted is the design centre, not a step on the way to something bigger.
-- **A general home-energy dashboard.** No consumption tracking, no solar/battery integration, no meter readings, no historical-usage analytics. Other tools (Home Assistant itself, energy-monitoring platforms) own that surface.
-- **A forecasting / ML product.** The product reports what Nord Pool has published and computes deterministic totals and windows. No price prediction, no "AI suggested usage", no probabilistic ranges.
-- **A push / notification service.** Consumers poll the API on their own schedule. No webhooks, no email alerts, no "your cheapest hour is at 02:00" notifications.
-- **A mobile app.** The web UI is for setup only. There is no first-party mobile client and there will not be.
-
----
-
-## Guardrails for Agents _(REQUIRED)_
-
-When making product, UX, or feature decisions:
-
-- Do not propose features that require collecting consumption, location, or any household data beyond contract numbers. The user's tariff is the only personal data the product needs.
-- Do not add visualisation features (charts, gauges, historical price browsers) beyond what is needed to verify the configuration is correct. Decisions are made by the user's automations, not by staring at graphs.
-- Do not add a second upstream price source, a "fallback" provider, or any form of price interpolation/estimation. If Nord Pool has not published, respond with `available: false` or 404.
-- Do not introduce timezones, dates, or hour arithmetic in local time inside calculators or storage. UTC is mandatory below the response boundary; only `formatDateTimeInTimeZone` at the edge.
-- Do not add features that only make sense when a human is logged into the UI (e.g. price browsing across past months). The API consumer is the primary user.
-- Do not weaken type safety to ship faster. No `any`, no untyped JSON pass-through, no schema drift between `api-schemas.ts` and the actual responses.
-
-If a feature makes the product feel more like a **consumer energy dashboard**, an **electricity-contract marketplace**, or a **smart-home platform**, it is the wrong direction.
+- A price-comparison or contract-switching site (no provider rankings, no affiliate links).
+- A multi-tenant SaaS (no teams, no billing, no admin console).
+- A home-energy dashboard (no consumption tracking, solar/battery, meter readings, or usage analytics — Home Assistant already does that).
+- A heavy ML / forecasting product (the forecast stays a simple, explainable estimate, not a prediction engine).
+- A push / notification service (consumers poll; no webhooks or alerts).
+- A mobile app.
 
 ---
 
 ## Decision Filter _(REQUIRED)_
 
-A proposed change should only be accepted if it clearly supports the core experience.
+Lean toward yes when a change:
 
-Ask:
+1. Serves an automation or script first, not a human browsing a page.
+2. Keeps prices honest — real prices stay real, the forecast stays clearly an estimate.
+3. Fits single-tenant self-hosting without scale or multi-tenant complexity.
+4. Keeps the data footprint small — contract settings as the only personal data, UTC internally.
 
-1. Does this serve an API consumer (home automation, script, integration) as the primary user — not a human visiting a webpage?
-2. Does it preserve total-price honesty: every cent the user pays accounted for, no spot/total confusion, no estimated values?
-3. Is it compatible with single-tenant self-hosting and a capped user base — no scale assumptions, no multi-tenant complexity?
-4. Does it keep the data boundary tight: only contract settings persisted, only Nord Pool as upstream, only UTC internally?
-
-If any answer is "no", it should not be added.
+If a change pulls the product toward a consumer dashboard, a contract marketplace, or a smart-home platform, it's probably the wrong direction.
 
 ---
 
 ## Success Definition _(REQUIRED)_
 
-The product succeeds when the user feels:
+It's working when the user can say:
 
-- "I forget this service exists — my sauna and EV just charge at the right times."
-- "The number my API returns is the number on my electricity bill."
-- "I trust that 'cheapest window' actually is the cheapest window in my area and contract."
-- "I configured it once a year ago and nothing has needed my attention since."
+- "I forget it's there — my sauna and EV just run at the cheap hours."
+- "The number it returns matches my electricity bill."
+- "The cheapest window it picks really is the cheapest."
+- "I set it up once and haven't had to touch it."
 
 ---
 
 ## Persistence and Privacy Posture _(REQUIRED)_
 
-- **Persisted in PostgreSQL:** Better Auth user account (email, hashed password, session), one row of `user_settings` per user (margin, day/night transfer fees, tax, VAT %, night window hours, IANA timezone, delivery area), API keys (hashed), and Nord Pool day-ahead prices in 15-minute resolution per delivery area (these are public data, not user data).
-- **Transmitted off-device:** outbound requests to `dataportal-api.nordpoolgroup.com` for day-ahead prices. No telemetry, no analytics, no third-party tracking, no error-reporting service.
-- **Never persisted:** consumption data, meter readings, household location beyond a Nord Pool area code, API-call logs tied to a user, request bodies, IP addresses beyond what is needed for rate limiting in-memory.
-- **Telemetry / analytics:** none. The only observability is process logs on Railway; logs must never contain API keys, passwords, session tokens, or user-identifying information beyond a user id where strictly necessary.
+- **Stored in PostgreSQL:** user account (email, hashed password, session via Better Auth), one row of contract settings per user, hashed API keys, Nord Pool day-ahead prices, and the Finnish Fingrid wind/consumption series for the forecast. The price and grid data are public, not personal.
+- **Sent off-device:** requests to Nord Pool (`dataportal-api.nordpoolgroup.com`) and Fingrid (`data.fingrid.fi`). No telemetry, analytics, or third-party tracking.
+- **Not stored:** household consumption, meter readings, location beyond an area code, per-user request logs, request bodies, or IPs beyond what in-memory rate limiting needs.
+- **Logs:** just process logs on Railway; keep API keys, passwords, tokens and personal data out of them.
 
 ---
 
-## Audience & Voice _(OPTIONAL)_
+## Notes & Open Questions _(OPTIONAL)_
 
-- **Primary audience:** the operator-user — one person who self-hosts the instance for their own household, is comfortable editing a Home Assistant YAML file, and wants their automations to make the right call at 02:00 without supervision. Secondary audience: their automations themselves, which need a stable, well-typed contract.
-- **Tone:** terse and technical. Error messages state what is wrong in one sentence (`No current price available`, `User settings not found`). No marketing copy, no emojis, no "Oops!" — this is plumbing, and plumbing should be quiet and exact.
-
----
-
-## Open Questions _(OPTIONAL)_
-
-- Whether to support per-user multiple delivery areas (e.g. summer cottage in a different area), or keep one area per user. Current bias: keep it one — multi-area is a complexity tax that benefits very few users.
-- Whether to expose a stable schema-versioned `/api/v2` path before introducing any breaking change, or accept that `/api/v1` may evolve with deprecation notices in the OpenAPI doc. Current bias: bump the version on any breaking shape change; never silently mutate `v1`.
+- **Tone:** terse and technical. Errors say what's wrong in one line (`No current price available`); no marketing copy, no emojis.
+- One delivery area per user, or several (e.g. a summer cottage)? Current lean: one.
+- Bump to `/api/v2` on any breaking change rather than silently mutating `v1`.
