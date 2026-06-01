@@ -5,6 +5,9 @@
       "Bash(gh api repos/*/pulls/*/comments:*)",
       "Bash(gh api repos/*/pulls/*/reviews:*)",
       "Bash(gh auth status)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
       "Bash(gh pr checks:*)",
       "Bash(gh pr comment:*)",
       "Bash(gh pr create:*)",
@@ -45,39 +48,29 @@
       "WebFetch(domain:cwe.mitre.org)",
       "WebFetch(domain:docs.claude.com)",
       "WebFetch(domain:docs.github.com)",
-      "WebFetch(domain:getpino.io)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:hono.dev)",
-      "WebFetch(domain:nodejs.org)",
       "WebFetch(domain:openssf.org)",
       "WebFetch(domain:opentelemetry.io)",
       "WebFetch(domain:owasp.org)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:react.dev)",
       "WebFetch(domain:slsa.dev)",
-      "WebFetch(domain:tanstack.com)",
-      "WebFetch(domain:typescript-eslint.io)",
-      "WebFetch(domain:typescriptlang.org)",
-      "WebFetch(domain:vitejs.dev)",
-      "WebFetch(domain:vitest.dev)",
       "WebFetch(domain:w3.org)",
-      "WebFetch(domain:www.w3.org)",
-      "WebFetch(domain:zod.dev)"
+      "WebFetch(domain:www.w3.org)"
     ],
     "deny": [
-      "Bash(gh api repos/*/merges:*)",
-      "Bash(git clean -fd:*)",
-      "Bash(git clean -fdx:*)",
       "Bash(git push -f:*)",
-      "Bash(git push origin +:*)",
-      "Bash(git push origin HEAD:main:*)",
       "Bash(git push origin main:*)",
-      "Bash(git reset --hard:*)",
-      "Bash(rm --recursive:*)",
-      "Bash(rm -f -r:*)",
+      "Bash(git push origin HEAD:main:*)",
+      "Bash(git push origin +:*)",
+      "Bash(rm -rf:*)",
       "Bash(rm -fr:*)",
       "Bash(rm -r -f:*)",
-      "Bash(rm -rf:*)"
+      "Bash(rm -f -r:*)",
+      "Bash(rm --recursive:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -fd:*)",
+      "Bash(git clean -fdx:*)",
+      "Bash(gh api repos/*/merges:*)"
     ]
   },
   "hooks": {
@@ -98,7 +91,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'cmd=$(jq -r \".tool_input.command\"); if echo \"$cmd\" | grep -q \"gh pr create\"; then echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"PR created. Run /codereview to start review.\\\"}}\"; fi'"
+            "command": "bash -c 'cmd=$(jq -r \".tool_input.command\"); if echo \"$cmd\" | grep -q \"gh pr create\"; then echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"PR created. The /codereview gate is next: in the team flow qa-enforcer runs it (lead-dev does not). If you opened this PR by hand, run /codereview yourself.\\\"}}\"; fi'"
           }
         ]
       }

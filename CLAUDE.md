@@ -1,80 +1,127 @@
-@AGENTS.md
 @VISION.md
 @STACK.md
-@ROADMAP.md
 
-# Claude Code workflow
+# CLAUDE.md — operating contract for Claude Code
 
-`VISION.md`, `AGENTS.md`, `STACK.md`, and `ROADMAP.md` are the single sources of truth for product, technical, and milestone rules. This file only adds Claude-Code-specific operational rules (skills, verification, git workflow, safeguards, decision rights). Nothing is duplicated from the other documents.
+`VISION.md` is the product; `STACK.md` is the technology and all its concrete rules. This file is the engineering doctrine and team workflow. Where a rule says "as in `STACK.md`", that file is the authority — this file names no language or framework.
 
-## Autonomy
+Read order: `VISION.md` → this file → `STACK.md` → the issue (`gh issue view <N>`). Treat every rule as MUST unless marked otherwise. When a rule conflicts with a request, surface it — propose the smallest idiomatic alternative, don't silently break it.
 
-This project runs on the autonomous "default agent stack" pattern. Invoke the `/project-manager` skill — it is the team-lead entry point. The skill runs in two phases: an interactive Phase A where it interprets your prompt, asks any genuinely ambiguous clarifying questions, and waits for explicit plan approval; and an autonomous Phase B where it spawns the four-teammate agent team (`architect`, `lead-dev`, `qa-enforcer`, `ux-guardian`) and drives the work to completion without further prompts. The PM role itself lives in the skill — the lead is the PM in agent-teams mode.
+## Workflow
 
-The autonomy fallback rule from `AGENTS.md §14.1` applies in Phase B: when a decision is ambiguous, pick the smallest-surface, most-conservative interpretation that satisfies the `VISION.md` decision filter, document the choice in the PR description (and, if it introduces a binding constraint for future work, add a row to `ROADMAP.md → Strategic decisions in force`), and proceed. Do not call `AskUserQuestion` in Phase B. The only exceptions are (1) Phase A of the `/project-manager` skill, which is interactive by design, and (2) direct edits to `VISION.md` or `AGENTS.md`, which always require an explicit user request.
+The backlog is the GitHub issue list. Drive work through `/project-manager` — the team lead and the only surface that talks to the user; invoke it by issue number (`solve issue #42`) or a problem description.
+
+- `/project-manager` — reads the issue, proposes a plan, then convenes the team (`architect`, `ux-guardian`, `devils-advocate`, `lead-dev`, `qa-enforcer`). They design, stress-test, implement, open a PR, and run `/codereview` to PASS. The PR reaches the user only after PASS, for the final review.
+- `/implement <task>` — branch → change → `$VERIFY_CMD` → commit → push → PR. `lead-dev` runs it once per issue.
+- `/codereview` — reviews the branch against `main`, posts a PASS/FAIL comment. Only `qa-enforcer` runs it (once after each `/implement`); `lead-dev` hands the PR off rather than reviewing its own work.
+
+## Audit trail
+
+The record of what and why is: issues (problem + scope clarifications + decision-filter outcomes), commits (Conventional, one logical unit, "why" in the message), PR descriptions and review comments, and the merge-commit chain on `main`. There is no roadmap or change-log file; do not create one. A decision that binds future work is stated in plain language in the PR and the issue.
 
 ## Language
 
-Everything that lives in the repository or ever reaches GitHub is written in English. That includes:
-
-- Source code, tests, and code comments
-- Git commit messages and branch names
-- PR titles, PR descriptions, PR review comments, PR inline comments
-- Issue titles and issue bodies
-- Any documentation, including this file
-
-The _only_ exception is Claude's spoken replies back to the user in the chat window — those are in Finnish. The moment text is about to be written into a file, staged, pushed, or posted to GitHub, it is in English.
-
-## Verification
-
-Run before every commit and PR — all must pass:
-
-```sh
-$VERIFY_CMD
-```
-
-`$VERIFY_CMD` is declared in `STACK.md`. It is the single source of truth for how to verify, lint, build, and test this project. Never invent raw tool invocations (`swift-format`, `xcodebuild`, `eslint`, `tsc`, etc.) in commits, CI, or agent scripts — always go through the named command in `STACK.md`.
+Everything in the repo or on GitHub is in English (code, comments, commits, branches, PRs, issues, docs). Only Claude's chat replies to the user are in Finnish.
 
 ## Git workflow
 
-- Use `/implement <task>` for the feature-branch workflow.
-- Conventional Commits: `<type>(<scope>): <summary>`.
-- Every commit authored by an agent ends with a `Co-Authored-By: <agent display name> <noreply@anthropic.com>` trailer (one trailer per agent that contributed to that commit). Human commits do not need the trailer.
-- Branch names: `feat/<topic>`, `fix/<topic>`, `chore/<topic>`, `docs/<topic>` (max 50 chars, lowercase, hyphens only).
-- **Always merge to `main` with a merge commit — never squash.** The PR keeps its full commit history as the audit trail. This is enforced in the GitHub repo settings.
-- Every PR description covers _why_ and _what_, the relevant `AGENTS.md` sections, and the `VISION.md → Decision Filter` outcome. The PR is the permanent audit trail.
-- Delete the branch after merge.
-- **Never** commit or push directly to `main`.
-- **Trivial PR exception** — for typo fixes, dependency bumps, dead-code removals, formatting-only PRs, and other non-feature PRs (no behavioral change, no new state, no new dependency, no new persisted/transmitted data, no new external system), the `VISION decision filter`, `States handled`, and `AGENTS.md / STACK.md sections involved` blocks of the PR template may be filled with a single line: `N/A — trivial change, no behavioral surface affected.` The `Why`, `What`, and `Verification` sections are still mandatory. The `qa-enforcer` applies the `AGENTS.md §15` checklist as usual; if any rule does apply (e.g. a "typo fix" turns out to touch a privacy-relevant log line), the trivial-PR exception is forfeit and the full template fields are required.
+- Use `/implement`; never commit or push to `main`. Branches: `feat|fix|chore|docs/<topic>` (≤50 chars, lowercase, hyphens).
+- Conventional Commits; each agent-authored commit ends with `Co-Authored-By: <agent display name> <noreply@anthropic.com>`.
+- **Merge to `main` with a merge commit — never squash** (enforced in repo settings). Delete the branch after merge.
+- Link the issue with `Closes #<N>`. Every PR description covers why, what, the rules at play, and the decision-filter outcome.
+- **Trivial PRs** (typo, dep bump, dead-code/formatting; no behavioural change) may collapse the decision-filter / states / rules blocks to `N/A — trivial change`. Why / what / verification stay mandatory; if any rule applies, the exception is void.
 
-## Skills
+## Verification
 
-- `/project-manager <prompt>` — orchestration entry point. Free-form prompt; the skill classifies it into a mode (autonomous-build, single milestone, bootstrap, audit, PR review, investigation, custom), clarifies if needed, proposes a plan, and only spawns the team after explicit user approval. The skill itself owns `ROADMAP.md` stewardship (status transitions, Strategic decisions in force, Open risks).
-- `/implement <task>` — feature branch → change → `$VERIFY_CMD` → commit → push → PR. Enforces the `VISION.md` decision filter and the `AGENTS.md §14` workflow rules. The `lead-dev` teammate calls this once per milestone.
-- `/codereview` — isolated subagent review of the current branch against `main`. It applies the project governance files first, then risk-based review lenses for correctness, architecture, concurrency, security, privacy, reliability, performance, tests, supply chain, and operability. It posts a plain-text PASS or FAIL PR comment as the audit-trail entry. Every FAIL finding must include evidence, impact, violated local rule, minimum fix, and verification; external standards such as OWASP, CWE, NIST SSDF, SLSA, 12-Factor, ISO/IEC 25010, OpenTelemetry, or OWASP LLM Top 10 are cited only when materially relevant. The `qa-enforcer` teammate calls this after each `/implement` finishes.
+Run `$VERIFY_CMD` (from `STACK.md`) before every commit and PR; it must pass with no new warnings. Always go through the named commands (`$FORMAT_CMD`, `$LINT_CMD`, `$BUILD_CMD`, `$TEST_CMD`, `$VERIFY_CMD`); never invoke the underlying tools directly.
 
-## Roadmap
+---
 
-`ROADMAP.md` at the repository root is the **forward-looking** plan: milestones, active strategic constraints, open risks, milestone scopes. It is **not** an audit log — the audit trail of what happened and why is the git history of `main` (merge commits, never squash) plus PR descriptions and comments.
+# Engineering doctrine
 
-Every milestone PR must update it before being merged:
+Concrete technology, budgets, and banned calls live in `STACK.md`.
 
-1. When the branch is opened, move that milestone's row from `Todo` to `In progress`.
-2. Before merging, move the row to `Done` and fill in the PR link.
-3. If a new binding constraint surfaces mid-PR, add a row to `Strategic decisions in force` (rewrite or remove rows when superseded — do not maintain an append-only ledger). If a risk surfaces, add it to `Open risks`; when it is mitigated, delete the row.
+## Mission
 
-The full rationale for any decision lives in the PR that introduced it — not in `ROADMAP.md`. Never write PII or any data forbidden by `VISION.md → Persistence and Privacy Posture` into `ROADMAP.md`.
+Build the product in `VISION.md` on the stack in `STACK.md`: idiomatic (platform standard library and first-party frameworks first; prefer newer platform features over older ones); responsive under failure and load; strictly typed and concurrency-safe in the strictest mode `STACK.md` allows, no new warnings, no data races; resource-conscious within the budgets in `STACK.md`; privacy-respecting (collect only what's needed; no silent telemetry or third-party analytics); easy to evolve (no custom app frameworks, no architecture astronautics).
+
+## Product guardrails
+
+Before accepting any feature, run `VISION.md → Decision Filter`. If any answer is "no", reject it, record the rejection in the PR (or the issue if no PR yet), and propose the smallest alternative that passes. Read the filter dynamically; never silently violate `VISION.md`.
+
+## Architecture
+
+Keep a layered shape (named per `STACK.md`): **interface** (the outward surface — screens, request handlers, CLI commands, public API), **domain** (pure transforms, state machines, business rules; no framework imports), **infrastructure** (network, storage, sensors, external systems, reached only through narrow interfaces). Domain code is pure and testable.
+
+Right-size state ownership — no controller / service per trivial unit:
+
+- local state → a primitive owned by that surface;
+- shared stateful surface → one state owner;
+- shared mutable non-UI state → a thread-safe primitive;
+- app-wide dependency → explicit injection;
+- durable data → the persistence layer in `STACK.md`.
+
+Name owners by responsibility, not mechanical suffix. Model phases as tagged unions, not parallel booleans.
+
+## Concurrency
+
+Strictest async-safety mode in `STACK.md`, no new warnings. Isolate critical-path state explicitly. Shared mutable non-UI state lives behind a thread-safe primitive; services expose async methods or streams. Prefer structured concurrency; use detached work only when it must outlive its caller, with a why comment. **Cancellation is mandatory** — work stops when its surface goes away. Types crossing concurrency boundaries are thread-safe; never pass mutable reference graphs across them. The critical path never blocks on async work. Escape hatches are a last resort, each needing an inline justification naming the underlying-API constraint; `STACK.md` lists the banned ones.
+
+## Responsiveness & resource budget
+
+On the critical execution path (whatever `STACK.md` declares — UI thread, event loop, request hot path): keep synchronous work within the budget; run anything slower off-path with a placeholder, last-known-good value, stream, or pagination; give every external call a timeout and graceful fallback; render large collections lazily with stable ids; load assets via async loader or thread-safe cache; do no expensive work in code that runs on every event — cache derived results; never make navigation or input wait on I/O. Prefer continuity over blankness. Profile hot-path changes with the tooling in `STACK.md`. Pause background work when the surface is inactive.
+
+## States handled
+
+Every visible surface handles the states `VISION.md` and `STACK.md` declare — commonly awaiting-first-data, success, empty, degraded, permission-blocked, offline, error, plus product-specific. Previews / stories / fixtures exercise each applicable state.
+
+## Side effects
+
+- **External systems / networking** — through the client in `STACK.md`; request building, decoding, retries, backoff live in the service layer, never inline in the interface. Wrap every side-effecting system behind a service with explicit degraded phases; start work when needed, stop when not; request the narrowest permission scope.
+- **Persistence** — only the shape in `STACK.md`; never persist data the product doesn't require; handle decode/migration failures gracefully.
+- **Caching** — framework-native where available; long-lived caches behind a thread-safe primitive; never cache PII or tokens beyond their lifetime.
+- **Background work** — only what `STACK.md` allows.
+
+## Privacy & security
+
+Maintain the platform's privacy declaration accurately. Never log PII or sensitive derived values — use the platform's redaction (per `STACK.md`); release builds must not leak. No silent telemetry or third-party analytics. Encrypted transport only. Secrets stay out of the repo (environment / ignored files).
+
+## Testing
+
+Use the framework in `STACK.md`; tests run clean in the strictest mode. Test pure domain code first (transforms, transitions, edge cases). Test the state owner that drives a surface, not the surface, using a fake/in-memory service boundary and asserting the timeline. Prefer interface-backed services with live/preview/fake implementations over heavyweight mocking.
+
+## Code conventions
+
+Value types and immutable bindings by default; reference types/mutation only when identity or shared mutation is needed. Composition over inheritance; small purpose-driven types; files named for their primary type. No unsafe unwraps/coercions outside tests; no broad type erasure without a measured benefit; no global mutable state or singletons unless an API requires one. Delete dead code; comments explain why, not the obvious; exported symbols get a doc comment. No debug output in shipped code — use the logger in `STACK.md`, which names the banned calls. Run `$FORMAT_CMD` before committing.
+
+## Dependencies
+
+Default to no — especially for what the platform already solves. A genuinely needed one uses the package manager in `STACK.md`, compiles clean in the strictest mode, and is added to `STACK.md → Approved Dependencies` with rationale, approver, and date.
+
+## Reject changes that…
+
+violate a decision-filter question or add a `VISION.md → Non-Goals` feature; add a competing framework or boilerplate where a smaller owner suffices; put heavy work on the critical path or in per-event code; couple the interface layer to network/storage/sensor internals; hide failure behind infinite spinners or use parallel booleans for a state machine; suppress warnings with escape hatches; spawn fire-and-forget async with no ownership or cancellation; add a dependency for what the platform solves or lower the minimum version in `STACK.md`; introduce debug output, stubs, or commented-out code, or log PII; add singletons/DI containers without `STACK.md` approval; or break any `STACK.md → Stack-specific reject-list additions` rule.
+
+## Definition of done
+
+Responsive under slow network / denied permissions / degraded data / load; every applicable state handled; no heavy work on the critical path; every async path cancellation-safe; no new persisted/transmitted data violating `VISION.md` or `STACK.md`, no PII in logs; tests cover new domain logic and run clean in the strictest mode; accessibility considered for user-facing surfaces; `$VERIFY_CMD` green; privacy declarations and docs updated when relevant.
+
+## Autonomy fallback
+
+When a decision is ambiguous and not derivable from `VISION.md`, `STACK.md`, this file, or the issue: pick the smallest-surface, most-conservative interpretation that passes the decision filter, document it in the PR (and the issue if it binds future work), and proceed. **Do not call `AskUserQuestion`** — the only exception is direct edits to `VISION.md` or this file, which need an explicit user request. If `$VERIFY_CMD` keeps failing after 10 attempts, stop: push a `chore/abandoned-<task>` branch, open a draft PR (or comment on the PR and issue) describing the failure, and leave it for a human.
+
+## Intentional divergence
+
+Valid but deliberate: measurable need, clear benefit, isolated exception, documented reason. Record it in `STACK.md → Intentional Divergences`. Divergence from `VISION.md` needs the product owner.
+
+---
 
 ## Safeguards
 
-Safeguards are implemented in `.claude/settings.json` (permissions + hooks). The list below is a reminder; the authoritative enforcement lives in settings.json.
-
-- `git push --force` and `git push origin main|HEAD:main`: blocked by the `PreToolUse` Bash hook and the deny list.
-- `rm -rf`: deny-listed (requires an explicit permission prompt).
-- `gh pr merge`: **never run on the agent's own initiative.** Merging always requires an explicit user request. The command itself is not deny-listed, so the agent may execute it _when asked by the user_, but never autonomously.
+Enforced in `.claude/settings.json`: force-push and pushes to `main` are blocked; `rm -rf` is deny-listed; `gh pr merge` only runs when the user explicitly asks, never on the agent's initiative.
 
 ## Decision rights
 
-- **Auto-allow**: read-only commands, `STACK.md` build/test/lint commands, feature-branch operations (create, commit, push origin `<branch>`), PR creation, `gh pr view` / `comment` / `diff` / `review`, `ROADMAP.md` / `STACK.md` edits.
-- **Ask first**: edits to `VISION.md` or `AGENTS.md`, `gh api` calls that modify repo settings. `gh pr merge` is allowed only when the user explicitly asks for it.
-- **Never**: force push, push to `main`, bypass hooks (`--no-verify` etc.), `rm -rf` anything inside the project, violate any guardrail in `AGENTS.md §13`, persist or transmit data forbidden by `VISION.md → Persistence and Privacy Posture`.
+- **Auto-allow**: read-only commands, the `STACK.md` build/test/lint commands, feature-branch ops (create, commit, push origin `<branch>`), PR creation, `gh pr view`/`comment`/`diff`/`review`, `gh issue view`/`list`/`comment`, `STACK.md` edits.
+- **Ask first**: edits to `VISION.md` or `CLAUDE.md`, creating/restructuring issues, `gh api` calls changing repo settings. `gh pr merge` only when explicitly asked.
+- **Never**: force push, push to `main`, bypass hooks (`--no-verify`), `rm -rf` in the project, or persist/transmit data forbidden by `VISION.md → Persistence and Privacy Posture`.
