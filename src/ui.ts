@@ -288,7 +288,7 @@ export const renderHomePage = (): string => `<!doctype html>
 
               <p style="margin-top:14px;margin-bottom:4px">Then copy this into <code>packages/spot-price.yaml</code>, save it, and reload your YAML configurations (or reboot):</p>
               <div id="haYamlBlock" class="example-block">
-                <pre id="haYamlContent" style="max-height:360px;overflow-y:auto">Loading...</pre>
+                <pre id="haYamlContent">Loading...</pre>
                 <button class="copy-btn" id="copyHaYamlBtn">Copy</button>
               </div>
 
