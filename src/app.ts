@@ -8,6 +8,7 @@ import type { AuthSessionUser } from "./session-auth.js";
 import { createSessionAuth } from "./session-auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerPriceRoutes } from "./routes/price.js";
+import { registerForecastRoutes } from "./routes/forecast.js";
 import { registerUserRoutes } from "./routes/user.js";
 
 export interface AppEnv {
@@ -97,6 +98,7 @@ export const createApp = (
   // --- OpenAPI routes ------------------------------------------------------
 
   registerPriceRoutes(app);
+  registerForecastRoutes(app);
   registerUserRoutes(app);
 
   // --- OpenAPI spec + interactive docs ------------------------------------
@@ -115,6 +117,11 @@ export const createApp = (
       {
         name: "Price",
         description: "Electricity price endpoints (API key required)",
+      },
+      {
+        name: "Forecast",
+        description:
+          "FI price forecast — a clearly-labelled estimate, separate from real prices (API key required)",
       },
       {
         name: "User",

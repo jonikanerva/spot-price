@@ -43,7 +43,7 @@ const getHourFormatter = (timeZone: string): Intl.DateTimeFormat => {
 };
 
 /** Extract hour (0-23) in a specific IANA timezone */
-const extractHourInTimeZone = (
+export const extractHourInTimeZone = (
   isoDateTime: string,
   timeZone: string,
 ): number => {
@@ -74,13 +74,34 @@ const getIntervalMinutes = (startIso: string, endIso: string): number => {
   return minutes;
 };
 
-/** Calculate total price for a single hour */
-export const calculateTotalPrice = (
-  price: HourlyPrice,
+/** The contract-term breakdown applied on top of a spot price. */
+export interface ContractBreakdown {
+  readonly spotCentsKwh: number;
+  readonly marginCentsKwh: number;
+  readonly transferCentsKwh: number;
+  readonly taxCentsKwh: number;
+  readonly vatCentsKwh: number;
+  readonly totalCentsKwh: number;
+  readonly isNightRate: boolean;
+}
+
+/**
+ * Apply the user's contract terms (margin + day/night transfer + electricity
+ * tax + VAT) to a spot price in c/kWh, returning the full money breakdown.
+ *
+ * This is the single source of total-price truth: both the real-price path
+ * (`calculateTotalPrice`) and the forecast route call it with a spot value in
+ * c/kWh, so an estimated total is computed by exactly the same arithmetic as a
+ * real total — the forecast never fabricates a `HourlyPrice`. `hour` is the
+ * hour-of-day in the user's timezone, used only to pick the day/night transfer
+ * rate; it is supplied by the caller so this function stays pure (no clock, no
+ * timezone parsing inline) and reusable for estimated quarters.
+ */
+export const applyContractTerms = (
+  spotCentsKwh: number,
   settings: UserSettings,
-): TotalPrice => {
-  const spotCentsKwh = eurMwhToCentsKwh(price.priceEurMwh);
-  const hour = extractHourInTimeZone(price.deliveryStart, settings.timezone);
+  hour: number,
+): ContractBreakdown => {
   const nightRate = isNightHour(
     hour,
     settings.nightStartHour,
@@ -104,13 +125,6 @@ export const calculateTotalPrice = (
     Math.round(beforeVat * (settings.vatPercent / 100) * 1000) / 1000;
 
   return {
-    deliveryStart: price.deliveryStart,
-    deliveryEnd: price.deliveryEnd,
-    localStart: formatDateTimeInTimeZone(
-      price.deliveryStart,
-      settings.timezone,
-    ),
-    localEnd: formatDateTimeInTimeZone(price.deliveryEnd, settings.timezone),
     spotCentsKwh,
     marginCentsKwh: settings.marginCentsKwh,
     transferCentsKwh,
@@ -118,6 +132,27 @@ export const calculateTotalPrice = (
     vatCentsKwh,
     totalCentsKwh,
     isNightRate: nightRate,
+  };
+};
+
+/** Calculate total price for a single hour */
+export const calculateTotalPrice = (
+  price: HourlyPrice,
+  settings: UserSettings,
+): TotalPrice => {
+  const spotCentsKwh = eurMwhToCentsKwh(price.priceEurMwh);
+  const hour = extractHourInTimeZone(price.deliveryStart, settings.timezone);
+  const breakdown = applyContractTerms(spotCentsKwh, settings, hour);
+
+  return {
+    deliveryStart: price.deliveryStart,
+    deliveryEnd: price.deliveryEnd,
+    localStart: formatDateTimeInTimeZone(
+      price.deliveryStart,
+      settings.timezone,
+    ),
+    localEnd: formatDateTimeInTimeZone(price.deliveryEnd, settings.timezone),
+    ...breakdown,
   };
 };
 

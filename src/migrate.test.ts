@@ -56,6 +56,7 @@ describe("migration system", () => {
     expect(tables).toContain("account");
     expect(tables).toContain("verification");
     expect(tables).toContain("usernames");
+    expect(tables).toContain("fingrid_series");
   });
 
   it("records migration versions", async () => {
@@ -64,9 +65,11 @@ describe("migration system", () => {
       "SELECT version, name FROM _migrations ORDER BY version",
     );
 
-    expect(migrations.length).toBe(1);
+    expect(migrations.length).toBe(2);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("baseline");
+    expect(migrations[1]?.version).toBe(2);
+    expect(migrations[1]?.name).toBe("fingrid_series");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -76,7 +79,7 @@ describe("migration system", () => {
     const result = await runMigrations(pool);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(1);
+    expect(result.total).toBe(2);
   });
 });
 

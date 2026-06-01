@@ -7,6 +7,9 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
+        // Type-aware linting via the TypeScript project service. It discovers
+        // the nearest tsconfig for each file: src/ -> tsconfig.json, tools/ ->
+        // tools/tsconfig.json. Both are kept in sync with `pnpm typecheck`.
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },

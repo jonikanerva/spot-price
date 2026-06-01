@@ -103,6 +103,62 @@ export const ErrorSchema = z
   .openapi("Error");
 
 // ---------------------------------------------------------------------------
+// Forecast schemas (FI only) — structurally distinct from real-price schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * A single predicted quarter. The money fields are named `estimated*` and the
+ * entry carries `estimated: true` so this schema shares NO money-field name
+ * with `TotalPriceSchema` — a misrouted consumer cannot read an estimate as a
+ * published price.
+ */
+const ForecastEntrySchema = z
+  .object({
+    start: z.string().openapi({ example: "2026-02-28T22:00:00.000Z" }),
+    end: z.string().openapi({ example: "2026-02-28T22:15:00.000Z" }),
+    localStart: z
+      .string()
+      .openapi({ example: "2026-03-01T00:00:00.000+02:00" }),
+    localEnd: z.string().openapi({ example: "2026-03-01T00:15:00.000+02:00" }),
+    estimatedSpotCentsKwh: z.number().openapi({ example: 4.12 }),
+    estimatedTotalCentsKwh: z.number().openapi({ example: 11.74 }),
+    estimated: z.literal(true).openapi({ example: true }),
+  })
+  .openapi("ForecastEntry");
+
+/**
+ * The forecast response. `forecast: true` is the top-level discriminant.
+ * `available` is false (with `degraded: true` and a `reason`) for non-FI areas
+ * or when Fingrid data is missing. `confidence` is `"low"` whenever the model
+ * fell back to default coefficients or had to zero-seed a hard outage.
+ */
+export const ForecastResponseSchema = z
+  .object({
+    forecast: z.literal(true).openapi({ example: true }),
+    area: z.string().openapi({ example: "FI" }),
+    available: z.boolean().openapi({ example: true }),
+    degraded: z.boolean().openapi({ example: false }),
+    confidence: z.enum(["normal", "low"]).openapi({ example: "normal" }),
+    reason: z.string().optional().openapi({
+      example: "Forecast available for FI only",
+      description: "Present when available is false or degraded is true",
+    }),
+    generatedAt: z.string().openapi({ example: "2026-02-28T13:00:00.000Z" }),
+    unit: z.string().openapi({ example: "c/kWh" }),
+    resolutionMinutes: z.number().int().openapi({ example: 15 }),
+    entries: z.array(ForecastEntrySchema),
+  })
+  .openapi("ForecastResponse");
+
+export const ForecastQuerySchema = z.object({
+  area: z.enum(areaCodes).optional().default("FI").openapi({
+    example: "FI",
+    description:
+      "Delivery area. The forecast is FI-only; other areas return available:false.",
+  }),
+});
+
+// ---------------------------------------------------------------------------
 // Request schemas
 // ---------------------------------------------------------------------------
 

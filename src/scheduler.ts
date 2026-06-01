@@ -1,6 +1,7 @@
 import cron from "node-cron";
 import type { Pool } from "pg";
 import { runFetchJob } from "./fetch-job.js";
+import { runForecastFetchJob } from "./forecast-job.js";
 import { formatUtcDate, addDays } from "./time.js";
 
 /**
@@ -37,6 +38,49 @@ export const runStartupFetch = (pool: Pool): void => {
   void safeFetch(pool, "Startup fetch");
 };
 
+/**
+ * Run the Fingrid grid-data fetch for the FI forecast.
+ *
+ * Wrapped in its own try/catch and isolated from `safeFetch` so a Fingrid
+ * failure can NEVER affect the authoritative Nord Pool price cron or path
+ * (STACK.md §9 — the only other allowed background task). The Fingrid boundary
+ * already degrades rather than throwing; this is a second belt-and-braces
+ * guard. No-op (a quiet log) when no API key is configured.
+ */
+const safeForecastFetch = async (
+  pool: Pool,
+  apiKey: string | undefined,
+  label: string,
+): Promise<void> => {
+  if (!apiKey) {
+    return;
+  }
+  try {
+    const result = await runForecastFetchJob(pool, apiKey);
+    if (result.ok) {
+      console.log(
+        `[scheduler] ${label}: stored ${String(result.stored)} Fingrid rows, pruned ${String(result.pruned)}`,
+      );
+    } else {
+      console.warn(`[scheduler] ${label}: Fingrid degraded — ${result.reason}`);
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "unknown error";
+    console.error(`[scheduler] ${label} failed: ${msg}`);
+  }
+};
+
+/**
+ * Run an immediate Fingrid fetch on startup so the forecast has data after a
+ * deploy/restart without waiting for the next hourly tick.
+ */
+export const runStartupForecastFetch = (
+  pool: Pool,
+  apiKey: string | undefined,
+): void => {
+  void safeForecastFetch(pool, apiKey, "Startup forecast fetch");
+};
+
 /** Handle for stopping all scheduled tasks. */
 export interface SchedulerHandle {
   readonly stop: () => void;
@@ -57,7 +101,10 @@ export interface SchedulerHandle {
  * are captured, remaining burst ticks for that day are skipped.
  * Each run is idempotent — already-stored data is skipped via allAreasPresent.
  */
-export const startScheduler = (pool: Pool): SchedulerHandle => {
+export const startScheduler = (
+  pool: Pool,
+  fingridApiKey?: string,
+): SchedulerHandle => {
   let lastCapturedTomorrow: string | null = null;
 
   console.log(
@@ -88,10 +135,30 @@ export const startScheduler = (pool: Pool): SchedulerHandle => {
     { timezone: "Europe/Oslo" },
   );
 
+  // FI forecast: hourly Fingrid grid-data fetch. Isolated from the price crons
+  // above — a Fingrid failure can never affect the authoritative price path
+  // (STACK.md §9). Only scheduled when a key is configured.
+  const forecast = fingridApiKey
+    ? cron.schedule("0 * * * *", () => {
+        void safeForecastFetch(pool, fingridApiKey, "Forecast fetch");
+      })
+    : null;
+
+  if (forecast) {
+    console.log("[scheduler] Forecast (Fingrid) fetch scheduled: hourly");
+  } else {
+    console.log(
+      "[scheduler] Forecast (Fingrid) fetch disabled: no FINGRID_API_KEY",
+    );
+  }
+
   return {
     stop: () => {
       void standard.stop();
       void burst.stop();
+      if (forecast) {
+        void forecast.stop();
+      }
     },
   };
 };

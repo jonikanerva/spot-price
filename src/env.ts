@@ -47,6 +47,17 @@ const baseSchema = z.object({
 
   /** Secret used by Better Auth to sign sessions. Required in production. */
   BETTER_AUTH_SECRET: z.string().min(1).optional(),
+
+  /**
+   * Fingrid Open Data API key, used by the FI price-forecast feature to fetch
+   * public wind/consumption grid series (`data.fingrid.fi`). Optional: when
+   * absent the forecast cron and endpoint degrade gracefully (the endpoint
+   * returns `available: false`). It is never required for the authoritative
+   * Nord Pool price path. A loud one-time startup warning fires in production
+   * when it is missing (see `index.ts`), so the disabled state is visible in
+   * Railway logs rather than hidden behind a 200 response.
+   */
+  FINGRID_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof baseSchema>;
