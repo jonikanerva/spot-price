@@ -19,7 +19,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:all": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tools/tsconfig.json",
     "seed": "tsx --env-file=.env src/seed.ts",
     "copy:migrations": "mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/"
   },
