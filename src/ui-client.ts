@@ -210,6 +210,20 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
           '    headers:',
           '      Authorization: "' + auth + '"',
           '    content_type: "application/json"',
+          '',
+          '  spot_price_history:',
+          '    url: "' + baseUrl + '/api/v1/price/history?from={{ from }}&to={{ to }}"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_forecast:',
+          '    url: "' + baseUrl + '/api/v1/price/forecast"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
         ].join('\\n')
       }
 
@@ -255,6 +269,10 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
         const apiKeyHeader = '-H "Authorization: Bearer ' + state.apiKey + '"'
         const windowStartUtc = buildUtcIsoForTodayHour(8)
         const windowEndUtc = buildUtcIsoForTodayHour(17)
+        const nowMs = Date.now()
+        // Display-only UTC calendar dates for a valid <=31-day history span.
+        const historyTo = new Date(nowMs).toISOString().slice(0, 10)
+        const historyFrom = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
         const examples = [
           {
             title: 'Current total price',
@@ -293,6 +311,14 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
           {
             title: 'Tomorrow prices',
             command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/tomorrow',
+          },
+          {
+            title: 'Price history for a date range',
+            command: 'curl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/history?from=' + historyFrom + '&to=' + historyTo + '"',
+          },
+          {
+            title: 'Price forecast (estimate, FI only)',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/forecast',
           },
         ]
 

@@ -178,6 +178,12 @@ test.describe("API panel", () => {
       "packages: !include_dir_named packages",
     );
     await expect(page.locator("#haYamlContent")).toContainText("rest_command:");
+    await expect(page.locator("#haYamlContent")).toContainText(
+      "spot_price_history:",
+    );
+    await expect(page.locator("#haYamlContent")).toContainText(
+      "spot_price_forecast:",
+    );
     await expect(page.locator("#haUsageContent")).toContainText(
       "action: rest_command.spot_price_cheapest",
     );
