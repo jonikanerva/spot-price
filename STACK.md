@@ -7,7 +7,7 @@
 ## 0. Project shape
 
 - **Shape:** single-package backend service. One Hono process exposes the REST API (`/api/v1/...`), a setup-only server-rendered HTML UI (`src/ui.ts` + inline `src/ui-client.ts`), the OpenAPI reference (`/reference`), and an in-process `node-cron` price-fetch job. **No `apps/`, no `packages/`, no frontend build.**
-- **Critical execution path:** the per-request hot path on the API (price-now / today / tomorrow / cheapest / history) and the daily day-ahead fetch path (`src/fetch-job.ts`). Price math is a pure function of `(HourlyPrice, UserSettings)` in `src/calculator.ts` — testable without a database, a clock, or a network.
+- **Critical execution path:** the per-request hot path on the API (price-now / today / tomorrow / cheapest / history / forecast) and the daily day-ahead fetch path (`src/fetch-job.ts`). Price math is a pure function of `(HourlyPrice, UserSettings)` in `src/calculator.ts`; the forecast estimate is a pure function of its inputs in `src/forecast.ts` (no DB, clock, or network) — the forecast route reads pre-fetched Fingrid rows off the DB and never calls Fingrid synchronously.
 - **Applicable states:** API responses are typed success / typed error. When Nord Pool has not published, the answer is an explicit `available: false` / `404` — never an estimate (`VISION.md → One trusted upstream`). The setup UI handles awaiting-first-data, success, empty, permission/auth-blocked, and error.
 
 ---
@@ -136,7 +136,12 @@ Default answer to "should we add a library?" is **no**. New entries require a `S
 
 ## 9. Background & lifecycle
 
-- **Allowed background work:** the `node-cron` jobs declared in `src/scheduler.ts` and executed by `src/fetch-job.ts` — the day-ahead price fetch (2h baseline cadence plus a 10-minute burst window around the Nord Pool publication time). These are the **only** allowed background tasks; new ones require an entry here.
+- **Allowed background work:** the `node-cron` jobs declared in `src/scheduler.ts`:
+  - the day-ahead price fetch executed by `src/fetch-job.ts` — 2h baseline cadence plus a 10-minute burst window around the Nord Pool publication time;
+  - the FI-forecast Fingrid grid-data fetch executed by `src/forecast-job.ts` — hourly (`0 * * * *`), fetching the public wind/consumption datasets (245/75/165/124) from `data.fingrid.fi` into the `fingrid_series` table and pruning rows outside the ~35-day window. It runs only when `FINGRID_API_KEY` is set, is wrapped in its own isolated try/catch, and its Fingrid boundary degrades rather than throwing, so a forecast failure can never affect the authoritative Nord Pool price cron or the price request path.
+
+  These are the **only** allowed background tasks; new ones require an entry here.
+
 - **Forbidden background work:** long-polling websockets that keep a connection alive without active user interaction; daemons that drive expensive computation on idle; service workers; any background task that retains data forbidden by `VISION.md`.
 
 ---
