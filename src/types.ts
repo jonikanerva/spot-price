@@ -1,22 +1,3 @@
-/** Hourly price entry from Nord Pool Data Portal API */
-export interface NordPoolEntry {
-  readonly deliveryStart: string;
-  readonly deliveryEnd: string;
-  readonly entryPerArea: Readonly<Record<string, number>>;
-}
-
-/** Nord Pool Data Portal API response */
-export interface NordPoolResponse {
-  readonly deliveryDateCET: string;
-  readonly updatedAt: string;
-  readonly currency: string;
-  readonly multiAreaEntries: readonly NordPoolEntry[];
-  readonly areaStates: readonly {
-    readonly state: string;
-    readonly areas: readonly string[];
-  }[];
-}
-
 /** Parsed hourly price in our domain */
 export interface HourlyPrice {
   readonly deliveryStart: string;

@@ -1,4 +1,5 @@
-import type { HourlyPrice, NordPoolResponse } from "./types.js";
+import { z } from "zod";
+import type { HourlyPrice } from "./types.js";
 
 const BASE_URL = "https://dataportal-api.nordpoolgroup.com/api/DayAheadPrices";
 
@@ -6,6 +7,24 @@ interface FetchPricesParams {
   readonly date: string; // YYYY-MM-DD
   readonly areas: readonly string[]; // e.g. ["FI"] or ["FI", "SE1", "SE2", ...]
 }
+
+/** Only the fields parseResponse consumes are validated; Nord Pool may add
+ *  cosmetic envelope fields (deliveryDateCET, updatedAt, currency, areaStates)
+ *  and zod strips unknown keys, so additive upstream changes do not degrade us. */
+const NordPoolEntrySchema = z.object({
+  deliveryStart: z.string(),
+  deliveryEnd: z.string(),
+  entryPerArea: z.record(z.string(), z.number()), // zod v4: explicit key schema required
+});
+
+/** Loose envelope: confirm multiAreaEntries is an array of unknown; each entry
+ *  is validated per-item in parseResponse so one bad entry (e.g. a minor area)
+ *  cannot zero out the good ones (incl. primary FI). */
+const NordPoolResponseSchema = z.object({
+  multiAreaEntries: z.array(z.unknown()),
+});
+
+type NordPoolResponse = z.infer<typeof NordPoolResponseSchema>;
 
 /** Convert EUR/MWh to c/kWh (divide by 10) */
 export const eurMwhToCentsKwh = (eurMwh: number): number =>
@@ -25,13 +44,17 @@ const parseResponse = (
   areas: readonly string[],
 ): readonly HourlyPrice[] => {
   const results: HourlyPrice[] = [];
-  for (const entry of data.multiAreaEntries) {
+  for (const raw of data.multiAreaEntries) {
+    const entry = NordPoolEntrySchema.safeParse(raw);
+    if (!entry.success) {
+      continue; // skip one malformed entry; keep the good ones (incl. FI)
+    }
     for (const area of areas) {
-      const price = entry.entryPerArea[area];
+      const price = entry.data.entryPerArea[area];
       if (price !== undefined) {
         results.push({
-          deliveryStart: entry.deliveryStart,
-          deliveryEnd: entry.deliveryEnd,
+          deliveryStart: entry.data.deliveryStart,
+          deliveryEnd: entry.data.deliveryEnd,
           priceEurMwh: price,
           area,
         });
@@ -51,21 +74,22 @@ const delay = (ms: number): Promise<void> =>
 const NO_DATA_STATUSES = new Set([404, 204]);
 
 /**
- * Parse JSON response body safely.
- * Returns null if the body is empty or not valid JSON (indicates no data).
+ * Parse the response body into the loose Nord Pool envelope.
+ *
+ * An empty body is a definite "no data" → returns null so the caller returns []
+ * with NO retry. A non-empty body that is invalid JSON (SyntaxError) or whose
+ * envelope drifts from the schema (ZodError) THROWS, so the retry budget in
+ * fetchDayAheadPrices covers transient upstream corruption before degrading.
  */
 const parseJsonBody = async (
   response: Response,
 ): Promise<NordPoolResponse | null> => {
   const text = await response.text();
   if (text.length === 0) {
-    return null;
+    return null; // definite "no data" → caller returns [] with NO retry
   }
-  try {
-    return JSON.parse(text) as NordPoolResponse;
-  } catch {
-    return null;
-  }
+  const json: unknown = JSON.parse(text); // throws SyntaxError on invalid JSON → retried
+  return NordPoolResponseSchema.parse(json); // throws ZodError on envelope drift → retried
 };
 
 /** Fetch day-ahead prices from Nord Pool Data Portal API */
@@ -99,7 +123,16 @@ export const fetchDayAheadPrices = async (
     } catch (error) {
       const isLastAttempt = attempt === MAX_RETRIES;
       if (isLastAttempt) {
-        throw error;
+        if (error instanceof z.ZodError || error instanceof SyntaxError) {
+          // Schema/JSON drift survived the retry budget: degrade to no data
+          // with a DISTINCT signal so drift is alertable separately from the
+          // benign "not published yet" (which returns [] without this log).
+          console.error(
+            `[nordpool] NORDPOOL_SCHEMA_DRIFT: upstream body failed validation after ${String(MAX_RETRIES)} attempts, degrading to no data`,
+          );
+          return []; // degrade, do NOT throw past the cron
+        }
+        throw error; // genuine HTTP/network error keeps propagating as today
       }
       console.warn(
         `[nordpool] Fetch attempt ${String(attempt)}/${String(MAX_RETRIES)} failed, retrying in ${String(RETRY_DELAY_MS / 1000)}s...`,
