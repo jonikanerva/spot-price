@@ -35,3 +35,4 @@ playwright-report/
 
 # Agents
 .claude/worktrees
+.claude/settings.local.json
