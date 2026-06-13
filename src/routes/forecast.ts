@@ -25,7 +25,29 @@ import {
 } from "../forecast.js";
 import type { ForecastEntry, ForecastResult, UserSettings } from "../types.js";
 import { ForecastQuerySchema, ForecastResponseSchema } from "../api-schemas.js";
+import { CALIBRATED_BANDS } from "../conformal-artifact.js";
 import type { AppEnv } from "../app.js";
+
+/**
+ * The top-level band descriptor surfaced on the success response: the method,
+ * the nominal/observed coverage, whether bands shipped, and when the artifact
+ * was generated. Always present so a consumer can tell why bound fields are
+ * absent (currently dark: `calibrated: false`). Orthogonal to
+ * `degraded`/`confidence`.
+ */
+const bandsDescriptor = (): {
+  method: "empirical-residual";
+  nominalCoverage: number;
+  observedCoverage: number | null;
+  calibrated: boolean;
+  generatedAt: string;
+} => ({
+  method: CALIBRATED_BANDS.method,
+  nominalCoverage: CALIBRATED_BANDS.nominalCoverage,
+  observedCoverage: CALIBRATED_BANDS.observedCoverage,
+  calibrated: CALIBRATED_BANDS.calibrated,
+  generatedAt: CALIBRATED_BANDS.generatedAt,
+});
 
 const QUARTER_MS = 15 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -66,7 +88,7 @@ const toForecastEntries = (
       settings,
       hour,
     );
-    return {
+    const entry: ForecastEntry = {
       start: point.start,
       end: endIso,
       localStart: formatDateTimeInTimeZone(point.start, settings.timezone),
@@ -75,6 +97,24 @@ const toForecastEntries = (
       estimatedTotalCentsKwh: breakdown.totalCentsKwh,
       estimated: true,
     };
+    // Band bounds are present only when a calibrated artifact shipped AND this
+    // quarter carried a real prediction. `applyContractTerms` is a monotone
+    // affine transform in spot, so applying it to each bound independently
+    // preserves the low ≤ point ≤ high ordering.
+    const { estimatedSpotLowCentsKwh: low, estimatedSpotHighCentsKwh: high } =
+      point;
+    if (low !== undefined && high !== undefined) {
+      return {
+        ...entry,
+        estimatedSpotLowCentsKwh: low,
+        estimatedSpotHighCentsKwh: high,
+        estimatedTotalLowCentsKwh: applyContractTerms(low, settings, hour)
+          .totalCentsKwh,
+        estimatedTotalHighCentsKwh: applyContractTerms(high, settings, hour)
+          .totalCentsKwh,
+      };
+    }
+    return entry;
   });
 
 const forecastRoute = createRoute({
@@ -291,6 +331,7 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
         generatedAt,
         unit: "c/kWh",
         resolutionMinutes: 15,
+        bands: bandsDescriptor(),
         entries,
       },
       200 as const,

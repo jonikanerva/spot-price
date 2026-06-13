@@ -122,9 +122,63 @@ const ForecastEntrySchema = z
     localEnd: z.string().openapi({ example: "2026-03-01T00:15:00.000+02:00" }),
     estimatedSpotCentsKwh: z.number().openapi({ example: 4.12 }),
     estimatedTotalCentsKwh: z.number().openapi({ example: 11.74 }),
+    // Optional empirical band bounds (v1 superset). Present only when a
+    // calibrated band ships AND the quarter carries a real prediction.
+    estimatedSpotLowCentsKwh: z.number().optional().openapi({
+      example: 2.1,
+      description:
+        "Lower empirical band bound (spot). Present only with a calibrated band.",
+    }),
+    estimatedSpotHighCentsKwh: z.number().optional().openapi({
+      example: 7.8,
+      description:
+        "Upper empirical band bound (spot). Present only with a calibrated band.",
+    }),
+    estimatedTotalLowCentsKwh: z.number().optional().openapi({
+      example: 9.6,
+      description:
+        "Lower empirical band bound (total, contract terms applied).",
+    }),
+    estimatedTotalHighCentsKwh: z.number().optional().openapi({
+      example: 16.3,
+      description:
+        "Upper empirical band bound (total, contract terms applied).",
+    }),
     estimated: z.literal(true).openapi({ example: true }),
   })
   .openapi("ForecastEntry");
+
+/**
+ * Top-level descriptor for the empirical prediction band. Always present on a
+ * successful response. The band is an EMPIRICAL residual-spread estimate, NOT a
+ * guaranteed coverage probability — prices can fall outside it, especially at
+ * spikes. When `calibrated` is false, no entry carries band bounds.
+ */
+const BandsDescriptorSchema = z
+  .object({
+    method: z.literal("empirical-residual").openapi({
+      example: "empirical-residual",
+    }),
+    nominalCoverage: z.number().openapi({
+      example: 0.8,
+      description: "Target fraction the P10/P90 offsets aim to contain.",
+    }),
+    observedCoverage: z.number().nullable().openapi({
+      example: null,
+      description:
+        "Measured out-of-sample coverage of the shipped offsets, or null when uncalibrated.",
+    }),
+    calibrated: z.boolean().openapi({
+      example: false,
+      description:
+        "When false, bands are dark (no bound fields emitted) — coverage did not clear the ship gate or history is too thin.",
+    }),
+    generatedAt: z.string().openapi({
+      example: "",
+      description: "When the band artifact was generated, or empty when dark.",
+    }),
+  })
+  .openapi("ForecastBands");
 
 /**
  * The forecast response. `forecast: true` is the top-level discriminant.
@@ -146,6 +200,10 @@ export const ForecastResponseSchema = z
     generatedAt: z.string().openapi({ example: "2026-02-28T13:00:00.000Z" }),
     unit: z.string().openapi({ example: "c/kWh" }),
     resolutionMinutes: z.number().int().openapi({ example: 15 }),
+    bands: BandsDescriptorSchema.optional().openapi({
+      description:
+        "Empirical prediction-band descriptor. An estimate of recent residual spread, NOT a guaranteed coverage probability — prices can fall outside it, especially at spikes. Currently ships dark (calibrated:false) until a regenerated artifact clears the coverage gate.",
+    }),
     entries: z.array(ForecastEntrySchema),
   })
   .openapi("ForecastResponse");

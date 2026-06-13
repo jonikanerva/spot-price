@@ -11,6 +11,8 @@ import {
   type FeatureContext,
 } from "./features.js";
 import { createRidgeModel, type Model } from "./model.js";
+import { applyBand, type CalibratedBands } from "./conformal.js";
+import { CALIBRATED_BANDS } from "./conformal-artifact.js";
 
 /**
  * Pure FI price-forecast pipeline. A pluggable closed-form regression over a
@@ -424,6 +426,13 @@ export interface ForecastOptions {
    * synchronous / pure estimators (`model.ts` Phase-3 pin).
    */
   readonly model?: Model;
+  /**
+   * The empirical prediction-band artifact applied to the series. Defaults to
+   * the committed `CALIBRATED_BANDS` (currently dark). Injectable so tests can
+   * supply a calibrated stub. Bands are applied only to quarters carrying a real
+   * prediction; forward-filled / zero-seeded quarters never get a band.
+   */
+  readonly bands?: CalibratedBands;
 }
 
 /**
@@ -450,6 +459,7 @@ export const buildForecast = (
   const applyTimeBias = opts.applyTimeBias ?? true;
   const floor = opts.floor ?? null;
   const model = opts.model ?? createRidgeModel();
+  const bands = opts.bands ?? CALIBRATED_BANDS;
 
   const seriesStartMs = quarterFloorUtc(input.seriesStartMs);
   const seriesEndMs = quarterFloorUtc(input.seriesEndMs);
@@ -566,6 +576,30 @@ export const buildForecast = (
 
   const built = buildPredictedSeries(predicted, seriesStartMs, numQuarters);
 
+  // Empirical prediction band (P10/P90-style), applied as a pure arcsinh-space
+  // lookup onto the FULL post-bias, post-floor point — the exact quantity the
+  // offline backtest residual was measured against. Only quarters that carry a
+  // REAL prediction get a band; a quarter the series forward-filled or
+  // zero-seeded is absent from `predicted`, so it never receives bounds. When
+  // the artifact is uncalibrated (`applyBand` → null), the series is unchanged.
+  let bandHourBuckets = 0;
+  const series: ForecastSpotPoint[] = built.series.map((point) => {
+    if (!predicted.has(point.start)) {
+      return point;
+    }
+    const utcHour = new Date(point.start).getUTCHours();
+    const band = applyBand(point.estimatedSpotCentsKwh, utcHour, bands, floor);
+    if (band === null) {
+      return point;
+    }
+    bandHourBuckets++;
+    return {
+      ...point,
+      estimatedSpotLowCentsKwh: band.low,
+      estimatedSpotHighCentsKwh: band.high,
+    };
+  });
+
   const diagnostics: ForecastDiagnostics = {
     fitSamples: fitted.meta.sampleCount,
     featureCount: fitted.meta.featureCount,
@@ -577,7 +611,9 @@ export const buildForecast = (
     hourBiasBuckets,
     predictionFloor: floor,
     floorClippedQuarters,
+    bandCalibrated: bands.calibrated,
+    bandHourBuckets,
   };
 
-  return { series: built.series, diagnostics };
+  return { series, diagnostics };
 };

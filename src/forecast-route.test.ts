@@ -196,6 +196,19 @@ describe("forecast endpoint", () => {
       expect(entry["spotCentsKwh"]).toBeUndefined();
       expect(entry["totalCentsKwh"]).toBeUndefined();
     }
+
+    // Phase 2: bands ship DARK in the committed artifact, so the descriptor is
+    // present and calibrated:false, and NO entry carries band bound fields.
+    expect(body.bands).toBeDefined();
+    expect(body.bands?.calibrated).toBe(false);
+    expect(body.bands?.method).toBe("empirical-residual");
+    expect(body.bands?.observedCoverage).toBeNull();
+    for (const entry of rawEntries) {
+      expect(entry["estimatedSpotLowCentsKwh"]).toBeUndefined();
+      expect(entry["estimatedSpotHighCentsKwh"]).toBeUndefined();
+      expect(entry["estimatedTotalLowCentsKwh"]).toBeUndefined();
+      expect(entry["estimatedTotalHighCentsKwh"]).toBeUndefined();
+    }
   });
 
   it("anchors the series strictly after the last published price (no overlap)", async () => {
