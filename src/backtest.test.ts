@@ -3,6 +3,7 @@ import type { FingridRecord } from "./types.js";
 import { quarterKey } from "./forecast.js";
 import {
   collectInputTimestamps,
+  deriveBandsFromBacktest,
   findLeakingInputs,
   forecastAtIssueTime,
   mae,
@@ -187,6 +188,34 @@ describe("runBacktest", () => {
     expect(summary.rMae.last_week).not.toBeNull();
     if (summary.rMae.last_week !== null) {
       expect(summary.rMae.last_week).toBeLessThan(1);
+    }
+  });
+
+  it("exposes out-of-sample residuals harvested from the scored pairs", () => {
+    const data = buildData();
+    const summary = runBacktest(data);
+    // One residual per scored model pair, tagged by a valid UTC hour.
+    expect(summary.residuals.length).toBeGreaterThan(0);
+    for (const r of summary.residuals) {
+      expect(r.utcHour).toBeGreaterThanOrEqual(0);
+      expect(r.utcHour).toBeLessThanOrEqual(23);
+      expect(Number.isFinite(r.predictedRaw)).toBe(true);
+      expect(Number.isFinite(r.actualRaw)).toBe(true);
+    }
+  });
+
+  it("derives a band artifact from the same backtest (calibrated on clean data)", () => {
+    const data = buildData();
+    const { summary, bands } = deriveBandsFromBacktest(
+      data,
+      "2026-06-01T00:00:00.000Z",
+    );
+    expect(summary.residuals.length).toBeGreaterThanOrEqual(96);
+    // Clean synthetic series → coverage clears the gate → calibrated artifact.
+    expect(bands.method).toBe("empirical-residual");
+    if (bands.calibrated) {
+      expect(bands.observedCoverage ?? 0).toBeGreaterThanOrEqual(0.7);
+      expect(bands.generatedAt).toBe("2026-06-01T00:00:00.000Z");
     }
   });
 });
