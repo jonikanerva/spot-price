@@ -124,10 +124,9 @@ Finland (FI), Sweden (SE1-SE4), Norway (NO1-NO5), Denmark (DK1-DK2), Estonia (EE
 
 ### Prerequisites
 
-- Node.js >= 24.15.0 (LTS) — pinned in `.nvmrc`, `mise.toml`, and `package.json` `engines`
-- pnpm 10 — pinned in `mise.toml` and `package.json` `packageManager`
+This project requires [mise](https://mise.jdx.dev). `mise install` provisions the pinned Node 24.15.0 + pnpm 10 (and Python for the smoke script); `mise run setup` installs dependencies + Playwright browsers. The same versions are pinned in `.nvmrc` and `package.json` (`engines` / `packageManager`).
 
-If you use [mise](https://mise.jdx.dev), run `mise install` in the repo root and both Node and pnpm are set up. Otherwise any Node version manager (`nvm`, `fnm`, `volta`) reads `.nvmrc`; `corepack enable` activates the pinned pnpm from `packageManager`.
+Docker is also required for the local PostgreSQL 17 used by `pnpm db:up`.
 
 ### Setup
 
@@ -140,32 +139,38 @@ pnpm db:up        # start local PostgreSQL 17 (waits until ready)
 pnpm dev          # dev server → http://localhost:3000
 ```
 
-Not using mise? Ensure Node 24 + pnpm 10 (`.nvmrc` + `corepack enable`), then run `pnpm install` (and `pnpm exec playwright install` if you need E2E) in place of the two `mise` steps.
-
 `pnpm db:up` brings up the Docker Postgres and blocks until it is accepting
 connections, so `pnpm dev`, `pnpm seed`, and the tests are non-racy. `pnpm db:down`
 stops it (the data volume is kept).
 
 ### Available scripts
 
-| Script              | Description                                                       |
-| ------------------- | ----------------------------------------------------------------- |
-| `pnpm dev`          | Start dev server with hot reload                                  |
-| `pnpm build`        | Production build via tsup                                         |
-| `pnpm start`        | Run production build                                              |
-| `pnpm test`         | Run unit tests (Vitest)                                           |
-| `pnpm test:watch`   | Run unit tests in watch mode                                      |
-| `pnpm test:e2e`     | Run E2E tests (Playwright)                                        |
-| `pnpm test:all`     | Run all checks (typecheck + lint + test + build)                  |
-| `pnpm typecheck`    | TypeScript type checking                                          |
-| `pnpm lint`         | ESLint                                                            |
-| `pnpm format`       | Prettier format (write)                                           |
-| `pnpm format:check` | Prettier format check (no writes)                                 |
-| `pnpm db:up`        | Start local PostgreSQL 17 via docker compose, waits for readiness |
-| `pnpm db:down`      | Stop local PostgreSQL (data volume kept)                          |
-| `pnpm seed`         | Seed database with sample prices                                  |
-| `pnpm backtest`     | Run the forecast backtest (fixture or `--db`) — see Backtesting   |
-| `pnpm smoke`        | Run the local smoke-test script                                   |
+| Script              | Description                                                           |
+| ------------------- | --------------------------------------------------------------------- |
+| `pnpm dev`          | Start dev server with hot reload                                      |
+| `pnpm build`        | Production build via tsup                                             |
+| `pnpm start`        | Run production build                                                  |
+| `pnpm test`         | Run unit tests (Vitest)                                               |
+| `pnpm test:watch`   | Run unit tests in watch mode                                          |
+| `pnpm test:e2e`     | Run E2E tests (Playwright) — needs `pnpm db:up`; see End-to-end tests |
+| `pnpm test:all`     | Run all checks (typecheck + lint + test + build)                      |
+| `pnpm typecheck`    | TypeScript type checking                                              |
+| `pnpm lint`         | ESLint                                                                |
+| `pnpm format`       | Prettier format (write)                                               |
+| `pnpm format:check` | Prettier format check (no writes)                                     |
+| `pnpm db:up`        | Start local PostgreSQL 17 via docker compose, waits for readiness     |
+| `pnpm db:down`      | Stop local PostgreSQL (data volume kept)                              |
+| `pnpm seed`         | Seed database with sample prices                                      |
+| `pnpm backtest`     | Run the forecast backtest (fixture or `--db`) — see Backtesting       |
+| `pnpm smoke`        | Run the local smoke-test script                                       |
+
+### End-to-end tests
+
+`pnpm test:e2e` runs Playwright against a local server backed by a dedicated `spot_price_e2e` database. Requires `pnpm db:up` first; each run resets the e2e database's schema (drop + recreate `public`, repopulated by the server's startup migration) and never touches your dev `spot_price` data — the e2e connection string is a hard-coded literal, and a `current_database()` guard aborts loudly if it ever points anywhere else.
+
+### Verification & governance
+
+There is no CI. Verification is manual: run `pnpm test:all` and `pnpm test:e2e` locally before pushing. Changes routed through the project's `/codereview` run `test:all` automatically; direct edits are verified by the author. (The repo hooks block destructive pushes and remind about `/codereview` — they do not run the tests.)
 
 ### Environment variables
 
