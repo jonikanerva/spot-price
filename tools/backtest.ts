@@ -494,12 +494,14 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
 
       const fc = forecastAtIssueTime(inputs);
       // Per-origin, per-horizon series for the rank metrics this origin.
-      const originByHorizon: Record<Horizon, { preds: number[]; acts: number[] }> =
-        {
-          "d+1": { preds: [], acts: [] },
-          "d+2": { preds: [], acts: [] },
-          "d+3": { preds: [], acts: [] },
-        };
+      const originByHorizon: Record<
+        Horizon,
+        { preds: number[]; acts: number[] }
+      > = {
+        "d+1": { preds: [], acts: [] },
+        "d+2": { preds: [], acts: [] },
+        "d+3": { preds: [], acts: [] },
+      };
       // Only score origins that actually have realised prices to compare to.
       let scored = false;
       for (const [key, pred] of fc.predictedByKey) {
