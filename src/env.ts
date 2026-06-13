@@ -68,6 +68,20 @@ const baseSchema = z.object({
    * Railway logs rather than hidden behind a 200 response.
    */
   FINGRID_API_KEY: z.string().min(1).optional(),
+
+  /**
+   * OpenWeatherMap One Call API 3.0 key, used by the FI forecast's weather
+   * data-collection job to fetch public hourly weather forecasts
+   * (`api.openweathermap.org`) for a fixed set of FI points. Optional: when
+   * absent the weather cron and startup fetch are not scheduled at all, so no
+   * live OWM call is ever made (One Call 3.0 overage bills a card — the
+   * absent-key path keeps tests and unconfigured deploys free). It is never
+   * required for the authoritative Nord Pool price path, and Phase 1 changes no
+   * price/forecast response. A loud one-time startup warning fires in
+   * production when it is missing (see `index.ts`), so the disabled state is
+   * visible in Railway logs rather than silently dropping weather collection.
+   */
+  OPENWEATHERMAP_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof baseSchema>;

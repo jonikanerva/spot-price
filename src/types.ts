@@ -79,6 +79,69 @@ export type FingridFetchResult =
     };
 
 /**
+ * One issued OpenWeatherMap hourly weather forecast, normalised to our domain.
+ * Times are UTC ISO 8601 strings: `issuedAt` is the issuance hour (when the
+ * forecast was fetched, truncated to the hour) and `targetTime` is the hour the
+ * values describe. Storing BOTH is what makes a later leakage-free
+ * weather-feature backtest possible — the row records what the forecast said at
+ * issue time, never a hindsight-overwritten value. These are public weather
+ * data, not user data (`VISION.md → Persistence and Privacy Posture`).
+ */
+export interface WeatherRecord {
+  readonly pointId: string;
+  readonly issuedAt: string;
+  readonly targetTime: string;
+  readonly temp: number;
+  readonly clouds: number;
+  readonly uvi: number;
+  readonly windSpeed: number;
+  readonly windDeg: number;
+}
+
+/**
+ * Result of a weather fetch for a single point. Tagged union over
+ * success/degraded so the caller never inspects parallel booleans: a failure
+ * (timeout, auth, parse) yields an empty `records` plus a `reason`, and never
+ * throws — a weather problem can never reach the authoritative price path.
+ */
+export type WeatherFetchResult =
+  | { readonly ok: true; readonly records: readonly WeatherRecord[] }
+  | {
+      readonly ok: false;
+      readonly records: readonly WeatherRecord[];
+      readonly reason: string;
+    };
+
+/**
+ * Outcome of the hourly weather fetch job across all configured points. Tagged
+ * by completeness so the caller distinguishes full success / partial (some
+ * points degraded) / total failure without throwing. `failures` names the
+ * points that degraded and why; `stored`/`pruned` are aggregate row counts.
+ */
+export type WeatherFetchJobResult =
+  | {
+      readonly status: "ok";
+      readonly stored: number;
+      readonly pruned: number;
+    }
+  | {
+      readonly status: "partial";
+      readonly stored: number;
+      readonly pruned: number;
+      readonly failures: readonly WeatherPointFailure[];
+    }
+  | {
+      readonly status: "failed";
+      readonly failures: readonly WeatherPointFailure[];
+    };
+
+/** A single point's degraded outcome within a weather fetch job run. */
+export interface WeatherPointFailure {
+  readonly pointId: string;
+  readonly reason: string;
+}
+
+/**
  * One predicted quarter of the forecast series. Money fields are deliberately
  * named `estimated*` and carry `estimated: true` so they share NO field name
  * with the real-price schemas (`TotalPrice`) — a misrouted consumer cannot

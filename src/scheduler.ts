@@ -2,6 +2,7 @@ import cron from "node-cron";
 import type { Pool } from "pg";
 import { runFetchJob } from "./fetch-job.js";
 import { runForecastFetchJob } from "./forecast-job.js";
+import { runWeatherFetchJob } from "./weather-job.js";
 import { formatUtcDate, addDays } from "./time.js";
 
 /**
@@ -81,6 +82,62 @@ export const runStartupForecastFetch = (
   void safeForecastFetch(pool, apiKey, "Startup forecast fetch");
 };
 
+/**
+ * Run the OpenWeatherMap weather data-collection fetch for the FI forecast
+ * (issue #73, Phase 1).
+ *
+ * Wrapped in its own try/catch and isolated from `safeFetch`/`safeForecastFetch`
+ * so a weather failure can NEVER affect the authoritative Nord Pool price cron
+ * or path (STACK.md §9). The OWM boundary already degrades rather than throwing
+ * and the job reports partial/total failure per point; this is a second
+ * belt-and-braces guard. No-op when no API key is configured — and because the
+ * cron is only scheduled when a key is present (and Playwright's webServer.env
+ * whitelist does not pass the key), no live OWM call is ever made in tests/E2E,
+ * which keeps the One Call 3.0 billing surface at zero outside production.
+ */
+const safeWeatherFetch = async (
+  pool: Pool,
+  apiKey: string | undefined,
+  label: string,
+): Promise<void> => {
+  if (!apiKey) {
+    return;
+  }
+  try {
+    const result = await runWeatherFetchJob(pool, apiKey);
+    if (result.status === "ok") {
+      console.log(
+        `[scheduler] ${label}: stored ${String(result.stored)} weather rows, pruned ${String(result.pruned)}`,
+      );
+    } else if (result.status === "partial") {
+      const failed = result.failures.map((f) => f.pointId).join(", ");
+      console.warn(
+        `[scheduler] ${label}: stored ${String(result.stored)} weather rows, pruned ${String(result.pruned)}; degraded points: ${failed}`,
+      );
+    } else {
+      const failed = result.failures.map((f) => f.pointId).join(", ");
+      console.warn(
+        `[scheduler] ${label}: weather degraded — all points failed: ${failed}`,
+      );
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "unknown error";
+    console.error(`[scheduler] ${label} failed: ${msg}`);
+  }
+};
+
+/**
+ * Run an immediate weather fetch on startup so the collection table gains data
+ * after a deploy/restart without waiting for the next hourly tick. No-op
+ * without a key.
+ */
+export const runStartupWeatherFetch = (
+  pool: Pool,
+  apiKey: string | undefined,
+): void => {
+  void safeWeatherFetch(pool, apiKey, "Startup weather fetch");
+};
+
 /** Handle for stopping all scheduled tasks. */
 export interface SchedulerHandle {
   readonly stop: () => void;
@@ -104,6 +161,7 @@ export interface SchedulerHandle {
 export const startScheduler = (
   pool: Pool,
   fingridApiKey?: string,
+  weatherApiKey?: string,
 ): SchedulerHandle => {
   let lastCapturedTomorrow: string | null = null;
 
@@ -152,12 +210,33 @@ export const startScheduler = (
     );
   }
 
+  // FI forecast: hourly OpenWeatherMap weather collection (issue #73 Phase 1).
+  // Isolated from every cron above — a weather failure can never affect the
+  // authoritative price path (STACK.md §9). Only scheduled when a key is
+  // configured, so no live (billable) One Call 3.0 request is made otherwise.
+  const weather = weatherApiKey
+    ? cron.schedule("0 * * * *", () => {
+        void safeWeatherFetch(pool, weatherApiKey, "Weather fetch");
+      })
+    : null;
+
+  if (weather) {
+    console.log("[scheduler] Weather (OpenWeatherMap) fetch scheduled: hourly");
+  } else {
+    console.log(
+      "[scheduler] Weather (OpenWeatherMap) fetch disabled: no OPENWEATHERMAP_API_KEY",
+    );
+  }
+
   return {
     stop: () => {
       void standard.stop();
       void burst.stop();
       if (forecast) {
         void forecast.stop();
+      }
+      if (weather) {
+        void weather.stop();
       }
     },
   };
