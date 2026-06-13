@@ -4,7 +4,7 @@ import { applyContractTerms, extractHourInTimeZone } from "../calculator.js";
 import { eurMwhToCentsKwh } from "../nordpool.js";
 import { getLatestDeliveryStart, getPricesByRange } from "../price-store.js";
 import { getFingridRecordsByRange } from "../fingrid-store.js";
-import { getUserSettings } from "../user-settings.js";
+import { getUserSettingsFromContext } from "./settings-context.js";
 import { formatDateTimeInTimeZone } from "../time.js";
 import {
   DATASET_CONSUMPTION_ACTUAL,
@@ -26,17 +26,6 @@ import type { AppEnv } from "../app.js";
 const QUARTER_MS = 15 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FORECAST_AREA = "FI";
-
-const getSettings = async (c: {
-  get: (key: "db" | "userId") => AppEnv["Variables"]["db"] | string;
-}): Promise<UserSettings | null> => {
-  const userId = c.get("userId");
-  const db = c.get("db");
-  if (typeof userId !== "string" || typeof db === "string") {
-    return null;
-  }
-  return await getUserSettings(db, userId);
-};
 
 /** Build a quarter-keyed map of stored FI spot prices in c/kWh. */
 const spotPricesByKey = (
@@ -116,7 +105,7 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const { area } = c.req.valid("query");
     const generatedAt = new Date().toISOString();
 
-    const settings = await getSettings(c);
+    const settings = await getUserSettingsFromContext(c);
     if (!settings) {
       return c.json(
         {
