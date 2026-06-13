@@ -1,9 +1,10 @@
 # Development environment for spot-price.
 #
+# mise PREPARES the environment; package.json RUNS the project.
 # Pins the exact toolchain so every machine builds and tests identically:
 #   mise install      provision the tools below (Node, pnpm, Python)
 #   mise run setup     install dependencies + Playwright browsers
-#   mise run db:up     start the local PostgreSQL 17 database (Docker)
+#   pnpm db:up         start the local PostgreSQL 17 database (Docker)
 #
 # Versions mirror .nvmrc, package.json "engines"/"packageManager", and
 # docker-compose.yml. See README.md -> Local development.
@@ -13,17 +14,12 @@ node = "24.15.0"   # matches .nvmrc and package.json "engines"
 pnpm = "10.30.0"   # matches package.json "packageManager"
 python = "3.13"    # scripts/smoke-local.sh parses headers via python3
 
+# `setup` stays a mise task: `pnpm setup` is a reserved pnpm builtin and would
+# shadow a package.json script of the same name. db:up/db:down live in
+# package.json (no mise delegators — one source of truth per command).
 [tasks.setup]
 description = "Install dependencies and Playwright browsers"
 run = [
   "pnpm install",
   "pnpm exec playwright install",
 ]
-
-[tasks."db:up"]
-description = "Start the local PostgreSQL 17 dev database (docker compose)"
-run = "docker compose up -d postgres"
-
-[tasks."db:down"]
-description = "Stop the local PostgreSQL dev database (volume is kept)"
-run = "docker compose down"
