@@ -42,6 +42,12 @@ All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <k
 | GET    | `/api/public/spot`       | Public spot prices (no auth required)                               |
 | GET    | `/health`                | Health check                                                        |
 
+The web UI also uses session-protected `/api/v1/me/*` routes (settings, chart); these are part of the setup UI, not the API-key surface.
+
+### Authentication
+
+`POST /api/session/login-or-signup` with `{username, password}` returns a session cookie. `GET /api/keys` (with that cookie) returns or creates the API key. Use it as `Authorization: Bearer <key>`.
+
 The interactive API reference is served at `/api/docs` and the OpenAPI 3.1 document at `/api/v1/openapi.json`.
 
 ### Query parameters
@@ -170,8 +176,8 @@ Server starts at `http://localhost:3000`.
 
 ## How it works
 
-1. An in-process **cron** fetches day-ahead prices from the [Nord Pool Data Portal API](https://data.nordpoolgroup.com) for all 21 delivery areas: every 2 hours as a baseline, plus a 10-minute burst during the publication window (12:00–13:59 CET) that pauses once tomorrow's prices are captured. A fetch also runs on startup.
-2. Prices are stored in PostgreSQL (15-minute resolution, EUR/MWh).
+1. An in-process **cron** fetches day-ahead prices from the [Nord Pool Data Portal API](https://dataportal-api.nordpoolgroup.com) for all 21 delivery areas: every 2 hours as a baseline, plus a 10-minute burst during the publication window (12:00–13:59 CET) that pauses once tomorrow's prices are captured. A fetch also runs on startup.
+2. Prices are stored in PostgreSQL as raw spot prices in EUR/MWh; Nord Pool's current granularity is 15-minute, and the calculator handles variable interval lengths.
 3. When a user calls the API, their contract settings are applied: `total = (spot + margin + transfer + tax) * (1 + VAT%)`.
 4. The cheapest window algorithm finds the optimal contiguous time slot using a weighted sliding window over variable-length intervals.
 5. When `FINGRID_API_KEY` is set, a separate **hourly** cron fetches public Fingrid grid series (wind/consumption) into PostgreSQL. The FI forecast endpoint combines those with stored price history using simple closed-form math to produce a clearly-labelled estimate for days Nord Pool has not published yet. This path is fully isolated from the authoritative price crons — a Fingrid failure can never affect published prices, and the forecast degrades rather than guessing.
