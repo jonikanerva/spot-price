@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 import { createAuth } from "./auth.js";
+import { createTestApp } from "./test-utils.js";
 import { closeDatabase, initTestDatabase } from "./db.js";
 
 const ORIGINAL_ENV = {
@@ -66,5 +67,45 @@ describe("createAuth", () => {
     delete process.env["BETTER_AUTH_SECRET"];
 
     expect(() => createAuth(pool)).not.toThrow();
+  });
+
+  // VISION.md → Persistence and Privacy Posture ("Not stored: ... IPs ..."):
+  // a real signup through the configured Better Auth instance must persist a
+  // session row whose ipAddress AND userAgent are NULL. userAgent is the
+  // regression-prone field (better-auth 1.6.11 has no native disable flag), so
+  // this drives the full auth flow rather than calling the hook in isolation.
+  it("never persists session ipAddress or userAgent", async () => {
+    pool = await initTestDatabase();
+    process.env["NODE_ENV"] = "development";
+
+    const app = createTestApp(pool);
+
+    const response = await app.request("/api/session/login-or-signup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Provide a user agent so we prove the hook nulls a real value rather
+        // than relying on the client simply not sending one.
+        "User-Agent": "spot-price-test-agent/1.0",
+        "X-Forwarded-For": "203.0.113.7",
+      },
+      body: JSON.stringify({
+        username: `user_${String(Date.now())}`,
+        password: "password1234",
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    const { rows } = await pool.query<{
+      ipAddress: string | null;
+      userAgent: string | null;
+    }>('SELECT "ipAddress", "userAgent" FROM "session"');
+
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      // null OR empty string both satisfy "not persisted"; the hook returns null.
+      expect(row.ipAddress ?? "").toBe("");
+      expect(row.userAgent ?? "").toBe("");
+    }
   });
 });
