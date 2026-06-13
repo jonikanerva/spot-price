@@ -134,8 +134,14 @@ If you use [mise](https://mise.jdx.dev), run `mise install` in the repo root and
 ```bash
 git clone https://github.com/calmdonut/spot-price.git
 cd spot-price
-pnpm install
+pnpm install                       # or: mise run setup (also installs Playwright browsers)
+pnpm exec playwright install       # only if you skipped `mise run setup` and need E2E
+pnpm db:up                         # start local PostgreSQL 17 (waits until ready)
 ```
+
+`pnpm db:up` brings up the Docker Postgres and blocks until it is accepting
+connections, so `pnpm dev`, `pnpm seed`, and the tests are non-racy. `pnpm db:down`
+stops it (the data volume is kept).
 
 ### Run development server
 
@@ -147,32 +153,36 @@ Server starts at `http://localhost:3000`.
 
 ### Available scripts
 
-| Script              | Description                                      |
-| ------------------- | ------------------------------------------------ |
-| `pnpm dev`          | Start dev server with hot reload                 |
-| `pnpm build`        | Production build via tsup                        |
-| `pnpm start`        | Run production build                             |
-| `pnpm test`         | Run unit tests (Vitest)                          |
-| `pnpm test:watch`   | Run unit tests in watch mode                     |
-| `pnpm test:e2e`     | Run E2E tests (Playwright)                       |
-| `pnpm test:all`     | Run all checks (typecheck + lint + test + build) |
-| `pnpm typecheck`    | TypeScript type checking                         |
-| `pnpm lint`         | ESLint                                           |
-| `pnpm format`       | Prettier format (write)                          |
-| `pnpm format:check` | Prettier format check (no writes)                |
-| `pnpm seed`         | Seed database with sample prices                 |
-| `pnpm smoke`        | Run the local smoke-test script                  |
+| Script              | Description                                                       |
+| ------------------- | ----------------------------------------------------------------- |
+| `pnpm dev`          | Start dev server with hot reload                                  |
+| `pnpm build`        | Production build via tsup                                         |
+| `pnpm start`        | Run production build                                              |
+| `pnpm test`         | Run unit tests (Vitest)                                           |
+| `pnpm test:watch`   | Run unit tests in watch mode                                      |
+| `pnpm test:e2e`     | Run E2E tests (Playwright)                                        |
+| `pnpm test:all`     | Run all checks (typecheck + lint + test + build)                  |
+| `pnpm typecheck`    | TypeScript type checking                                          |
+| `pnpm lint`         | ESLint                                                            |
+| `pnpm format`       | Prettier format (write)                                           |
+| `pnpm format:check` | Prettier format check (no writes)                                 |
+| `pnpm db:up`        | Start local PostgreSQL 17 via docker compose, waits for readiness |
+| `pnpm db:down`      | Stop local PostgreSQL (data volume kept)                          |
+| `pnpm seed`         | Seed database with sample prices                                  |
+| `pnpm backtest`     | Run the forecast backtest (fixture or `--db`) — see Backtesting   |
+| `pnpm smoke`        | Run the local smoke-test script                                   |
 
 ### Environment variables
 
-| Variable             | Default | Description                                                                                                                                                                                                      |
-| -------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`               | `3000`  | Server port                                                                                                                                                                                                      |
-| `DATABASE_URL`       | —       | PostgreSQL connection string (required outside test mode)                                                                                                                                                        |
-| `TEST_DATABASE_URL`  | —       | PostgreSQL connection string for tests (falls back to `DATABASE_URL`)                                                                                                                                            |
-| `BETTER_AUTH_SECRET` | —       | Auth secret (required in prod)                                                                                                                                                                                   |
-| `BETTER_AUTH_URL`    | —       | Public URL (required in prod)                                                                                                                                                                                    |
-| `FINGRID_API_KEY`    | —       | Fingrid Open Data API key for the FI forecast. Optional: when absent the forecast cron does not run and `/api/v1/price/forecast` returns `available: false`. A one-time startup warning is logged in production. |
+| Variable              | Default | Description                                                                                                                                                                                                      |
+| --------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                | `3000`  | Server port                                                                                                                                                                                                      |
+| `DATABASE_URL`        | —       | PostgreSQL connection string (required outside test mode)                                                                                                                                                        |
+| `DATABASE_PUBLIC_URL` | —       | Optional. Used only by the offline backtest CLI (`pnpm backtest --db`) to reach the Railway DB from a dev machine. Never required at runtime — the server uses `DATABASE_URL`.                                   |
+| `TEST_DATABASE_URL`   | —       | PostgreSQL connection string for tests (falls back to `DATABASE_URL`)                                                                                                                                            |
+| `BETTER_AUTH_SECRET`  | —       | Auth secret (required in prod)                                                                                                                                                                                   |
+| `BETTER_AUTH_URL`     | —       | Public URL (required in prod)                                                                                                                                                                                    |
+| `FINGRID_API_KEY`     | —       | Fingrid Open Data API key for the FI forecast. Optional: when absent the forecast cron does not run and `/api/v1/price/forecast` returns `available: false`. A one-time startup warning is logged in production. |
 
 ## How it works
 
@@ -181,6 +191,20 @@ Server starts at `http://localhost:3000`.
 3. When a user calls the API, their contract settings are applied: `total = (spot + margin + transfer + tax) * (1 + VAT%)`.
 4. The cheapest window algorithm finds the optimal contiguous time slot using a weighted sliding window over variable-length intervals.
 5. When `FINGRID_API_KEY` is set, a separate **hourly** cron fetches public Fingrid grid series (wind/consumption) into PostgreSQL. The FI forecast endpoint combines those with stored price history using simple closed-form math to produce a clearly-labelled estimate for days Nord Pool has not published yet. This path is fully isolated from the authoritative price crons — a Fingrid failure can never affect published prices, and the forecast degrades rather than guessing.
+
+## Backtesting
+
+The forecast's accuracy is measured on demand with an offline dev CLI under `tools/` (excluded from the production bundle; never runs in the server process). It replays the existing issue-time, leakage-guarded rolling-origin backtest and prints MAE / rMAE-vs-naive / sMAPE plus, per horizon (d+1/d+2/d+3), Spearman and precision@N (over the cheapest/peak 4-hour window) and empirical band coverage.
+
+```
+pnpm backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>]
+```
+
+- `--data <fixture.json>` replays a committed fixture **file** (not a directory), e.g. `pnpm backtest --data tools/backtest-data/fixture.json`.
+- `--db` scores against the live database over the last `--window` days (default 90). It connects via `DATABASE_PUBLIC_URL ?? DATABASE_URL`, so a local `--db` run needs `DATABASE_PUBLIC_URL` set to the Railway public Postgres URL (egress for one window is sub-cent).
+- `--db --export <fixture.json>` snapshots the assembled window to a fixture; `--export X.json` ↔ `--data X.json` round-trips with no double-conversion.
+
+Prediction bands ship **dark** (`calibrated: false`) — the forecast response carries no band/interval fields. To calibrate them, run `pnpm tsx tools/regenerate-bands.ts --data <fixture.json>` over accumulated real history; it rewrites `src/conformal-artifact.ts` only when the measured coverage gate clears. This is a periodic manual chore for a human to review and commit, not a background job; bands turn on purely by committing a calibrated artifact, no code change.
 
 ## Data source
 
