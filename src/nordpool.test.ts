@@ -211,4 +211,49 @@ describe("fetchDayAheadPrices", () => {
     expect(result).toEqual([]);
     expect(errorSpy).not.toHaveBeenCalled();
   });
+
+  it("keeps the FI price when a sibling area is null (Obj 5)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        multiAreaEntries: [
+          {
+            deliveryStart: "2026-06-09T00:00:00Z",
+            deliveryEnd: "2026-06-09T01:00:00Z",
+            entryPerArea: { FI: 31.2, SE1: null },
+          },
+        ],
+      }),
+    );
+
+    const result = await fetchDayAheadPrices(params);
+    expect(result).toEqual([
+      {
+        deliveryStart: "2026-06-09T00:00:00Z",
+        deliveryEnd: "2026-06-09T01:00:00Z",
+        priceEurMwh: 31.2,
+        area: "FI",
+      },
+    ]);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips a null FI value, yielding [] without drift log (Obj 5)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        multiAreaEntries: [
+          {
+            deliveryStart: "2026-06-09T00:00:00Z",
+            deliveryEnd: "2026-06-09T01:00:00Z",
+            entryPerArea: { FI: null },
+          },
+        ],
+      }),
+    );
+
+    const result = await fetchDayAheadPrices(params);
+    expect(result).toEqual([]);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
 });

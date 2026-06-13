@@ -10,11 +10,15 @@ interface FetchPricesParams {
 
 /** Only the fields parseResponse consumes are validated; Nord Pool may add
  *  cosmetic envelope fields (deliveryDateCET, updatedAt, currency, areaStates)
- *  and zod strips unknown keys, so additive upstream changes do not degrade us. */
+ *  and zod strips unknown keys, so additive upstream changes do not degrade us.
+ *  Area values are number-or-null: Nord Pool emits null for an un-priced sibling
+ *  area (e.g. { FI: 31.2, SE1: null }); tolerating it here keeps a null sibling
+ *  from failing the whole entry and dropping the good FI price. parseResponse
+ *  then pushes only real numbers, so a null value yields no entry for that area. */
 const NordPoolEntrySchema = z.object({
   deliveryStart: z.string(),
   deliveryEnd: z.string(),
-  entryPerArea: z.record(z.string(), z.number()), // zod v4: explicit key schema required
+  entryPerArea: z.record(z.string(), z.number().nullable()), // zod v4: explicit key schema required
 });
 
 /** Loose envelope: confirm multiAreaEntries is an array of unknown; each entry
@@ -51,7 +55,9 @@ const parseResponse = (
     }
     for (const area of areas) {
       const price = entry.data.entryPerArea[area];
-      if (price !== undefined) {
+      // Only a real number is a price: skip both an absent key (undefined) and
+      // an explicit null (un-priced area), so neither pollutes HourlyPrice.
+      if (price != null) {
         results.push({
           deliveryStart: entry.data.deliveryStart,
           deliveryEnd: entry.data.deliveryEnd,
