@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isNightHour,
+  applyContractTerms,
   calculateTotalPrice,
   calculateTotalPrices,
   findCheapestWindow,
@@ -87,14 +88,55 @@ describe("calculateTotalPrice", () => {
     expect(result.totalCentsKwh).toBeCloseTo(9.781, 2);
   });
 
-  it("handles negative spot prices", () => {
+  it("floors a negative spot at 0 for the total but keeps the displayed spot raw", () => {
+    // Behavioural FLIP (issue #73 Phase 2b): negative spot no longer flows into
+    // the total. effectiveSpot = max(0, -1.0) = 0, so the total RISES vs the old
+    // -1.0-in-base value (6.606 → 7.861) — the -1.0 is removed and re-VAT'd.
     const price = makePrice(14, -10.0); // -1.0 c/kWh spot
     const result = calculateTotalPrice(price, defaultSettings);
 
+    // Displayed spot stays RAW (still negative) — "return both" holds.
     expect(result.spotCentsKwh).toBe(-1.0);
-    // Before VAT: -1.0 + 0.45 + 3.02 + 2.79372 = 5.26372
-    // Still positive total (transfer + tax + margin outweigh negative spot)
-    expect(result.totalCentsKwh).toBeCloseTo(6.606, 2);
+    // Total computed from effectiveSpot = 0:
+    // (0 + 0.45 + 3.02 + 2.79372) * 1.255 = 6.26372 * 1.255 = 7.86097
+    expect(result.totalCentsKwh).toBeCloseTo(7.861, 2);
+    // VAT computed off the floored base, never negative.
+    expect(result.vatCentsKwh).toBeCloseTo(1.597, 2);
+  });
+
+  it("floors a DEEP-negative spot so the total never drops below the contract minimum", () => {
+    // Without the floor, a spot this negative would drive the total well below
+    // the contract-cost minimum (and could even go negative). With the floor the
+    // total equals exactly the settings floor at spot = 0, while the displayed
+    // spot stays raw.
+    const price = makePrice(14, -200.0); // -20.0 c/kWh spot — deeply negative
+    const result = calculateTotalPrice(price, defaultSettings);
+
+    expect(result.spotCentsKwh).toBe(-20.0); // raw, unchanged
+    // The contract floor: (0 + margin + dayTransfer + tax) * (1 + VAT).
+    const floor = Math.round((0 + 0.45 + 3.02 + 2.79372) * 1.255 * 1000) / 1000;
+    expect(result.totalCentsKwh).toBe(floor);
+    expect(result.totalCentsKwh).toBeCloseTo(7.861, 3);
+    expect(result.vatCentsKwh).toBeGreaterThanOrEqual(0); // never negative VAT
+  });
+
+  it("is a no-op at spot = 0 (total equals the contract floor)", () => {
+    const price = makePrice(14, 0.0); // 0 c/kWh spot
+    const result = calculateTotalPrice(price, defaultSettings);
+
+    expect(result.spotCentsKwh).toBe(0);
+    const floor = Math.round((0 + 0.45 + 3.02 + 2.79372) * 1.255 * 1000) / 1000;
+    expect(result.totalCentsKwh).toBe(floor);
+  });
+
+  it("leaves positive spot totals unchanged (floor inert above 0)", () => {
+    // Regression guard: the floor must not touch a positive-spot total.
+    const price = makePrice(14, 50.0); // 5.0 c/kWh spot
+    const result = calculateTotalPrice(price, defaultSettings);
+
+    expect(result.spotCentsKwh).toBe(5.0);
+    // (5.0 + 0.45 + 3.02 + 2.79372) * 1.255 = 11.26372 * 1.255 = 14.13597
+    expect(result.totalCentsKwh).toBeCloseTo(14.136, 2);
   });
 
   it("handles zero margin", () => {
@@ -139,6 +181,49 @@ describe("calculateTotalPrices", () => {
     expect(results).toHaveLength(2);
     expect(results[0]?.isNightRate).toBe(true);
     expect(results[1]?.isNightRate).toBe(false);
+  });
+});
+
+describe("applyContractTerms — forecast band bounds (#73 Phase 2b)", () => {
+  // `toForecastEntries` (routes/forecast.ts) applies `applyContractTerms`
+  // independently to the point estimate and to each band bound, exactly as
+  // exercised here. Spot bounds stay raw (incl. negative); their TOTALS floor.
+  const hour = 14; // day rate
+
+  it("floors the total at a negative model spot while keeping the spot raw", () => {
+    const negativeSpot = -3.0;
+    const breakdown = applyContractTerms(negativeSpot, defaultSettings, hour);
+    expect(breakdown.spotCentsKwh).toBe(-3.0); // estimatedSpotCentsKwh stays raw
+    const floor = Math.round((0 + 0.45 + 3.02 + 2.79372) * 1.255 * 1000) / 1000;
+    expect(breakdown.totalCentsKwh).toBe(floor); // estimatedTotalCentsKwh floored
+  });
+
+  it("floors a band whose low is below 0 and preserves low ≤ point ≤ high on totals", () => {
+    // A band straddling 0: low < 0 ≤ point. The spot bounds stay raw; the total
+    // bounds floor, and the monotone affine transform keeps the ordering.
+    const low = -2.0;
+    const point = 0.5;
+    const high = 4.0;
+    const totalLow = applyContractTerms(
+      low,
+      defaultSettings,
+      hour,
+    ).totalCentsKwh;
+    const totalPoint = applyContractTerms(
+      point,
+      defaultSettings,
+      hour,
+    ).totalCentsKwh;
+    const totalHigh = applyContractTerms(
+      high,
+      defaultSettings,
+      hour,
+    ).totalCentsKwh;
+
+    const floor = Math.round((0 + 0.45 + 3.02 + 2.79372) * 1.255 * 1000) / 1000;
+    expect(totalLow).toBe(floor); // negative low floors to the contract minimum
+    expect(totalLow).toBeLessThanOrEqual(totalPoint);
+    expect(totalPoint).toBeLessThanOrEqual(totalHigh);
   });
 });
 

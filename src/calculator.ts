@@ -96,6 +96,18 @@ export interface ContractBreakdown {
  * hour-of-day in the user's timezone, used only to pick the day/night transfer
  * rate; it is supplied by the caller so this function stays pure (no clock, no
  * timezone parsing inline) and reusable for estimated quarters.
+ *
+ * The total is computed from an EFFECTIVE spot floored at 0 c/kWh
+ * (`Math.max(0, spotCentsKwh)`): a Nord Pool spot can go negative, but a Finnish
+ * retailer does not credit a household for negative spot — what you pay is
+ * `(margin + transfer + tax) × (1 + VAT)` at worst, never less. Flooring here,
+ * in the one shared function, makes every total (real, forecast, and chart) match
+ * the bill. The DISPLAYED `spotCentsKwh` stays RAW — possibly negative — so
+ * "real prices stay real / return both" holds and the forecast's spot ranking
+ * (issue #73 Phase 2) is preserved. The floor only affects the total, the VAT
+ * (computed off the floored base, so VAT is never negative), and is inert for any
+ * spot ≥ 0. The 0 is hardcoded (single tenant); the floor VALUE itself comes from
+ * the contract settings at spot = 0, so it is not a separate tunable.
  */
 export const applyContractTerms = (
   spotCentsKwh: number,
@@ -111,14 +123,18 @@ export const applyContractTerms = (
     ? settings.transferNightCentsKwh
     : settings.transferDayCentsKwh;
 
-  // Total before VAT: spot + margin + transfer + electricity tax
+  // A retailer never credits negative spot, so the total is computed from spot
+  // floored at 0. The raw spot is still returned for display below.
+  const effectiveSpot = Math.max(0, spotCentsKwh);
+
+  // Total before VAT: effective spot + margin + transfer + electricity tax
   const beforeVat =
-    spotCentsKwh +
+    effectiveSpot +
     settings.marginCentsKwh +
     transferCentsKwh +
     settings.taxCentsKwh;
 
-  // VAT applied to the total
+  // VAT applied to the (floored) total
   const vatMultiplier = 1 + settings.vatPercent / 100;
   const totalCentsKwh = Math.round(beforeVat * vatMultiplier * 1000) / 1000;
   const vatCentsKwh =
