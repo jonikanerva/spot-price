@@ -210,18 +210,16 @@ const offsetsForHour = (
  * Apply the band to a point estimate, returning `{ low, high }` in raw c/kWh, or
  * null when the bands are uncalibrated or no offsets exist for the hour.
  *
- * `pointRaw` MUST be the FULL post-bias, post-floor point estimate — that is
+ * `pointRaw` MUST be the FULL post-shape point estimate (no floor) — that is
  * exactly what the backtest residual was measured against, so the artifact and
- * the application point stay semantically aligned. The lower bound is clipped
- * with the same price `floor` the point uses (an empirical band must not dip
- * below the floor the point estimate respects), and the result is forced to
- * `low ≤ point ≤ high` so the ordering invariant always holds.
+ * the application point stay semantically aligned. The result is forced to
+ * `low ≤ point ≤ high` so the ordering invariant always holds; the lower bound
+ * is free to go negative, which is correct for genuinely-negative FI prices.
  */
 export const applyBand = (
   pointRaw: number,
   utcHour: number,
   bands: CalibratedBands,
-  floor: number | null,
 ): { readonly low: number; readonly high: number } | null => {
   if (!bands.calibrated) {
     return null;
@@ -233,10 +231,7 @@ export const applyBand = (
   const pointA = asinh(pointRaw);
   let low = sinh(pointA + off.lowOffset);
   let high = sinh(pointA + off.highOffset);
-  if (floor !== null && low < floor) {
-    low = floor;
-  }
-  // Ordering invariant: low ≤ point ≤ high (floor-clip or rounding can't break it).
+  // Ordering invariant: low ≤ point ≤ high (rounding can't break it).
   low = Math.min(low, pointRaw);
   high = Math.max(high, pointRaw);
   return {
@@ -251,10 +246,9 @@ export const applyBand = (
 
 /**
  * Fraction of residuals whose realised price falls within the derived band for
- * its hour. The honest, out-of-sample measure that the ship gate checks. An
- * optional `floorByQuarter` is not keyed here (residuals carry no quarter key);
- * the floor only tightens the lower bound, so coverage computed without it is a
- * conservative (never-optimistic) estimate of the shipped band's coverage.
+ * its hour. The honest, out-of-sample measure that the ship gate checks.
+ * Computed directly from the arcsinh-space offsets — there is no floor to apply,
+ * so the measured coverage matches the shipped band exactly.
  */
 export const observedCoverageOf = (
   residuals: readonly HorizonResidual[],

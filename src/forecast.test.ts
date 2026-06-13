@@ -9,9 +9,10 @@ import {
   expandHourlyToQuarters,
   extendWithLastWeek,
   fitLinear,
-  priceFloorFromHistory,
   quarterFloorUtc,
   quarterKey,
+  sanityBoundFromHistory,
+  SANITY_MIN_FALLBACK_CENTS_KWH,
 } from "./forecast.js";
 import type { CalibratedBands } from "./conformal.js";
 
@@ -73,6 +74,39 @@ const spearman = (xs: readonly number[], ys: readonly number[]): number => {
     return va === 0 || vb === 0 ? 0 : cov / Math.sqrt(va * vb);
   };
   return pearson(rank(xs), rank(ys));
+};
+
+/**
+ * Precision@N over the N cheapest quarters: fraction of the predicted N-cheapest
+ * that are genuinely in the actual N-cheapest. Mirrors
+ * `tools/backtest-metrics.ts → precisionAtN(..., "cheap")`; kept local so the
+ * test does not depend on `tools/` (same convention as `spearman` above).
+ * Returns null for a constant prediction (no meaningful ranking).
+ */
+const precisionAtNCheap = (
+  pred: readonly number[],
+  act: readonly number[],
+  n: number,
+): number | null => {
+  if (new Set(pred).size <= 1) {
+    return null;
+  }
+  const total = pred.length;
+  const take = Math.min(n, total);
+  const indexBy = (arr: readonly number[]): number[] =>
+    [...Array(total).keys()].sort((a, b) => {
+      const diff = (arr[a] ?? 0) - (arr[b] ?? 0);
+      return diff !== 0 ? diff : a - b;
+    });
+  const predSet = new Set(indexBy(pred).slice(0, take));
+  const actSet = new Set(indexBy(act).slice(0, take));
+  let hits = 0;
+  for (const idx of predSet) {
+    if (actSet.has(idx)) {
+      hits++;
+    }
+  }
+  return hits / take;
 };
 
 describe("quarterFloorUtc / quarterKey", () => {
@@ -217,21 +251,38 @@ describe("alignSeries", () => {
   });
 });
 
-describe("priceFloorFromHistory", () => {
-  it("returns the percentile of hourly minima", () => {
-    // 10 hours, minima 1..10; 5th percentile index = trunc(10*5/100)-1 = -? -> max(0, -1) = 0
+describe("sanityBoundFromHistory", () => {
+  it("returns a bound strictly outside the observed extremes with min ≤ 0", () => {
+    // Normal history spanning [2, 12]: spread 10, so the wide guard pushes the
+    // bounds well outside, and the min is forced ≤ 0 (never clamps near-zero up).
     const history = new Map<string, number>();
     for (let h = 0; h < 10; h++) {
-      // two quarters per hour, the smaller one is the minimum
-      history.set(quarterKey(ANCHOR + h * HOUR_MS), h + 1);
-      history.set(quarterKey(ANCHOR + h * HOUR_MS + QUARTER_MS), h + 100);
+      history.set(quarterKey(ANCHOR + h * HOUR_MS), h + 2); // 2..11
+      history.set(quarterKey(ANCHOR + h * HOUR_MS + QUARTER_MS), h + 2.5);
     }
-    const floor = priceFloorFromHistory(history, 5);
-    expect(floor).toBe(1);
+    const bound = sanityBoundFromHistory(history);
+    expect(bound).not.toBeNull();
+    if (bound) {
+      expect(bound.min).toBeLessThanOrEqual(0);
+      expect(bound.min).toBeLessThan(2); // strictly below the observed minimum
+      expect(bound.max).toBeGreaterThan(11.5); // strictly above the observed maximum
+    }
   });
 
-  it("returns null with no history", () => {
-    expect(priceFloorFromHistory(new Map())).toBeNull();
+  it("falls back to the −50 backstop on flat history (zero spread)", () => {
+    const history = new Map<string, number>();
+    for (let h = 0; h < 8; h++) {
+      history.set(quarterKey(ANCHOR + h * HOUR_MS), 4); // flat
+    }
+    const bound = sanityBoundFromHistory(history);
+    expect(bound).not.toBeNull();
+    if (bound) {
+      expect(bound.min).toBeLessThanOrEqual(SANITY_MIN_FALLBACK_CENTS_KWH);
+    }
+  });
+
+  it("returns null with no finite history", () => {
+    expect(sanityBoundFromHistory(new Map())).toBeNull();
   });
 });
 
@@ -486,11 +537,13 @@ describe("buildForecast (integration of the pure pipeline)", () => {
     expect(distinct.size).toBe(1);
   });
 
-  it("applies the floor clip and counts clipped quarters", () => {
+  it("clamps degenerate extrapolation to the sanity bound and counts the clamped quarters", () => {
     const seriesStartMs = ANCHOR;
     const seriesEndMs = seriesStartMs + QUARTER_MS * 2;
-    // No history → model falls back to its constant (~3.0); floor above it clips
-    // every quarter.
+    // No history → the model falls back to its constant (~3.0). A deliberately
+    // TIGHT sanity bound that does not contain that constant forces the clamp on
+    // every quarter, exercising the counter. (In production the bound is wide,
+    // history-derived, and essentially never hit.)
     const cons = [rec(ANCHOR, 100, 124), rec(ANCHOR + QUARTER_MS, 100, 124)];
     const result = buildForecast(
       {
@@ -502,12 +555,96 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { floor: 5 },
+      { sanityBound: { min: -1, max: 1 } },
     );
-    expect(result.diagnostics.predictionFloor).toBe(5);
-    expect(result.diagnostics.floorClippedQuarters).toBe(2);
+    expect(result.diagnostics.sanityClampedQuarters).toBe(2);
     for (const point of result.series) {
-      expect(point.estimatedSpotCentsKwh).toBeGreaterThanOrEqual(5);
+      expect(point.estimatedSpotCentsKwh).toBeLessThanOrEqual(1);
+      expect(point.estimatedSpotCentsKwh).toBeGreaterThanOrEqual(-1);
+    }
+  });
+
+  it("does not tie-collapse cheap/near-zero quarters (the live-route defect)", () => {
+    // A month whose within-day SHAPE dips to slightly-negative troughs each day,
+    // sitting on a low level. The old percentile floor collapsed every cheap
+    // quarter onto one clip value, destroying the cheapest-window ordering. With
+    // no floor (the new default — buildForecast with no sanityBound), the cheapest
+    // quarters must stay DISTINCT and strictly ordered down to and below zero.
+    const shape = (q: number): number => 3 * Math.sin((2 * Math.PI * q) / 96);
+    const spot = new Map<string, number>();
+    const cons: FingridRecord[] = [];
+    const wind: FingridRecord[] = [];
+    for (let q = 0; q < 30 * 96; q++) {
+      const ms = ANCHOR + q * QUARTER_MS;
+      const consumption = 7000 + ((q / 96) | 0) * 3;
+      const windMw = 6500; // high wind → low level, troughs go sub-zero
+      const level = 0.001 * (consumption - windMw) + 0.5;
+      spot.set(quarterKey(ms), level + shape(q % 96));
+      cons.push(rec(ms, consumption, 124));
+      wind.push(rec(ms, windMw, 245));
+    }
+    const seriesStartMs = ANCHOR + 30 * 96 * QUARTER_MS;
+    const seriesEndMs = seriesStartMs + DAY_MS;
+    const futureCons: FingridRecord[] = [];
+    const futureWind: FingridRecord[] = [];
+    for (let q = 0; q < 96; q++) {
+      const ms = seriesStartMs + q * QUARTER_MS;
+      futureCons.push(rec(ms, 7100, 124));
+      futureWind.push(rec(ms, 6500, 245));
+    }
+
+    // No sanityBound → honest no-op: predictions are emitted unclamped.
+    const result = buildForecast({
+      spotPricesByKey: spot,
+      windForecast: [...wind, ...futureWind],
+      windActual: wind,
+      consumptionForecast: [...cons, ...futureCons],
+      consumptionActual: cons,
+      seriesStartMs,
+      seriesEndMs,
+    });
+
+    const values = result.series.map((p) => p.estimatedSpotCentsKwh);
+    expect(result.diagnostics.sanityClampedQuarters).toBe(0);
+    // Some genuinely sub-zero quarters exist (proves we are in the regime the old
+    // floor mangled).
+    expect(values.some((v) => v < 0)).toBe(true);
+
+    // The 16 cheapest quarters keep MANY distinct values — they are not
+    // collapsed to one clip value. The old percentile floor would tie all the
+    // sub-zero quarters to a single number; here the cheapest set stays spread.
+    const cheapest16 = [...values].sort((a, b) => a - b).slice(0, 16);
+    expect(new Set(cheapest16).size).toBeGreaterThanOrEqual(8);
+
+    // Direct contrast: apply a 0-floor to the SAME series and confirm it
+    // collapses far more of the cheapest set onto the single clip value (0),
+    // destroying the ordering the unclamped output preserves.
+    const floored = values.map((v) => Math.max(0, v));
+    const flooredCheapest16 = [...floored].sort((a, b) => a - b).slice(0, 16);
+    expect(new Set(flooredCheapest16).size).toBeLessThan(
+      new Set(cheapest16).size,
+    );
+  });
+
+  it("ranks the cheapest quarters better unclamped than with a 0-floor (cheap-rank micro-check)", () => {
+    // A day whose true-cheapest quarters are slightly negative. A 0-floor ties
+    // every sub-zero quarter at 0, so its cheapest-set ranking degrades; the
+    // unclamped pipeline keeps the order. Compare precision@16-cheap of the two.
+    const actual: number[] = [];
+    const predicted: number[] = [];
+    for (let q = 0; q < 96; q++) {
+      // A clean monotone-ish trough so the cheapest set is well-defined.
+      const v = 4 * Math.sin((2 * Math.PI * (q - 24)) / 96) - 1; // dips below 0
+      actual.push(v);
+      predicted.push(v + 0.05 * Math.sin((2 * Math.PI * q) / 7)); // tiny noise
+    }
+    const floored = predicted.map((v) => Math.max(0, v)); // a 0-floor applied
+    const pUnclamped = precisionAtNCheap(predicted, actual, 16);
+    const pFloored = precisionAtNCheap(floored, actual, 16);
+    expect(pUnclamped).not.toBeNull();
+    expect(pFloored).not.toBeNull();
+    if (pUnclamped !== null && pFloored !== null) {
+      expect(pUnclamped).toBeGreaterThan(pFloored);
     }
   });
 
@@ -671,7 +808,7 @@ describe("buildForecast — prediction bands", () => {
         seriesStartMs: i.seriesStartMs,
         seriesEndMs: i.seriesEndMs,
       },
-      { bands: calibrated, floor: 0 },
+      { bands: calibrated },
     );
     expect(result.diagnostics.bandCalibrated).toBe(true);
     expect(result.diagnostics.bandHourBuckets).toBe(result.series.length);
@@ -680,9 +817,10 @@ describe("buildForecast — prediction bands", () => {
       expect(point.estimatedSpotHighCentsKwh).toBeDefined();
       const low = point.estimatedSpotLowCentsKwh ?? 0;
       const high = point.estimatedSpotHighCentsKwh ?? 0;
+      // No floor any more: the only invariant is the ordering. `low` is free to
+      // go negative for a genuinely cheap/negative quarter.
       expect(low).toBeLessThanOrEqual(point.estimatedSpotCentsKwh);
       expect(high).toBeGreaterThanOrEqual(point.estimatedSpotCentsKwh);
-      expect(low).toBeGreaterThanOrEqual(0); // floor-clipped
     }
   });
 
