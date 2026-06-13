@@ -134,22 +134,17 @@ If you use [mise](https://mise.jdx.dev), run `mise install` in the repo root and
 ```bash
 git clone https://github.com/calmdonut/spot-price.git
 cd spot-price
-pnpm install                       # or: mise run setup (also installs Playwright browsers)
-pnpm exec playwright install       # only if you skipped `mise run setup` and need E2E
-pnpm db:up                         # start local PostgreSQL 17 (waits until ready)
+mise install      # provision Node 24 + pnpm 10 + Python (mise.toml [tools])
+mise run setup    # install dependencies + Playwright browsers
+pnpm db:up        # start local PostgreSQL 17 (waits until ready)
+pnpm dev          # dev server → http://localhost:3000
 ```
+
+Not using mise? Ensure Node 24 + pnpm 10 (`.nvmrc` + `corepack enable`), then run `pnpm install` (and `pnpm exec playwright install` if you need E2E) in place of the two `mise` steps.
 
 `pnpm db:up` brings up the Docker Postgres and blocks until it is accepting
 connections, so `pnpm dev`, `pnpm seed`, and the tests are non-racy. `pnpm db:down`
 stops it (the data volume is kept).
-
-### Run development server
-
-```bash
-pnpm dev
-```
-
-Server starts at `http://localhost:3000`.
 
 ### Available scripts
 
