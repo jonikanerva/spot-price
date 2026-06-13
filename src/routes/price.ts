@@ -17,18 +17,6 @@ import {
   getUtcRangeForLocalDateSpan,
 } from "../time.js";
 import type { HourlyPrice, PriceWindow } from "../types.js";
-
-const EMPTY_PRICE_LIST: PriceWindow & { available: false } = {
-  start: "",
-  end: "",
-  startLocal: "",
-  endLocal: "",
-  minTotalCentsKwh: 0,
-  maxTotalCentsKwh: 0,
-  averageTotalCentsKwh: 0,
-  prices: [],
-  available: false,
-};
 import { getDefaultTimezone } from "../areas.js";
 import {
   CheapestQuerySchema,
@@ -41,6 +29,18 @@ import {
   TotalPriceSchema,
 } from "../api-schemas.js";
 import type { AppEnv } from "../app.js";
+
+const EMPTY_PRICE_LIST: PriceWindow & { available: false } = {
+  start: "",
+  end: "",
+  startLocal: "",
+  endLocal: "",
+  minTotalCentsKwh: 0,
+  maxTotalCentsKwh: 0,
+  averageTotalCentsKwh: 0,
+  prices: [],
+  available: false,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,6 +60,9 @@ const getCurrentPrice = (
   }
   return null;
 };
+
+const toPublicSpot = (prices: readonly HourlyPrice[]) =>
+  prices.map((p) => ({ ...p, spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh) }));
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -214,28 +217,22 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const todayUtc = getUtcRangeForLocalDate(today, tz);
     const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
 
-    const todayPrices = (
+    const todayPrices = toPublicSpot(
       await getPricesByRange(
         c.get("db"),
         todayUtc.startUtc,
         todayUtc.endUtc,
         area,
-      )
-    ).map((p) => ({
-      ...p,
-      spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
-    }));
-    const tomorrowPrices = (
+      ),
+    );
+    const tomorrowPrices = toPublicSpot(
       await getPricesByRange(
         c.get("db"),
         tomorrowUtc.startUtc,
         tomorrowUtc.endUtc,
         area,
-      )
-    ).map((p) => ({
-      ...p,
-      spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh),
-    }));
+      ),
+    );
 
     return c.json({
       area,
@@ -252,7 +249,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   app.openapi(priceNowRoute, async (c) => {
     const settings = await getUserSettingsFromContext(c);
     if (!settings) {
-      return c.json({ error: "User settings not found" }, 404);
+      return c.json({ error: "User settings not found" }, 404 as const);
     }
 
     const tz = settings.timezone;
@@ -268,17 +265,17 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
 
     const current = getCurrentPrice(prices, new Date());
     if (!current) {
-      return c.json({ error: "No current price available" }, 404);
+      return c.json({ error: "No current price available" }, 404 as const);
     }
 
     const total = calculateTotalPrice(current, settings);
-    return c.json(total, 200);
+    return c.json(total, 200 as const);
   });
 
   app.openapi(priceTodayRoute, async (c) => {
     const settings = await getUserSettingsFromContext(c);
     if (!settings) {
-      return c.json({ error: "User settings not found" }, 404);
+      return c.json({ error: "User settings not found" }, 404 as const);
     }
 
     const tz = settings.timezone;
@@ -291,13 +288,13 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
       settings.area,
     );
     if (prices.length === 0) {
-      return c.json(EMPTY_PRICE_LIST, 200);
+      return c.json(EMPTY_PRICE_LIST, 200 as const);
     }
 
     const totals = calculateTotalPrices(prices, settings);
     const window = buildPriceWindow(totals);
     if (!window) {
-      return c.json(EMPTY_PRICE_LIST, 200);
+      return c.json(EMPTY_PRICE_LIST, 200 as const);
     }
 
     return c.json(
@@ -305,7 +302,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
         ...window,
         available: true,
       },
-      200,
+      200 as const,
     );
   });
 
