@@ -2,13 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { FingridRecord } from "./types.js";
 import {
   alignSeries,
-  applyHourBias,
   bucketRecords,
   buildForecast,
   buildPredictedSeries,
   expandHourlyToQuarters,
   extendWithLastWeek,
-  fitHourBias,
   fitLinear,
   priceFloorFromHistory,
   quarterFloorUtc,
@@ -173,37 +171,6 @@ describe("alignSeries", () => {
   });
 });
 
-describe("fitHourBias / applyHourBias", () => {
-  it("computes mean residual per UTC hour and applies it", () => {
-    const k0 = quarterKey(ANCHOR); // 00:00 UTC
-    const k1 = quarterKey(ANCHOR + HOUR_MS); // 01:00 UTC
-    const actual = new Map<string, number>([
-      [k0, 12],
-      [k1, 5],
-    ]);
-    const predicted = new Map<string, number>([
-      [k0, 10],
-      [k1, 8],
-    ]);
-    const { biasByHour, globalBias } = fitHourBias(actual, predicted);
-    expect(biasByHour.get(0)).toBe(2); // 12 - 10
-    expect(biasByHour.get(1)).toBe(-3); // 5 - 8
-    expect(globalBias).toBeCloseTo(-0.5, 9);
-
-    const corrected = applyHourBias(predicted, biasByHour, globalBias);
-    expect(corrected.get(k0)).toBe(12);
-    expect(corrected.get(k1)).toBe(5);
-  });
-
-  it("falls back to global bias for unseen hours", () => {
-    const biasByHour = new Map<number, number>([[0, 2]]);
-    const k5 = quarterKey(ANCHOR + 5 * HOUR_MS);
-    const predicted = new Map<string, number>([[k5, 10]]);
-    const corrected = applyHourBias(predicted, biasByHour, 1.5);
-    expect(corrected.get(k5)).toBe(11.5);
-  });
-});
-
 describe("priceFloorFromHistory", () => {
   it("returns the percentile of hourly minima", () => {
     // 10 hours, minima 1..10; 5th percentile index = trunc(10*5/100)-1 = -? -> max(0, -1) = 0
@@ -310,7 +277,7 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { applyTimeBias: false },
+      {},
     );
 
     expect(result.diagnostics.fitUsedDefault).toBe(false);
@@ -342,7 +309,7 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { applyTimeBias: false },
+      {},
     );
     expect(result.diagnostics.fitUsedDefault).toBe(true);
     expect(result.diagnostics.fitSamples).toBeLessThan(24);
@@ -369,7 +336,7 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { applyTimeBias: false, floor: 5 },
+      { floor: 5 },
     );
     expect(result.diagnostics.predictionFloor).toBe(5);
     expect(result.diagnostics.floorClippedQuarters).toBe(2);
@@ -452,7 +419,7 @@ describe("buildForecast — prediction bands", () => {
         seriesStartMs: i.seriesStartMs,
         seriesEndMs: i.seriesEndMs,
       },
-      { applyTimeBias: false, bands: dark },
+      { bands: dark },
     );
     expect(result.diagnostics.bandCalibrated).toBe(false);
     expect(result.diagnostics.bandHourBuckets).toBe(0);
@@ -474,7 +441,7 @@ describe("buildForecast — prediction bands", () => {
         seriesStartMs: i.seriesStartMs,
         seriesEndMs: i.seriesEndMs,
       },
-      { applyTimeBias: false, bands: calibrated, floor: 0 },
+      { bands: calibrated, floor: 0 },
     );
     expect(result.diagnostics.bandCalibrated).toBe(true);
     expect(result.diagnostics.bandHourBuckets).toBe(result.series.length);
@@ -507,7 +474,7 @@ describe("buildForecast — prediction bands", () => {
         seriesStartMs: i.seriesStartMs,
         seriesEndMs: i.seriesEndMs,
       },
-      { applyTimeBias: false, bands: calibrated },
+      { bands: calibrated },
     );
     let banded = 0;
     for (const point of result.series) {

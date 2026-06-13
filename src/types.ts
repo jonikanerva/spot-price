@@ -121,7 +121,6 @@ export interface ForecastDiagnostics {
   readonly windExtendedQuarters: number;
   readonly filledQuarters: number;
   readonly zeroSeededQuarters: number;
-  readonly hourBiasBuckets: number;
   readonly predictionFloor: number | null;
   readonly floorClippedQuarters: number;
   /** True when a calibrated band artifact was applied to the series. */

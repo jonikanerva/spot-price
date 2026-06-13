@@ -18,8 +18,8 @@ import { CALIBRATED_BANDS } from "./conformal-artifact.js";
  * Pure FI price-forecast pipeline. A pluggable closed-form regression over a
  * rich feature set (grid residual + wind/consumption + an interaction term, FI
  * and neighbour price lags, UTC calendar) — still no machine learning: the
- * default `Model` is hand-rolled ridge (`model.ts`), and a per-hour bias plus
- * an optional price floor refine the level afterwards.
+ * default `Model` is hand-rolled ridge (`model.ts`), and an optional price floor
+ * refines the level afterwards.
  *
  * This module is strictly pure: no `pg`, no `fetch`, no `env`, no `Date.now()`.
  * Everything works on UTC ISO 8601 quarter keys (15-min floor). The I/O
@@ -224,62 +224,6 @@ export const fitLinear = (
 };
 
 // ---------------------------------------------------------------------------
-// Per-UTC-hour bias correction
-// ---------------------------------------------------------------------------
-
-/**
- * Mean residual error (actual - predicted) per UTC hour-of-day over the
- * overlap. The linear model captures the price *level* but not the daily price
- * *rhythm* (peaks/troughs driven by neighbour prices, solar/demand) — this
- * additive per-hour correction recovers that rhythm from the published prices.
- * Returns the per-hour bias plus a `globalBias` fallback for unseen hours.
- */
-export const fitHourBias = (
-  actualPrices: ReadonlyMap<string, number>,
-  predicted: ReadonlyMap<string, number>,
-): {
-  readonly biasByHour: ReadonlyMap<number, number>;
-  readonly globalBias: number;
-} => {
-  const errorsByHour = new Map<number, number[]>();
-  const allErrors: number[] = [];
-  for (const [key, actual] of actualPrices) {
-    const pred = predicted.get(key);
-    if (pred === undefined) {
-      continue;
-    }
-    const error = actual - pred;
-    const hour = hourOfKey(key);
-    const bucket = errorsByHour.get(hour) ?? [];
-    bucket.push(error);
-    errorsByHour.set(hour, bucket);
-    allErrors.push(error);
-  }
-  const globalBias =
-    allErrors.length > 0
-      ? allErrors.reduce((a, b) => a + b, 0) / allErrors.length
-      : 0;
-  const biasByHour = new Map<number, number>();
-  for (const [hour, errs] of errorsByHour) {
-    biasByHour.set(hour, errs.reduce((a, b) => a + b, 0) / errs.length);
-  }
-  return { biasByHour, globalBias };
-};
-
-/** Add the per-UTC-hour bias to each predicted quarter (global fallback). */
-export const applyHourBias = (
-  predicted: ReadonlyMap<string, number>,
-  biasByHour: ReadonlyMap<number, number>,
-  globalBias: number,
-): Map<string, number> => {
-  const out = new Map<string, number>();
-  for (const [key, value] of predicted) {
-    out.set(key, value + (biasByHour.get(hourOfKey(key)) ?? globalBias));
-  }
-  return out;
-};
-
-// ---------------------------------------------------------------------------
 // Price floor
 // ---------------------------------------------------------------------------
 
@@ -415,7 +359,6 @@ export interface ForecastInput {
 export interface ForecastOptions {
   readonly windExtensionWeeks?: number;
   readonly consumptionExtensionWeeks?: number;
-  readonly applyTimeBias?: boolean;
   /** Lower clip for predicted spot c/kWh; null/undefined disables clipping. */
   readonly floor?: number | null;
   /** Ridge L2 penalty forwarded to the model fit. */
@@ -445,9 +388,8 @@ export interface ForecastOptions {
  * Pipeline: build the feature matrix (`features.ts`) over the bounded training
  * window → fit the model → predict each future quarter (the model `sinh`-inverts
  * its arcsinh target transform internally, so predictions are already raw
- * c/kWh) → existing per-UTC-hour bias → existing price-floor clip →
- * `buildPredictedSeries`. Stays pure — the model and feature builders take no
- * I/O.
+ * c/kWh) → `buildPredictedSeries` → price-floor clip → empirical band. Stays
+ * pure — the model and feature builders take no I/O.
  */
 export const buildForecast = (
   input: ForecastInput,
@@ -456,7 +398,6 @@ export const buildForecast = (
   const windWeeks = opts.windExtensionWeeks ?? WIND_EXTENSION_WEEKS;
   const consWeeks =
     opts.consumptionExtensionWeeks ?? CONSUMPTION_EXTENSION_WEEKS;
-  const applyTimeBias = opts.applyTimeBias ?? true;
   const floor = opts.floor ?? null;
   const model = opts.model ?? createRidgeModel();
   const bands = opts.bands ?? CALIBRATED_BANDS;
@@ -534,32 +475,6 @@ export const buildForecast = (
     );
   }
 
-  let hourBiasBuckets = 0;
-  if (applyTimeBias) {
-    // Recover the daily price rhythm the level model misses, from the residual
-    // between published prices and the model's in-sample predictions. Reuse the
-    // already-built training rows rather than rebuilding feature vectors — keeps
-    // the request path off a second O(rows × scans) pass.
-    const inSamplePrices = new Map<string, number>();
-    const inSamplePredicted = new Map<string, number>();
-    for (let i = 0; i < training.keys.length; i++) {
-      const key = training.keys[i];
-      const row = training.features.rows[i];
-      const target = training.targets[i];
-      if (key === undefined || row === undefined || target === undefined) {
-        continue;
-      }
-      inSamplePrices.set(key, target);
-      inSamplePredicted.set(key, fitted.predict(row));
-    }
-    const { biasByHour, globalBias } = fitHourBias(
-      inSamplePrices,
-      inSamplePredicted,
-    );
-    predicted = applyHourBias(predicted, biasByHour, globalBias);
-    hourBiasBuckets = biasByHour.size;
-  }
-
   let floorClippedQuarters = 0;
   if (floor !== null) {
     const clipped = new Map<string, number>();
@@ -608,7 +523,6 @@ export const buildForecast = (
     windExtendedQuarters: windExtended.size - windQ.size,
     filledQuarters: built.filledQuarters,
     zeroSeededQuarters: built.zeroSeededQuarters,
-    hourBiasBuckets,
     predictionFloor: floor,
     floorClippedQuarters,
     bandCalibrated: bands.calibrated,
