@@ -30,6 +30,24 @@ export const createAuth = (pool: Pool): ReturnType<typeof betterAuth> => {
       enabled: true,
       autoSignIn: true,
     },
+    // reason: VISION.md → Persistence and Privacy Posture ("Not stored: ...
+    // IPs beyond what in-memory rate limiting needs"). better-auth 1.6.11 has
+    // no native flag to disable userAgent persistence, and we deliberately do
+    // NOT set advanced.ipAddress.disableIpTracking so Better Auth's own
+    // internal rate limiter can still compute a transient IP for keying. This
+    // before-hook is therefore the durable mechanism that guarantees the
+    // STORED session row never retains the IP or user agent: the runtime
+    // merges `{ ...session, ...result.data }`, so returning the two nulled
+    // fields (the `{ data }` wrapper is mandatory — a bare object is a no-op,
+    // and any falsy return aborts session creation) scrubs them before insert.
+    databaseHooks: {
+      session: {
+        create: {
+          before: () =>
+            Promise.resolve({ data: { ipAddress: null, userAgent: null } }),
+        },
+      },
+    },
   };
   return betterAuth(options);
 };

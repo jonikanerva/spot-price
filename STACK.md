@@ -6,8 +6,8 @@
 
 ## 0. Project shape
 
-- **Shape:** single-package backend service. One Hono process exposes the REST API (`/api/v1/...`), a setup-only server-rendered HTML UI (`src/ui.ts` + inline `src/ui-client.ts`), the OpenAPI reference (`/reference`), and an in-process `node-cron` price-fetch job. **No `apps/`, no `packages/`, no frontend build.**
-- **Critical execution path:** the per-request hot path on the API (price-now / today / tomorrow / cheapest / history / forecast) and the daily day-ahead fetch path (`src/fetch-job.ts`). Price math is a pure function of `(HourlyPrice, UserSettings)` in `src/calculator.ts`; the forecast estimate is a pure function of its inputs in `src/forecast.ts` (no DB, clock, or network) — the forecast route reads pre-fetched Fingrid rows off the DB and never calls Fingrid synchronously.
+- **Shape:** single-package backend service. One Hono process exposes the REST API (`/api/v1/...`), a setup-only server-rendered HTML UI (`src/ui.ts` + inline `src/ui-client.ts`), the OpenAPI 3.1 document (`/api/v1/openapi.json`) with the interactive Scalar reference (`/api/docs`), and an in-process `node-cron` price-fetch job. **No `apps/`, no `packages/`, no frontend build.**
+- **Critical execution path:** the per-request hot path on the API (price-now / today / tomorrow / cheapest / history / forecast) and the day-ahead price fetch path (`src/fetch-job.ts`). Price math is a pure function of `(HourlyPrice, UserSettings)` in `src/calculator.ts`; the forecast estimate is a pure function of its inputs in `src/forecast.ts` (no DB, clock, or network) — the forecast route reads pre-fetched Fingrid rows off the DB and never calls Fingrid synchronously.
 - **Applicable states:** API responses are typed success / typed error. When Nord Pool has not published, the answer is an explicit `available: false` / `404` — never an estimate (`VISION.md → One trusted upstream`). The setup UI handles awaiting-first-data, success, empty, permission/auth-blocked, and error.
 
 ---
@@ -28,7 +28,7 @@
 | Concern                | Framework / library                                                                                      | Notes                                                                                                                   |
 | ---------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | Backend HTTP framework | Hono + `@hono/node-server`                                                                               | Web-standards-aligned, runs on plain Node                                                                               |
-| OpenAPI / API docs     | `@hono/zod-openapi` + `@scalar/hono-api-reference`                                                       | Schema-first routes; Scalar renders the reference UI at `/reference`                                                    |
+| OpenAPI / API docs     | `@hono/zod-openapi` + `@scalar/hono-api-reference`                                                       | Schema-first routes; OpenAPI 3.1 document at `/api/v1/openapi.json`, Scalar renders the reference UI at `/api/docs`     |
 | Authentication         | Better Auth (`better-auth`)                                                                              | Self-hosted email/password; sessions in PostgreSQL                                                                      |
 | Persistence            | PostgreSQL via raw `pg` driver                                                                           | No ORM. Numbered SQL migrations under `src/migrations/`, applied by `src/migrate.ts`.                                   |
 | Scheduling             | `node-cron` in-process                                                                                   | Day-ahead price fetch jobs in `src/scheduler.ts` and `src/fetch-job.ts`                                                 |
@@ -86,7 +86,7 @@ Default answer to "should we add a library?" is **no**. New entries require a `S
 | `hono`                       | `^4.12` | Backend HTTP framework — the project's chosen default                    | (default) | (template) |
 | `@hono/node-server`          | `^2.0`  | Node adapter for Hono                                                    | (default) | (template) |
 | `@hono/zod-openapi`          | `^1.4`  | Schema-first route definitions + OpenAPI document generation             | (default) | (template) |
-| `@scalar/hono-api-reference` | `^0.10` | Renders the OpenAPI reference UI at `/reference`                         | (default) | (template) |
+| `@scalar/hono-api-reference` | `^0.10` | Renders the OpenAPI reference UI at `/api/docs`                          | (default) | (template) |
 | `better-auth`                | `^1.6`  | Self-hosted email/password auth backed by the same `pg` pool             | (default) | (template) |
 | `hono-rate-limiter`          | `^0.5`  | In-memory per-instance rate limiting                                     | (default) | (template) |
 | `node-cron`                  | `^4.2`  | In-process cron for the day-ahead price fetch jobs                       | (default) | (template) |
@@ -138,7 +138,7 @@ Default answer to "should we add a library?" is **no**. New entries require a `S
 
 - **Allowed background work:** the `node-cron` jobs declared in `src/scheduler.ts`:
   - the day-ahead price fetch executed by `src/fetch-job.ts` — 2h baseline cadence plus a 10-minute burst window around the Nord Pool publication time;
-  - the FI-forecast Fingrid grid-data fetch executed by `src/forecast-job.ts` — hourly (`0 * * * *`), fetching the public wind/consumption datasets (245/75/165/124) from `data.fingrid.fi` into the `fingrid_series` table and pruning rows outside the ~35-day window. It runs only when `FINGRID_API_KEY` is set, is wrapped in its own isolated try/catch, and its Fingrid boundary degrades rather than throwing, so a forecast failure can never affect the authoritative Nord Pool price cron or the price request path.
+  - the FI-forecast Fingrid grid-data fetch executed by `src/forecast-job.ts` — hourly (`0 * * * *`), fetching the public wind/consumption datasets (245/75/165/124) from `data.fingrid.fi` into the `fingrid_series` table and pruning rows older than ~35 days. It runs only when `FINGRID_API_KEY` is set, is wrapped in its own isolated try/catch, and its Fingrid boundary degrades rather than throwing, so a forecast failure can never affect the authoritative Nord Pool price cron or the price request path.
 
   These are the **only** allowed background tasks; new ones require an entry here.
 
