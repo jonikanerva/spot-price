@@ -8,7 +8,7 @@ import {
 } from "../calculator.js";
 import { getPricesByRange } from "../price-store.js";
 import { eurMwhToCentsKwh } from "../nordpool.js";
-import { getUserSettings } from "../user-settings.js";
+import { getUserSettingsFromContext } from "./settings-context.js";
 import {
   addDays,
   formatDateInTimeZone,
@@ -16,7 +16,7 @@ import {
   getUtcRangeForLocalDate,
   getUtcRangeForLocalDateSpan,
 } from "../time.js";
-import type { HourlyPrice, PriceWindow, UserSettings } from "../types.js";
+import type { HourlyPrice, PriceWindow } from "../types.js";
 
 const EMPTY_PRICE_LIST: PriceWindow & { available: false } = {
   start: "",
@@ -59,20 +59,6 @@ const getCurrentPrice = (
     }
   }
   return null;
-};
-
-const getSettings = async (c: {
-  get: (key: "db" | "userId") => AppEnv["Variables"]["db"] | string;
-}): Promise<UserSettings | null> => {
-  const userId = c.get("userId");
-  const db = c.get("db");
-  if (typeof userId !== "string") {
-    return null;
-  }
-  if (typeof db === "string") {
-    return null;
-  }
-  return await getUserSettings(db, userId);
 };
 
 // ---------------------------------------------------------------------------
@@ -264,7 +250,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   // --- Price endpoints (API key-protected) ----------------------------------
 
   app.openapi(priceNowRoute, async (c) => {
-    const settings = await getSettings(c);
+    const settings = await getUserSettingsFromContext(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404);
     }
@@ -290,7 +276,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   });
 
   app.openapi(priceTodayRoute, async (c) => {
-    const settings = await getSettings(c);
+    const settings = await getUserSettingsFromContext(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404);
     }
@@ -324,7 +310,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   });
 
   app.openapi(priceTomorrowRoute, async (c) => {
-    const settings = await getSettings(c);
+    const settings = await getUserSettingsFromContext(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404 as const);
     }
@@ -364,7 +350,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   });
 
   app.openapi(priceCheapestRoute, async (c) => {
-    const settings = await getSettings(c);
+    const settings = await getUserSettingsFromContext(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404 as const);
     }
@@ -434,7 +420,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
   });
 
   app.openapi(priceHistoryRoute, async (c) => {
-    const settings = await getSettings(c);
+    const settings = await getUserSettingsFromContext(c);
     if (!settings) {
       return c.json({ error: "User settings not found" }, 404 as const);
     }
