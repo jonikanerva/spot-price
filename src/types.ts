@@ -97,13 +97,15 @@ export interface ForecastEntry {
 /**
  * Diagnostics from the forecast pipeline. `fitUsedDefault` and
  * `zeroSeededQuarters` drive the `degraded`/`confidence` signal: the forecast
- * is only honest if it says so when it fell back to default coefficients or had
- * to zero-seed a hard data outage. Tail extension alone is NOT degraded.
+ * is only honest if it says so when the model fell back to a default constant
+ * or had to zero-seed a hard data outage. Tail extension alone is NOT degraded.
+ * Internal only — never serialised into the API response.
  */
 export interface ForecastDiagnostics {
-  readonly slope: number;
-  readonly intercept: number;
+  /** Aligned training samples the model fit actually used. */
   readonly fitSamples: number;
+  /** Number of feature columns the model fit over. */
+  readonly featureCount: number;
   readonly fitUsedDefault: boolean;
   readonly consumptionExtendedQuarters: number;
   readonly windExtendedQuarters: number;
