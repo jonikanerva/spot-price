@@ -2,7 +2,11 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createRoute } from "@hono/zod-openapi";
 import { applyContractTerms, extractHourInTimeZone } from "../calculator.js";
 import { eurMwhToCentsKwh } from "../nordpool.js";
-import { getLatestDeliveryStart, getPricesByRange } from "../price-store.js";
+import {
+  getLatestDeliveryStart,
+  getPricesByAreas,
+  getPricesByRange,
+} from "../price-store.js";
 import { getFingridRecordsByRange } from "../fingrid-store.js";
 import { getUserSettingsFromContext } from "./settings-context.js";
 import { formatDateTimeInTimeZone } from "../time.js";
@@ -26,6 +30,12 @@ import type { AppEnv } from "../app.js";
 const QUARTER_MS = 15 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const FORECAST_AREA = "FI";
+/**
+ * Neighbour Nord Pool areas whose lagged prices inform the FI estimate (their
+ * day-ahead prices are already stored for the FI fetch's sibling areas). A
+ * missing neighbour is neutral-filled by the feature builder, never an error.
+ */
+const NEIGHBOR_AREAS: readonly string[] = ["SE1", "SE3", "EE"];
 
 /** Build a quarter-keyed map of stored FI spot prices in c/kWh. */
 const spotPricesByKey = (
@@ -162,13 +172,28 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const historyStartUtc = new Date(historyStartMs).toISOString();
     const fingridEndUtc = new Date(seriesEndMs).toISOString();
 
+    const seriesStartUtc = new Date(seriesStartMs).toISOString();
     const prices = await getPricesByRange(
       db,
       historyStartUtc,
-      new Date(seriesStartMs).toISOString(),
+      seriesStartUtc,
       FORECAST_AREA,
     );
     const spot = spotPricesByKey(prices);
+
+    // Neighbour-area (SE1/SE3/EE) prices over the same history window feed the
+    // model's price-lag features. Read in one query; an absent area is
+    // neutral-filled downstream and never degrades the response.
+    const neighborByArea = await getPricesByAreas(
+      db,
+      historyStartUtc,
+      seriesStartUtc,
+      NEIGHBOR_AREAS,
+    );
+    const neighborPricesByArea = new Map<string, Map<string, number>>();
+    for (const [neighborArea, neighborPrices] of neighborByArea) {
+      neighborPricesByArea.set(neighborArea, spotPricesByKey(neighborPrices));
+    }
 
     const [windForecast, windActual, consumptionForecast, consumptionActual] =
       await Promise.all([
@@ -228,6 +253,7 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const result = buildForecast(
       {
         spotPricesByKey: spot,
+        neighborPricesByArea,
         windForecast,
         windActual,
         consumptionForecast,
@@ -240,8 +266,10 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
 
     const entries = toForecastEntries(result, settings);
 
-    // Degraded/low-confidence iff the fit fell back to defaults or a hard
-    // outage forced zero-seeding. Tail extension alone is NOT degraded.
+    // Degraded/low-confidence iff the model fell back to a default constant
+    // (too few aligned samples / singular system) or a hard outage forced
+    // zero-seeding. Tail extension and neutral-filled neighbours are NOT
+    // degraded — confidence reflects whether the fit had enough to learn from.
     const degraded =
       result.diagnostics.fitUsedDefault ||
       result.diagnostics.zeroSeededQuarters > 0;
@@ -256,7 +284,7 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
         ...(degraded
           ? {
               reason: result.diagnostics.fitUsedDefault
-                ? "Insufficient overlap to fit; using default coefficients"
+                ? "Insufficient price history to fit the model; using a default estimate"
                 : "Some quarters had no input data and were zero-seeded",
             }
           : {}),

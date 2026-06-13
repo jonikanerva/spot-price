@@ -72,6 +72,38 @@ export const getPricesByRange = async (
 };
 
 /**
+ * Fetch prices for several areas at once within a UTC time range, grouped by
+ * area. One query instead of N round-trips; used by the forecast to read the
+ * neighbour-area (SE1/SE3/EE) price lags it feeds to the model. Areas with no
+ * stored rows are simply absent from the returned map — the feature builder
+ * neutral-fills them, so a missing neighbour is never an error.
+ */
+export const getPricesByAreas = async (
+  pool: Pool,
+  startUtc: string,
+  endUtc: string,
+  areas: readonly string[],
+): Promise<ReadonlyMap<string, readonly HourlyPrice[]>> => {
+  const out = new Map<string, HourlyPrice[]>();
+  if (areas.length === 0) {
+    return out;
+  }
+  const { rows } = await pool.query<PriceRow>(
+    `SELECT delivery_start, delivery_end, price_eur_mwh, area
+     FROM prices
+     WHERE area = ANY($1) AND delivery_start >= $2 AND delivery_start < $3
+     ORDER BY area, delivery_start`,
+    [areas, startUtc, endUtc],
+  );
+  for (const r of rows) {
+    const bucket = out.get(r.area) ?? [];
+    bucket.push(rowToHourlyPrice(r));
+    out.set(r.area, bucket);
+  }
+  return out;
+};
+
+/**
  * Latest published `delivery_start` for an area as a UTC ISO 8601 string, or
  * null when none are stored. Used by the forecast to anchor its series one
  * quarter after the last real price so it never overlaps published data.
