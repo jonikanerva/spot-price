@@ -8,7 +8,8 @@
  * enough for the backtest to demonstrate the model beats naive baselines.
  *
  * Run once with: pnpm tsx tools/backtest-data/generate-fixture.ts
- * The output fixture.json is committed; the backtest reads it with no network.
+ * The output fixture.json is committed; the backtest reads it by FILE PATH with
+ * no network: `pnpm backtest --data tools/backtest-data/fixture.json`.
  */
 import { writeFileSync } from "node:fs";
 import path from "node:path";

@@ -261,17 +261,18 @@ export const parseWindowDays = (raw: string | undefined): number => {
 const main = async (): Promise<void> => {
   const argv = process.argv;
 
-  // Fixture replay: pure, no DB. `loadFixture` reads post-conversion values.
-  const dataDir = flagValue(argv, "--data");
-  if (dataDir !== undefined) {
-    const data = loadFixture(dataDir);
+  // Fixture replay: pure, no DB. `--data` takes a fixture FILE path and
+  // `loadFixture` reads post-conversion values (symmetric with `--export`).
+  const dataFile = flagValue(argv, "--data");
+  if (dataFile !== undefined) {
+    const data = loadFixture(dataFile);
     const ok = printReport(data);
     process.exit(ok ? 0 : 1);
   }
 
   if (!hasFlag(argv, "--db")) {
     console.error(
-      "usage: pnpm backtest --data <dir> | --db [--window <days>] [--export <file>]",
+      "usage: pnpm backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>]",
     );
     process.exit(2);
   }

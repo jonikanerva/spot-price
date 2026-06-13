@@ -75,14 +75,14 @@ export const CALIBRATED_BANDS: CalibratedBands = {
 };
 
 const main = (): void => {
-  const dirArgIdx = process.argv.indexOf("--data");
+  const dataArgIdx = process.argv.indexOf("--data");
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const dataDir =
-    dirArgIdx >= 0 && process.argv[dirArgIdx + 1] !== undefined
-      ? (process.argv[dirArgIdx + 1] as string)
-      : path.join(here, "backtest-data");
+  const dataFile =
+    dataArgIdx >= 0 && process.argv[dataArgIdx + 1] !== undefined
+      ? (process.argv[dataArgIdx + 1] as string)
+      : path.join(here, "backtest-data", "fixture.json");
 
-  const data = loadFixture(dataDir);
+  const data = loadFixture(dataFile);
   const { summary, bands } = deriveBandsFromBacktest(
     data,
     new Date().toISOString(),

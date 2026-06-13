@@ -24,7 +24,6 @@
  * DB). Fixture/DB loading lives in the CLI and regen script.
  */
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import { buildForecast, quarterKey } from "../src/forecast.js";
 import {
   buildArtifact,
@@ -538,8 +537,14 @@ const toRecords = (
     value: r.value,
   }));
 
-export const loadFixture = (dir: string): BacktestData => {
-  const text = readFileSync(path.join(dir, "fixture.json"), "utf-8");
+/**
+ * Read a backtest fixture from a single JSON FILE path (e.g.
+ * `tools/backtest-data/fixture.json`). Symmetric with the CLI's `--export
+ * <file>`: a `--db --export X.json` snapshot round-trips through `--data X.json`
+ * with no re-conversion (the exported `spotCentsKwh` is already post-conversion).
+ */
+export const loadFixture = (filePath: string): BacktestData => {
+  const text = readFileSync(filePath, "utf-8");
   const fixture = JSON.parse(text) as Fixture;
   // Tolerate the older tools/ fixture shape: prices without an `area` are FI.
   const prices: PricePoint[] = fixture.prices.map((p) => ({

@@ -95,16 +95,13 @@ describe("assembleBacktestData — parity with loadFixture", () => {
     const { pricesByArea, fingridByDataset } = buildDbShapedInput();
     const assembled = assembleBacktestData(pricesByArea, fingridByDataset);
 
-    // Equivalent fixture JSON: prices already post-conversion (c/kWh) so
+    // Equivalent fixture JSON file: prices already post-conversion (c/kWh) so
     // loadFixture reads them as-is, exactly like an --export → --data replay.
     const tmp = mkdtempSync(path.join(tmpdir(), "bt-parity-"));
     try {
-      writeFileSync(
-        path.join(tmp, "fixture.json"),
-        toFixtureJson(assembled),
-        "utf-8",
-      );
-      const loaded = loadFixture(tmp);
+      const file = path.join(tmp, "fixture.json");
+      writeFileSync(file, toFixtureJson(assembled), "utf-8");
+      const loaded = loadFixture(file);
       expect(loaded).toEqual(assembled);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -143,12 +140,11 @@ describe("export round-trip — assemble vs fixture replay (da Obj.2)", () => {
 
     const tmp = mkdtempSync(path.join(tmpdir(), "bt-roundtrip-"));
     try {
-      writeFileSync(
-        path.join(tmp, "fixture.json"),
-        toFixtureJson(assembled),
-        "utf-8",
-      );
-      const replayed = loadFixture(tmp);
+      // --export <file> ↔ --data <file>: write the snapshot to a file path and
+      // replay it through the same file path (the new symmetric contract).
+      const file = path.join(tmp, "snapshot.json");
+      writeFileSync(file, toFixtureJson(assembled), "utf-8");
+      const replayed = loadFixture(file);
       const summaryB = runBacktest(replayed);
 
       // Catches double-conversion, Date-vs-ISO, string-vs-number keys, and
