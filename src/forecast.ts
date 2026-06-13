@@ -4,31 +4,33 @@ import type {
   ForecastResult,
   ForecastSpotPoint,
 } from "./types.js";
+import {
+  buildFeatureVectorIndexed,
+  buildForecastPriceIndex,
+  buildTrainingMatrix,
+  type FeatureContext,
+} from "./features.js";
+import { createRidgeModel, type Model } from "./model.js";
 
 /**
- * Pure FI price-forecast pipeline. A faithful port of the closed-form
- * `predictor.py` from the sibling `spotoracle` integration — no machine
- * learning, no training, just bucketing + a 2-parameter OLS fit + a per-hour
- * bias + an optional price floor.
+ * Pure FI price-forecast pipeline. A pluggable closed-form regression over a
+ * rich feature set (grid residual + wind/consumption + an interaction term, FI
+ * and neighbour price lags, UTC calendar) — still no machine learning: the
+ * default `Model` is hand-rolled ridge (`model.ts`), and a per-hour bias plus
+ * an optional price floor refine the level afterwards.
  *
  * This module is strictly pure: no `pg`, no `fetch`, no `env`, no `Date.now()`.
  * Everything works on UTC ISO 8601 quarter keys (15-min floor). The I/O
- * boundary (the route) supplies the time window, the prices, the Fingrid
- * series, and the history slice for the floor; this module computes the
- * estimate. It predicts SPOT c/kWh; the fit target is the caller's stored spot
- * price (already converted to c/kWh).
+ * boundary (the route) supplies the time window, the prices (FI + neighbours),
+ * the Fingrid series, and the history slice for the floor; this module computes
+ * the estimate. It predicts SPOT c/kWh; the fit target is the caller's stored
+ * spot price (already converted to c/kWh).
  */
 
 // ---------------------------------------------------------------------------
-// Tunable constants — provenance per `spotoracle/const.py`
+// Tunable constants
 // ---------------------------------------------------------------------------
 
-/** snt/kWh per MW residual — fallback slope when the fit is unusable. */
-export const DEFAULT_SLOPE = 0.002;
-/** snt/kWh — fallback intercept when the fit is unusable. */
-export const DEFAULT_INTERCEPT = -2.0;
-/** quarters; 24 × 15 min = 6h minimum price/residual overlap to trust the fit. */
-export const MIN_FIT_SAMPLES = 24;
 /** Wind has no weekly cycle, so the tail averages several weeks toward climatology. */
 export const WIND_EXTENSION_WEEKS = 4;
 /** Consumption has a strong Finnish weekly cycle, so one week back is most representative. */
@@ -219,18 +221,6 @@ export const fitLinear = (
   return { slope, intercept };
 };
 
-const predictSeries = (
-  residualByKey: ReadonlyMap<string, number>,
-  slope: number,
-  intercept: number,
-): Map<string, number> => {
-  const out = new Map<string, number>();
-  for (const [key, r] of residualByKey) {
-    out.set(key, slope * r + intercept);
-  }
-  return out;
-};
-
 // ---------------------------------------------------------------------------
 // Per-UTC-hour bias correction
 // ---------------------------------------------------------------------------
@@ -399,8 +389,17 @@ export const buildPredictedSeries = (
 // ---------------------------------------------------------------------------
 
 export interface ForecastInput {
-  /** Published spot prices as (UTC ISO quarter key, spot c/kWh) — fit target only. */
+  /** Published FI spot prices as (UTC ISO quarter key, spot c/kWh) — fit target + lag source. */
   readonly spotPricesByKey: ReadonlyMap<string, number>;
+  /**
+   * Neighbour-area spot prices (c/kWh) as area → (quarter key → price). Used as
+   * lag features only; an entirely-absent area is neutral-filled and is NEVER a
+   * degraded trigger. Optional so existing callers/tests need not supply it.
+   */
+  readonly neighborPricesByArea?: ReadonlyMap<
+    string,
+    ReadonlyMap<string, number>
+  >;
   readonly windForecast: readonly FingridRecord[];
   readonly windActual: readonly FingridRecord[];
   readonly consumptionForecast: readonly FingridRecord[];
@@ -412,14 +411,19 @@ export interface ForecastInput {
 }
 
 export interface ForecastOptions {
-  readonly defaultSlope?: number;
-  readonly defaultIntercept?: number;
-  readonly minFitSamples?: number;
   readonly windExtensionWeeks?: number;
   readonly consumptionExtensionWeeks?: number;
   readonly applyTimeBias?: boolean;
   /** Lower clip for predicted spot c/kWh; null/undefined disables clipping. */
   readonly floor?: number | null;
+  /** Ridge L2 penalty forwarded to the model fit. */
+  readonly ridgeLambda?: number;
+  /**
+   * The estimator. Defaults to the closed-form ridge model. Injectable so the
+   * backtest can swap models; the interface is type-pinned to closed-form /
+   * synchronous / pure estimators (`model.ts` Phase-3 pin).
+   */
+  readonly model?: Model;
 }
 
 /**
@@ -428,19 +432,24 @@ export interface ForecastOptions {
  * predicted — published prices are used to fit the model but are never passed
  * back through (the caller sets `seriesStart` to one quarter after the last
  * published price).
+ *
+ * Pipeline: build the feature matrix (`features.ts`) over the bounded training
+ * window → fit the model → predict each future quarter (the model `sinh`-inverts
+ * its arcsinh target transform internally, so predictions are already raw
+ * c/kWh) → existing per-UTC-hour bias → existing price-floor clip →
+ * `buildPredictedSeries`. Stays pure — the model and feature builders take no
+ * I/O.
  */
 export const buildForecast = (
   input: ForecastInput,
   opts: ForecastOptions = {},
 ): ForecastResult => {
-  const defaultSlope = opts.defaultSlope ?? DEFAULT_SLOPE;
-  const defaultIntercept = opts.defaultIntercept ?? DEFAULT_INTERCEPT;
-  const minFitSamples = opts.minFitSamples ?? MIN_FIT_SAMPLES;
   const windWeeks = opts.windExtensionWeeks ?? WIND_EXTENSION_WEEKS;
   const consWeeks =
     opts.consumptionExtensionWeeks ?? CONSUMPTION_EXTENSION_WEEKS;
   const applyTimeBias = opts.applyTimeBias ?? true;
   const floor = opts.floor ?? null;
+  const model = opts.model ?? createRidgeModel();
 
   const seriesStartMs = quarterFloorUtc(input.seriesStartMs);
   const seriesEndMs = quarterFloorUtc(input.seriesEndMs);
@@ -465,35 +474,77 @@ export const buildForecast = (
     windWeeks,
   );
 
-  // Residual stays in raw MW (consumption - wind); not rescaled, so the default
-  // slope stays meaningful.
-  const residual = new Map<string, number>();
-  for (const [key, cons] of consExtended) {
-    residual.set(key, cons - (windExtended.get(key) ?? 0));
+  // Wind/consumption actuals merged under the (tail-extended) forecast so the
+  // feature builder sees a continuous grid series across history + horizon. The
+  // forecast value wins where both exist (the future is forecast-only anyway).
+  const windByKey = new Map<string, number>(windActualQ);
+  for (const [k, v] of windExtended) {
+    windByKey.set(k, v);
+  }
+  const consumptionByKey = new Map<string, number>(consActualQ);
+  for (const [k, v] of consExtended) {
+    consumptionByKey.set(k, v);
   }
 
-  const { xs, ys } = alignSeries(input.spotPricesByKey, residual);
-  let slope = defaultSlope;
-  let intercept = defaultIntercept;
-  let fitUsedDefault = true;
-  if (xs.length >= minFitSamples) {
-    try {
-      const fit = fitLinear(xs, ys);
-      slope = fit.slope;
-      intercept = fit.intercept;
-      fitUsedDefault = false;
-    } catch {
-      fitUsedDefault = true;
-    }
-  }
+  const ctx: FeatureContext = {
+    fiPricesByKey: input.spotPricesByKey,
+    neighborPricesByArea: input.neighborPricesByArea ?? new Map(),
+    windByKey,
+    consumptionByKey,
+  };
 
-  let predicted = predictSeries(residual, slope, intercept);
+  // Precompute the price index once and share it across training + every
+  // predicted quarter, so feature assembly stays O(1) per quarter (keeps the
+  // whole pipeline on the request path under the STACK §4 budget).
+  const priceIndex = buildForecastPriceIndex(ctx);
+
+  // Fit on the bounded training window; the model falls back to a neutral
+  // constant when there are too few aligned samples or the system is singular.
+  const trainOpts =
+    opts.ridgeLambda !== undefined ? { ridgeLambda: opts.ridgeLambda } : {};
+  const training = buildTrainingMatrix(seriesStartMs, ctx, priceIndex);
+  const fitted = model.fit(
+    { features: training.features, targets: training.targets },
+    trainOpts,
+  );
+  const fitUsedDefault = fitted.meta.usedFallback;
+
+  const numQuarters = Math.max(
+    0,
+    Math.trunc((seriesEndMs - seriesStartMs) / QUARTER_MS),
+  );
+
+  // Predict each future quarter. The model returns raw c/kWh (arcsinh inverted).
+  let predicted = new Map<string, number>();
+  for (let i = 0; i < numQuarters; i++) {
+    const ms = seriesStartMs + i * QUARTER_MS;
+    predicted.set(
+      quarterKey(ms),
+      fitted.predict(buildFeatureVectorIndexed(ms, ctx, priceIndex)),
+    );
+  }
 
   let hourBiasBuckets = 0;
   if (applyTimeBias) {
+    // Recover the daily price rhythm the level model misses, from the residual
+    // between published prices and the model's in-sample predictions. Reuse the
+    // already-built training rows rather than rebuilding feature vectors — keeps
+    // the request path off a second O(rows × scans) pass.
+    const inSamplePrices = new Map<string, number>();
+    const inSamplePredicted = new Map<string, number>();
+    for (let i = 0; i < training.keys.length; i++) {
+      const key = training.keys[i];
+      const row = training.features.rows[i];
+      const target = training.targets[i];
+      if (key === undefined || row === undefined || target === undefined) {
+        continue;
+      }
+      inSamplePrices.set(key, target);
+      inSamplePredicted.set(key, fitted.predict(row));
+    }
     const { biasByHour, globalBias } = fitHourBias(
-      input.spotPricesByKey,
-      predicted,
+      inSamplePrices,
+      inSamplePredicted,
     );
     predicted = applyHourBias(predicted, biasByHour, globalBias);
     hourBiasBuckets = biasByHour.size;
@@ -513,16 +564,11 @@ export const buildForecast = (
     predicted = clipped;
   }
 
-  const numQuarters = Math.max(
-    0,
-    Math.trunc((seriesEndMs - seriesStartMs) / QUARTER_MS),
-  );
   const built = buildPredictedSeries(predicted, seriesStartMs, numQuarters);
 
   const diagnostics: ForecastDiagnostics = {
-    slope,
-    intercept,
-    fitSamples: xs.length,
+    fitSamples: fitted.meta.sampleCount,
+    featureCount: fitted.meta.featureCount,
     fitUsedDefault,
     consumptionExtendedQuarters: consExtended.size - consQ.size,
     windExtendedQuarters: windExtended.size - windQ.size,

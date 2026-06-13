@@ -6,7 +6,7 @@ import {
   storeFingridRecords,
 } from "./fingrid-store.js";
 import { DATASET_WIND_FORECAST } from "./fingrid.js";
-import { HISTORY_DAYS } from "./forecast-job.js";
+import { HISTORY_DAYS, RETENTION_DAYS } from "./forecast-job.js";
 import type { FingridRecord } from "./types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -55,10 +55,19 @@ describe("runForecastFetchJob", () => {
     vi.restoreAllMocks();
   });
 
-  it("stores fetched records and prunes rows outside the window", async () => {
-    // Seed one ancient row that must be pruned.
-    const ancientMs = NOW.getTime() - (HISTORY_DAYS + 30) * DAY_MS;
-    await storeFingridRecords(pool, [record(ancientMs, 999)]);
+  it("prunes only rows older than the 2-year retention window, retaining accumulated history", async () => {
+    // A row beyond the retention window — must be pruned.
+    const expiredMs = NOW.getTime() - (RETENTION_DAYS + 10) * DAY_MS;
+    // A row WITHIN retention but well older than the 31-day fetch window —
+    // accumulating this history is the whole point, so it must be RETAINED.
+    const accumulatedMs = NOW.getTime() - (HISTORY_DAYS + 100) * DAY_MS;
+    expect(accumulatedMs).toBeGreaterThan(
+      NOW.getTime() - RETENTION_DAYS * DAY_MS,
+    );
+    await storeFingridRecords(pool, [
+      record(expiredMs, 999),
+      record(accumulatedMs, 555),
+    ]);
 
     const freshMs = NOW.getTime();
     const fingrid = await import("./fingrid.js");
@@ -73,18 +82,20 @@ describe("runForecastFetchJob", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.stored).toBe(1);
+      // Only the expired row is pruned; the accumulated row is kept.
       expect(result.pruned).toBe(1);
     }
 
-    // The ancient row is gone; the fresh row remains.
+    // Read across the full span: the expired row is gone, while both the
+    // accumulated (older than the fetch window) and the fresh row remain.
     const remaining = await getFingridRecordsByRange(
       pool,
       DATASET_WIND_FORECAST,
-      new Date(ancientMs - DAY_MS).toISOString(),
+      new Date(expiredMs - DAY_MS).toISOString(),
       new Date(freshMs + DAY_MS).toISOString(),
     );
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.value).toBe(111);
+    const values = remaining.map((r) => r.value).sort((a, b) => a - b);
+    expect(values).toEqual([111, 555]);
   });
 
   it("returns a degraded result without throwing when Fingrid degrades", async () => {

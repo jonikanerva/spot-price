@@ -23,7 +23,7 @@ Help a single household shift its flexible loads to the cheapest electricity in 
 - **Self-hosted and single-tenant.** One instance, one household. No multi-tenant machinery, no growth funnel — keep it simple to run.
 - **UTC inside, local time at the edge.** Store, schedule and calculate in UTC; convert to the user's timezone only in the response. This is what keeps night-rate and DST handling correct.
 - **Nord Pool is the price source.** Published prices come from the Nord Pool Data Portal. We don't blend in other price feeds or invent a price when Nord Pool is silent — the price endpoints just say "not published yet". The forecast is a clearly-labelled estimate, kept separate from real prices.
-- **Simple, typed, testable math.** Price and forecast calculations are pure functions, strictly typed, and testable without a database or network.
+- **Simple, typed, testable math.** Price and forecast calculations are pure, inspectable functions (incl. regularized linear regression), strictly typed, and testable without a database or network.
 
 ---
 
@@ -39,7 +39,7 @@ Help a single household shift its flexible loads to the cheapest electricity in 
 
 ## The forecast _(REQUIRED)_
 
-A light, optional extra. For the days Nord Pool hasn't published yet, spot-price estimates Finnish (FI) prices from public Fingrid grid data (wind + consumption) and our own stored price history, using simple, transparent math — not machine learning. Because it's an estimate, it lives on its own endpoint, is clearly marked as a forecast, and isn't mixed into the real-price answers or the cheapest-window decisions. If the data isn't good enough, it says so rather than guessing. Finland only, since Fingrid is the Finnish grid operator.
+A light, optional extra. For the days Nord Pool hasn't published yet, spot-price estimates Finnish (FI) prices from public Fingrid grid data (wind + consumption) and our own stored price history, using transparent, closed-form math — inspectable estimators such as (regularized) linear regression with hand-chosen features, not learned non-linear models, tree ensembles, or neural nets. Because it's an estimate, it lives on its own endpoint, is clearly marked as a forecast, and isn't mixed into the real-price answers or the cheapest-window decisions. If the data isn't good enough, it says so rather than guessing. Finland only, since Fingrid is the Finnish grid operator.
 
 ---
 
@@ -50,7 +50,7 @@ Spot-price isn't trying to be:
 - A price-comparison or contract-switching site (no provider rankings, no affiliate links).
 - A multi-tenant SaaS (no teams, no billing, no admin console).
 - A home-energy dashboard (no consumption tracking, solar/battery, meter readings, or usage analytics — Home Assistant already does that).
-- A heavy ML / forecasting product (the forecast stays a simple, explainable estimate, not a prediction engine).
+- A heavy ML / forecasting product (the forecast stays a simple, explainable, closed-form estimate — regularized linear regression at most — not a prediction engine, tree ensemble, or neural net).
 - A push / notification service (consumers poll; no webhooks or alerts).
 - A mobile app.
 

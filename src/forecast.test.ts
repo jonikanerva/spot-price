@@ -13,8 +13,6 @@ import {
   priceFloorFromHistory,
   quarterFloorUtc,
   quarterKey,
-  DEFAULT_SLOPE,
-  DEFAULT_INTERCEPT,
 } from "./forecast.js";
 
 const QUARTER_MS = 15 * 60 * 1000;
@@ -255,8 +253,14 @@ describe("buildPredictedSeries", () => {
 });
 
 describe("buildForecast (integration of the pure pipeline)", () => {
-  // Build a synthetic month where spot price ~ 0.002 * (consumption - wind) - 2,
-  // so the OLS fit should recover values close to the defaults but exact.
+  // Build a synthetic month where spot price = trueSlope * (consumption - wind)
+  // + trueIntercept, so the ridge model (residual is one of its features) can
+  // recover the relationship well.
+  const trueSlope = 0.001;
+  const trueIntercept = 3;
+  const priceFor = (consumption: number, windMw: number): number =>
+    trueSlope * (consumption - windMw) + trueIntercept;
+
   const buildSeries = (): {
     spot: Map<string, number>;
     cons: FingridRecord[];
@@ -265,33 +269,34 @@ describe("buildForecast (integration of the pure pipeline)", () => {
     const spot = new Map<string, number>();
     const cons: FingridRecord[] = [];
     const wind: FingridRecord[] = [];
-    const trueSlope = 0.001;
-    const trueIntercept = 3;
     for (let q = 0; q < 30 * 96; q++) {
       const ms = ANCHOR + q * QUARTER_MS;
       const consumption = 8000 + (q % 96) * 20; // daily ramp
       const windMw = 2000 + ((q * 137) % 1500); // pseudo-noise
-      const residual = consumption - windMw;
-      const price = trueSlope * residual + trueIntercept;
-      spot.set(quarterKey(ms), price);
+      spot.set(quarterKey(ms), priceFor(consumption, windMw));
       cons.push(rec(ms, consumption, 124));
       wind.push(rec(ms, windMw, 245));
     }
     return { spot, cons, wind };
   };
 
-  it("fits the model and predicts the future window without defaults", () => {
+  it("fits the model and predicts the future window without falling back", () => {
     const { spot, cons, wind } = buildSeries();
     const seriesStartMs = ANCHOR + 30 * 96 * QUARTER_MS;
     const seriesEndMs = seriesStartMs + 3 * DAY_MS;
 
-    // Provide future consumption/wind so the forecast horizon is covered.
+    // Provide future consumption/wind so the forecast horizon is covered, and
+    // record the true price for each future quarter to score against.
     const futureCons: FingridRecord[] = [];
     const futureWind: FingridRecord[] = [];
+    const truthByKey = new Map<string, number>();
     for (let q = 0; q < 3 * 96; q++) {
       const ms = seriesStartMs + q * QUARTER_MS;
-      futureCons.push(rec(ms, 8500, 124));
-      futureWind.push(rec(ms, 2500, 245));
+      const consumption = 8500 + (q % 96) * 18;
+      const windMw = 2200 + ((q * 113) % 1400);
+      futureCons.push(rec(ms, consumption, 124));
+      futureWind.push(rec(ms, windMw, 245));
+      truthByKey.set(quarterKey(ms), priceFor(consumption, windMw));
     }
 
     const result = buildForecast(
@@ -309,15 +314,21 @@ describe("buildForecast (integration of the pure pipeline)", () => {
 
     expect(result.diagnostics.fitUsedDefault).toBe(false);
     expect(result.diagnostics.fitSamples).toBeGreaterThanOrEqual(24);
+    expect(result.diagnostics.featureCount).toBeGreaterThan(0);
     // Exactly 3 days of quarters
     expect(result.series).toHaveLength(3 * 96);
     expect(result.diagnostics.zeroSeededQuarters).toBe(0);
-    // Recovered slope/intercept should be close to the synthetic truth
-    expect(result.diagnostics.slope).toBeCloseTo(0.001, 4);
-    expect(result.diagnostics.intercept).toBeCloseTo(3, 2);
+    // The recovered estimate tracks the synthetic truth closely (low MAE).
+    let sumAbs = 0;
+    for (const point of result.series) {
+      const truth = truthByKey.get(point.start) ?? 0;
+      sumAbs += Math.abs(point.estimatedSpotCentsKwh - truth);
+    }
+    const meanAbsError = sumAbs / result.series.length;
+    expect(meanAbsError).toBeLessThan(0.5);
   });
 
-  it("falls back to defaults when there is insufficient overlap", () => {
+  it("falls back when there is insufficient price history to fit", () => {
     const seriesStartMs = ANCHOR + 96 * QUARTER_MS;
     const seriesEndMs = seriesStartMs + DAY_MS;
     const result = buildForecast(
@@ -333,16 +344,19 @@ describe("buildForecast (integration of the pure pipeline)", () => {
       { applyTimeBias: false },
     );
     expect(result.diagnostics.fitUsedDefault).toBe(true);
-    expect(result.diagnostics.slope).toBe(DEFAULT_SLOPE);
-    expect(result.diagnostics.intercept).toBe(DEFAULT_INTERCEPT);
-    // No residual data -> entire window zero-seeded (hard outage)
-    expect(result.diagnostics.zeroSeededQuarters).toBe(96);
+    expect(result.diagnostics.fitSamples).toBeLessThan(24);
+    // The model returns its constant fallback for every quarter — a single
+    // distinct value, never zero-seeded (there IS a prediction for each quarter).
+    expect(result.diagnostics.zeroSeededQuarters).toBe(0);
+    const distinct = new Set(result.series.map((p) => p.estimatedSpotCentsKwh));
+    expect(distinct.size).toBe(1);
   });
 
   it("applies the floor clip and counts clipped quarters", () => {
     const seriesStartMs = ANCHOR;
     const seriesEndMs = seriesStartMs + QUARTER_MS * 2;
-    // Force a low prediction via defaults: residual small -> price ~ -2
+    // No history → model falls back to its constant (~3.0); floor above it clips
+    // every quarter.
     const cons = [rec(ANCHOR, 100, 124), rec(ANCHOR + QUARTER_MS, 100, 124)];
     const result = buildForecast(
       {
@@ -354,12 +368,12 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { applyTimeBias: false, floor: 0.5 },
+      { applyTimeBias: false, floor: 5 },
     );
-    expect(result.diagnostics.predictionFloor).toBe(0.5);
+    expect(result.diagnostics.predictionFloor).toBe(5);
     expect(result.diagnostics.floorClippedQuarters).toBe(2);
     for (const point of result.series) {
-      expect(point.estimatedSpotCentsKwh).toBeGreaterThanOrEqual(0.5);
+      expect(point.estimatedSpotCentsKwh).toBeGreaterThanOrEqual(5);
     }
   });
 });

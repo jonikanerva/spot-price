@@ -44,12 +44,22 @@ const seedUserAndKey = async (pool: Pool): Promise<void> => {
   );
 };
 
-/** Seed ~21 days of FI prices ending at the last full quarter before now. */
+/**
+ * Seed ~21 days of FI prices ending at the last full quarter before now.
+ *
+ * One multi-row INSERT rather than 2016 awaited single-row round-trips: the
+ * row-by-row version dominated the test at ~5-6 s and tipped these heavy-setup
+ * tests over vitest's 5 s default in the cold-DB parallel run. The batched form
+ * runs in well under a second, so the test reflects the route, not the seed.
+ */
 const seedPriceHistory = async (
   pool: Pool,
   anchorMs: number,
 ): Promise<void> => {
   const startMs = anchorMs - 21 * DAY_MS;
+  const tuples: string[] = [];
+  const params: (string | number)[] = [];
+  let i = 1;
   for (let q = 0; q < 21 * 96; q++) {
     const ms = startMs + q * QUARTER_MS;
     const start = new Date(ms).toISOString();
@@ -57,14 +67,16 @@ const seedPriceHistory = async (
     const hour = new Date(ms).getUTCHours();
     // EUR/MWh: a daily ramp so there is real structure to fit.
     const eurMwh = 20 + hour * 2;
-    await pool.query(
-      `INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
-       VALUES ($1, $2, $3, 'FI')
-       ON CONFLICT (delivery_start, area) DO UPDATE
-         SET delivery_end = EXCLUDED.delivery_end, price_eur_mwh = EXCLUDED.price_eur_mwh`,
-      [start, end, eurMwh],
-    );
+    tuples.push(`($${String(i++)}, $${String(i++)}, $${String(i++)}, 'FI')`);
+    params.push(start, end, eurMwh);
   }
+  await pool.query(
+    `INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
+     VALUES ${tuples.join(", ")}
+     ON CONFLICT (delivery_start, area) DO UPDATE
+       SET delivery_end = EXCLUDED.delivery_end, price_eur_mwh = EXCLUDED.price_eur_mwh`,
+    params,
+  );
 };
 
 /** Seed Fingrid datasets across the whole [history, forecast] window. */
