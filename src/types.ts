@@ -121,6 +121,14 @@ export interface ForecastDiagnostics {
   readonly windExtendedQuarters: number;
   readonly filledQuarters: number;
   readonly zeroSeededQuarters: number;
+  /**
+   * Predicted quarters that had no 1d/7d persistence lag to take a within-day
+   * shape from and fell back to the flat per-day ridge level. Near-zero in
+   * practice (the route reads ~30d of contiguous history); a non-trivial count
+   * at the far horizon would mean the shape is thinning out. NOT a degrade
+   * trigger — a flat-level fallback is still an honest level estimate.
+   */
+  readonly shapeFallbackQuarters: number;
   readonly predictionFloor: number | null;
   readonly floorClippedQuarters: number;
   /** True when a calibrated band artifact was applied to the series. */
