@@ -7,6 +7,7 @@ import {
   startScheduler,
   runStartupFetch,
   runStartupForecastFetch,
+  runStartupWeatherFetch,
 } from "./scheduler.js";
 
 const main = async (): Promise<void> => {
@@ -23,6 +24,15 @@ const main = async (): Promise<void> => {
     );
   }
 
+  // Weather collection (issue #73 Phase 1) is optional too. When disabled in
+  // production make it loud in the Railway logs rather than silently dropping
+  // the forward-only weather history that future forecast phases depend on.
+  if (env.NODE_ENV === "production" && !env.OPENWEATHERMAP_API_KEY) {
+    console.warn(
+      "Weather collection disabled: OPENWEATHERMAP_API_KEY not set — weather_series will not accumulate",
+    );
+  }
+
   const pool = await initDatabase();
   const auth = createAuth(pool);
   const app = createApp(pool, auth);
@@ -30,9 +40,14 @@ const main = async (): Promise<void> => {
 
   // Start price fetch scheduler (2h baseline + 10min burst during publication window)
   // plus the hourly Fingrid forecast fetch when a key is configured.
-  const scheduler = startScheduler(pool, env.FINGRID_API_KEY);
+  const scheduler = startScheduler(
+    pool,
+    env.FINGRID_API_KEY,
+    env.OPENWEATHERMAP_API_KEY,
+  );
   runStartupFetch(pool);
   runStartupForecastFetch(pool, env.FINGRID_API_KEY);
+  runStartupWeatherFetch(pool, env.OPENWEATHERMAP_API_KEY);
 
   // Graceful shutdown: stop scheduler, close DB, then exit
   const shutdown = async (): Promise<void> => {

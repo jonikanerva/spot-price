@@ -82,8 +82,8 @@ It's working when the user can say:
 
 ## Persistence and Privacy Posture _(REQUIRED)_
 
-- **Stored in PostgreSQL:** user account (username, hashed password, session via Better Auth), one row of contract settings per user, API keys (stored in plaintext so the setup UI can re-display the current key), Nord Pool day-ahead prices, and the Finnish Fingrid wind/consumption series for the forecast. The price and grid data are public, not personal.
-- **Sent off-device:** requests to Nord Pool (`dataportal-api.nordpoolgroup.com`) and Fingrid (`data.fingrid.fi`). No telemetry, analytics, or third-party tracking.
+- **Stored in PostgreSQL:** user account (username, hashed password, session via Better Auth), one row of contract settings per user, API keys (stored in plaintext so the setup UI can re-display the current key), Nord Pool day-ahead prices, the Finnish Fingrid wind/consumption series, and public OpenWeatherMap weather forecasts for a fixed set of FI points, for the forecast. The price, grid, and weather data are public, not personal.
+- **Sent off-device:** requests to Nord Pool (`dataportal-api.nordpoolgroup.com`), Fingrid (`data.fingrid.fi`), and OpenWeatherMap (`api.openweathermap.org`). No telemetry, analytics, or third-party tracking.
 - **Not stored:** household consumption, meter readings, location beyond an area code, per-user request logs, request bodies, or IPs beyond what in-memory rate limiting needs.
 - **Logs:** just process logs on Railway; keep API keys, passwords, tokens and personal data out of them.
 
