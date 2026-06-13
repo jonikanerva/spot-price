@@ -7,6 +7,7 @@
 ## 0. Project shape
 
 - **Shape:** single-package backend service. One Hono process exposes the REST API (`/api/v1/...`), a setup-only server-rendered HTML UI (`src/ui.ts` + inline `src/ui-client.ts`), the OpenAPI 3.1 document (`/api/v1/openapi.json`) with the interactive Scalar reference (`/api/docs`), and an in-process `node-cron` price-fetch job. **No `apps/`, no `packages/`, no frontend build.**
+- **Offline dev tooling:** the forecast backtest engine/CLI, `regenerate-bands`, and `backtest-metrics` live under `tools/` (not `src/`), are excluded from the production bundle (tsup's only entry is `src/index.ts`, and an ESLint guard forbids `src/` runtime from importing `tools/`), and are run on demand via `pnpm backtest` / `pnpm tsx tools/regenerate-bands.ts` — never in the server process.
 - **Critical execution path:** the per-request hot path on the API (price-now / today / tomorrow / cheapest / history / forecast) and the day-ahead price fetch path (`src/fetch-job.ts`). Price math is a pure function of `(HourlyPrice, UserSettings)` in `src/calculator.ts`; the forecast estimate is a pure function of its inputs in `src/forecast.ts` (no DB, clock, or network) — the forecast route reads pre-fetched Fingrid rows off the DB and never calls Fingrid synchronously.
 - **Applicable states:** API responses are typed success / typed error. When Nord Pool has not published, the answer is an explicit `available: false` / `404` — never an estimate (`VISION.md → One trusted upstream`). The setup UI handles awaiting-first-data, success, empty, permission/auth-blocked, and error.
 
@@ -117,7 +118,7 @@ Default answer to "should we add a library?" is **no**. New entries require a `S
 - Full-import of `lodash` (`import _ from 'lodash'`) — import single functions only, or use the standard library equivalent.
 - Raw `fetch` without zod-validated response parsing for any external network call (e.g. the Nord Pool upstream at `dataportal-api.nordpoolgroup.com`).
 - Default exports for non-route, non-config modules — prefer named exports for tree-shakability and refactor safety.
-- `process.env.X` reads outside a single `src/env.ts` module that validates with zod and re-exports a typed `env` constant. Test files (`*.test.ts`, `src/test-utils.ts`) are exempt where they need to set up isolated test schemas or override env per test.
+- `process.env.X` reads outside a single `src/env.ts` module that validates with zod and re-exports a typed `env` constant. Test files (`*.test.ts`, `src/test-utils.ts`) are exempt where they need to set up isolated test schemas or override env per test. (`DATABASE_PUBLIC_URL` is an optional env, declared in `env.ts` but never production-required — it is read only by the offline backtest CLI's `--db` mode to reach the Railway DB from a dev machine; the server uses `DATABASE_URL`.)
 - Local-time date / hour arithmetic inside calculators or storage — UTC is mandatory below the response boundary; only `formatDateTimeInTimeZone`-style conversion at the edge (`VISION.md → UTC internally`).
 - Reintroducing any of the rejected stack choices: React, Vite, TanStack Router/Query, SPA build tooling, `pino` or other third-party loggers, ORMs (Drizzle/Prisma/Kysely), client-side state-management libraries (Redux/MobX/Recoil/Jotai).
 

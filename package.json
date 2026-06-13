@@ -17,10 +17,13 @@
     "smoke": "bash ./scripts/smoke-local.sh",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "tsx e2e/global-setup.ts && playwright test",
     "test:all": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tools/tsconfig.json",
     "seed": "tsx --env-file=.env src/seed.ts",
+    "backtest": "tsx --env-file=.env tools/backtest-cli.ts",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose down",
     "copy:migrations": "mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/"
   },
   "dependencies": {

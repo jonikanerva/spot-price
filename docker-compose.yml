@@ -9,6 +9,13 @@ services:
       POSTGRES_DB: spot_price
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Lets `docker compose up -d --wait` (pnpm db:up) block until Postgres is
+    # actually accepting connections, so `pnpm dev`/`pnpm seed` are non-racy.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spot -d spot_price"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
 
 volumes:
   pgdata:

@@ -1,17 +1,17 @@
 /**
  * OFFLINE / DEV-ONLY regeneration script for the conformal band artifact.
  *
- * IMPORTANT: this module must NOT be imported by any route, `index.ts`, or
- * `app.ts`, and is NOT part of `$BUILD_CMD` or the request path. Like
- * `backtest.ts`, the production bundle's only tsup entry is `src/index.ts` and
- * nothing in that graph imports this file, so it never reaches `dist/`. It runs
- * only as a tsx script:
+ * IMPORTANT: this module lives in `tools/` (offline-only) and must NOT be
+ * imported by any `src/` runtime module — the production bundle's only tsup
+ * entry is `src/index.ts`, and an ESLint guard forbids `src/` runtime from
+ * importing `tools/`, so it never reaches `dist/`. It runs only as a tsx script:
  *
- *     pnpm tsx src/regenerate-bands.ts --data tools/backtest-data
+ *     pnpm tsx tools/regenerate-bands.ts --data tools/backtest-data/fixture.json
  *
  * It runs the issue-time, leakage-guarded backtest over real exported
  * price/Fingrid history, derives per-UTC-hour residual offsets and measured
- * out-of-sample coverage (`conformal.ts`), and rewrites `conformal-artifact.ts`.
+ * out-of-sample coverage (`src/conformal.ts`), and rewrites the SHIPPED
+ * `src/conformal-artifact.ts`.
  * A human reviews and commits the result. Regenerating the artifact is a
  * documented PERIODIC MANUAL CHORE — NOT a background job (`STACK §9`). Bands
  * turn on (or off) purely by committing a new artifact; no code change.
@@ -23,7 +23,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { deriveBandsFromBacktest, loadFixture } from "./backtest.js";
-import type { BandOffsets, CalibratedBands } from "./conformal.js";
+import type { BandOffsets, CalibratedBands } from "../src/conformal.js";
 
 const offsetsLiteral = (o: BandOffsets): string =>
   `{ lowOffset: ${String(o.lowOffset)}, highOffset: ${String(o.highOffset)} }`;
@@ -75,20 +75,21 @@ export const CALIBRATED_BANDS: CalibratedBands = {
 };
 
 const main = (): void => {
-  const dirArgIdx = process.argv.indexOf("--data");
+  const dataArgIdx = process.argv.indexOf("--data");
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const dataDir =
-    dirArgIdx >= 0 && process.argv[dirArgIdx + 1] !== undefined
-      ? (process.argv[dirArgIdx + 1] as string)
-      : path.join(here, "..", "tools", "backtest-data");
+  const dataFile =
+    dataArgIdx >= 0 && process.argv[dataArgIdx + 1] !== undefined
+      ? (process.argv[dataArgIdx + 1] as string)
+      : path.join(here, "backtest-data", "fixture.json");
 
-  const data = loadFixture(dataDir);
+  const data = loadFixture(dataFile);
   const { summary, bands } = deriveBandsFromBacktest(
     data,
     new Date().toISOString(),
   );
 
-  const outPath = path.join(here, "conformal-artifact.ts");
+  // The artifact is a SHIPPED src/ module; write it back into src/.
+  const outPath = path.join(here, "..", "src", "conformal-artifact.ts");
   writeFileSync(outPath, renderArtifact(bands), "utf-8");
 
   console.log(`\nConformal band artifact regenerated → ${outPath}`);

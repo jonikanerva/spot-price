@@ -31,7 +31,10 @@ export default defineConfig({
   test: {
     globals: false,
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    // src/ holds the shipped code and the conformal tests; tools/ holds the
+    // offline backtest engine/CLI/regen and their tests. Both globs run so
+    // moving a test to tools/ never silently drops it from the suite.
+    include: ["src/**/*.test.ts", "tools/**/*.test.ts"],
     env: loadDotEnv(),
   },
 });
