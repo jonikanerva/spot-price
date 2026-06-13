@@ -33,6 +33,16 @@ const baseSchema = z.object({
   DATABASE_URL: z.string().min(1).optional(),
 
   /**
+   * Public PostgreSQL connection string for DEV TOOLING ONLY (e.g. the offline
+   * `pnpm backtest --db` CLI run from a developer machine against the deployed
+   * DB's public endpoint). Optional and intentionally NOT in the production
+   * `requireFor` checks — the server never depends on it; it reads
+   * `DATABASE_URL`. The backtest CLI prefers this when set, falling back to
+   * `DATABASE_URL`.
+   */
+  DATABASE_PUBLIC_URL: z.string().min(1).optional(),
+
+  /**
    * Optional override used by the Vitest test setup so unit/integration
    * tests can hit a separate PostgreSQL database from the dev one. Falls
    * back to `DATABASE_URL` in `initTestDatabase()` when not set.
