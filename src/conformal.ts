@@ -10,13 +10,14 @@
  * ---------------------------------------------------------------------------
  * WHY OFFLINE / OUT-OF-SAMPLE RESIDUALS (load-bearing — do not violate).
  * ---------------------------------------------------------------------------
- * The band spread MUST come from the offline backtest, NOT from the in-sample
- * hour-bias pass in `forecast.ts`. After `applyHourBias`, the in-sample residual
- * is mean-zero per UTC hour BY CONSTRUCTION and is measured on the very rows the
- * model trained on — so harvesting band residuals there would be structurally
- * too tight, especially at spike hours, and dishonest. The honest spread is the
- * realised-vs-predicted error the backtest sees on data the forecast had never
- * seen at issue time.
+ * The band spread MUST come from the offline backtest, NOT from any in-sample
+ * residual computed inside `forecast.ts`. A residual measured on the very rows
+ * the model trained on is structurally too tight (mean-zero by construction,
+ * especially at spike hours) and dishonest. (The forecast once carried an
+ * in-sample per-UTC-hour bias pass that made exactly this mistake — and inverted
+ * the within-day ranking as a side effect; it was removed, see the rank-inversion
+ * fix.) The honest spread is the realised-vs-predicted error the backtest sees on
+ * data the forecast had never seen at issue time.
  *
  * This is an EMPIRICAL band: a percentile of recent residual spread, NOT a
  * guaranteed coverage probability. Real prices can and do fall outside it,

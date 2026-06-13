@@ -2,13 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { FingridRecord } from "./types.js";
 import {
   alignSeries,
-  applyHourBias,
+  applyWithinDayShape,
   bucketRecords,
   buildForecast,
   buildPredictedSeries,
   expandHourlyToQuarters,
   extendWithLastWeek,
-  fitHourBias,
   fitLinear,
   priceFloorFromHistory,
   quarterFloorUtc,
@@ -30,6 +29,51 @@ const rec = (startMs: number, value: number, datasetId = 1): FingridRecord => ({
 
 // A fixed UTC anchor that is exactly on a quarter and hour boundary.
 const ANCHOR = Date.parse("2026-03-01T00:00:00.000Z");
+
+/**
+ * Spearman rank correlation of two equal-length arrays — fractional ranks
+ * (ties averaged) fed into Pearson. Local to the test so the rank-identity
+ * assertions don't depend on `tools/` (the `src/` runtime cannot import it).
+ */
+const spearman = (xs: readonly number[], ys: readonly number[]): number => {
+  const rank = (vs: readonly number[]): number[] => {
+    const order = vs.map((v, i) => [v, i] as const).sort((a, b) => a[0] - b[0]);
+    const ranks = new Array<number>(vs.length).fill(0);
+    let i = 0;
+    while (i < order.length) {
+      let j = i;
+      while (
+        j + 1 < order.length &&
+        (order[j + 1]?.[0] ?? 0) === (order[i]?.[0] ?? 0)
+      ) {
+        j++;
+      }
+      const avg = (i + j) / 2 + 1; // 1-based, ties averaged
+      for (let k = i; k <= j; k++) {
+        ranks[order[k]?.[1] ?? 0] = avg;
+      }
+      i = j + 1;
+    }
+    return ranks;
+  };
+  const pearson = (a: readonly number[], b: readonly number[]): number => {
+    const n = a.length;
+    const ma = a.reduce((s, v) => s + v, 0) / n;
+    const mb = b.reduce((s, v) => s + v, 0) / n;
+    let cov = 0;
+    let va = 0;
+    let vb = 0;
+    for (let i = 0; i < n; i++) {
+      const da = (a[i] ?? 0) - ma;
+      const db = (b[i] ?? 0) - mb;
+      cov += da * db;
+      va += da * da;
+      vb += db * db;
+    }
+    return va === 0 || vb === 0 ? 0 : cov / Math.sqrt(va * vb);
+  };
+  return pearson(rank(xs), rank(ys));
+};
 
 describe("quarterFloorUtc / quarterKey", () => {
   it("floors to the 15-minute boundary", () => {
@@ -173,37 +217,6 @@ describe("alignSeries", () => {
   });
 });
 
-describe("fitHourBias / applyHourBias", () => {
-  it("computes mean residual per UTC hour and applies it", () => {
-    const k0 = quarterKey(ANCHOR); // 00:00 UTC
-    const k1 = quarterKey(ANCHOR + HOUR_MS); // 01:00 UTC
-    const actual = new Map<string, number>([
-      [k0, 12],
-      [k1, 5],
-    ]);
-    const predicted = new Map<string, number>([
-      [k0, 10],
-      [k1, 8],
-    ]);
-    const { biasByHour, globalBias } = fitHourBias(actual, predicted);
-    expect(biasByHour.get(0)).toBe(2); // 12 - 10
-    expect(biasByHour.get(1)).toBe(-3); // 5 - 8
-    expect(globalBias).toBeCloseTo(-0.5, 9);
-
-    const corrected = applyHourBias(predicted, biasByHour, globalBias);
-    expect(corrected.get(k0)).toBe(12);
-    expect(corrected.get(k1)).toBe(5);
-  });
-
-  it("falls back to global bias for unseen hours", () => {
-    const biasByHour = new Map<number, number>([[0, 2]]);
-    const k5 = quarterKey(ANCHOR + 5 * HOUR_MS);
-    const predicted = new Map<string, number>([[k5, 10]]);
-    const corrected = applyHourBias(predicted, biasByHour, 1.5);
-    expect(corrected.get(k5)).toBe(11.5);
-  });
-});
-
 describe("priceFloorFromHistory", () => {
   it("returns the percentile of hourly minima", () => {
     // 10 hours, minima 1..10; 5th percentile index = trunc(10*5/100)-1 = -? -> max(0, -1) = 0
@@ -219,6 +232,126 @@ describe("priceFloorFromHistory", () => {
 
   it("returns null with no history", () => {
     expect(priceFloorFromHistory(new Map())).toBeNull();
+  });
+});
+
+describe("applyWithinDayShape", () => {
+  // One UTC day of 4 quarters with a deliberately anti-phase ridge level (so the
+  // ridge ranking is the OPPOSITE of the lag shape) and a clean 1d-lag profile.
+  const buildDay = (): {
+    predicted: Map<string, number>;
+    spot: Map<string, number>;
+    keys: string[];
+  } => {
+    const keys: string[] = [];
+    // Ridge predicts a DECREASING level across the day; the 1d-lag (yesterday)
+    // is INCREASING — so the persistence shape is anti-phase to ridge.
+    const ridge = [10, 9, 8, 7];
+    const lag = [1, 2, 3, 4];
+    const predicted = new Map<string, number>();
+    const spot = new Map<string, number>();
+    for (let q = 0; q < 4; q++) {
+      const ms = ANCHOR + q * QUARTER_MS;
+      const key = quarterKey(ms);
+      keys.push(key);
+      predicted.set(key, ridge[q] ?? 0);
+      spot.set(quarterKey(ms - DAY_MS), lag[q] ?? 0); // 1d lag
+    }
+    return { predicted, spot, keys };
+  };
+
+  it("makes within-day output ranking exactly equal the persistence ranking", () => {
+    const { predicted, spot, keys } = buildDay();
+    const { result } = applyWithinDayShape(predicted, spot);
+    const out = keys.map((k) => result.get(k) ?? 0);
+    const lag = keys.map(
+      (k) => spot.get(quarterKey(new Date(k).getTime() - DAY_MS)) ?? 0,
+    );
+    // Spearman of the shaped output vs the persistence shape is exactly 1 — the
+    // per-day constant cannot change the within-day order.
+    expect(spearman(out, lag)).toBeCloseTo(1, 12);
+  });
+
+  it("preserves the ridge per-day mean as the output's per-day mean", () => {
+    const { predicted, spot, keys } = buildDay();
+    const { result } = applyWithinDayShape(predicted, spot);
+    const ridgeMean =
+      keys.reduce((s, k) => s + (predicted.get(k) ?? 0), 0) / keys.length;
+    const outMean =
+      keys.reduce((s, k) => s + (result.get(k) ?? 0), 0) / keys.length;
+    expect(outMean).toBeCloseTo(ridgeMean, 12);
+  });
+
+  it("prefers the 1d lag over the 7d lag when both are present", () => {
+    const ms = ANCHOR;
+    const key = quarterKey(ms);
+    const predicted = new Map<string, number>([
+      [key, 5],
+      [quarterKey(ms + QUARTER_MS), 5],
+    ]);
+    const spot = new Map<string, number>([
+      [quarterKey(ms - DAY_MS), 100], // 1d lag — should win
+      [quarterKey(ms - WEEK_MS), 1], // 7d lag — ignored when 1d exists
+    ]);
+    const { result, shapeFallbackQuarters } = applyWithinDayShape(
+      predicted,
+      spot,
+    );
+    // persistenceDailyMean over the two quarters: only the first has a lag (100),
+    // the second has none → mean = 100. out(q0) = 5 + (100 − 100) = 5.
+    expect(result.get(key)).toBeCloseTo(5, 12);
+    // q1 has no lag at all → flat ridge level + fallback counted.
+    expect(result.get(quarterKey(ms + QUARTER_MS))).toBeCloseTo(5, 12);
+    expect(shapeFallbackQuarters).toBe(1);
+  });
+
+  it("falls back to the flat per-day ridge mean when a quarter has neither lag", () => {
+    const ms = ANCHOR;
+    // Two quarters: one with a 1d lag, one with no lag at all.
+    const predicted = new Map<string, number>([
+      [quarterKey(ms), 8],
+      [quarterKey(ms + QUARTER_MS), 12],
+    ]);
+    const spot = new Map<string, number>([[quarterKey(ms - DAY_MS), 3]]);
+    const { result, shapeFallbackQuarters } = applyWithinDayShape(
+      predicted,
+      spot,
+    );
+    const ridgeMean = (8 + 12) / 2; // 10
+    // q0 has the only lag → persistenceDailyMean = 3 → out = 10 + (3 − 3) = 10.
+    expect(result.get(quarterKey(ms))).toBeCloseTo(ridgeMean, 12);
+    // q1 has no lag → flat ridge mean, counted as a fallback.
+    expect(result.get(quarterKey(ms + QUARTER_MS))).toBeCloseTo(ridgeMean, 12);
+    expect(shapeFallbackQuarters).toBe(1);
+  });
+
+  it("groups by UTC day across a DST boundary with no off-by-one (keys are UTC)", () => {
+    // EU spring-forward is 2026-03-29 01:00 UTC. UTC has no DST, so the UTC-day
+    // grouping must be unaffected: a quarter just before and just after local
+    // DST both belong to the same UTC day 2026-03-29.
+    const dayStart = Date.parse("2026-03-29T00:00:00.000Z");
+    const beforeLocalDst = quarterKey(dayStart + 30 * 60 * 1000); // 00:30 UTC
+    const afterLocalDst = quarterKey(dayStart + 90 * 60 * 1000); // 01:30 UTC
+    const nextUtcDay = quarterKey(dayStart + DAY_MS); // 2026-03-30T00:00Z
+    const predicted = new Map<string, number>([
+      [beforeLocalDst, 4],
+      [afterLocalDst, 6],
+      [nextUtcDay, 100],
+    ]);
+    // 1d lags so each quarter takes a shape.
+    const spot = new Map<string, number>([
+      [quarterKey(new Date(beforeLocalDst).getTime() - DAY_MS), 1],
+      [quarterKey(new Date(afterLocalDst).getTime() - DAY_MS), 9],
+      [quarterKey(new Date(nextUtcDay).getTime() - DAY_MS), 50],
+    ]);
+    const { result } = applyWithinDayShape(predicted, spot);
+    // The two same-UTC-day quarters share one ridge mean ((4+6)/2 = 5); the next
+    // UTC day is its own group (mean 100) — proving no cross-day leakage.
+    const dayMean =
+      ((result.get(beforeLocalDst) ?? 0) + (result.get(afterLocalDst) ?? 0)) /
+      2;
+    expect(dayMean).toBeCloseTo(5, 12);
+    expect(result.get(nextUtcDay)).toBeCloseTo(100, 12);
   });
 });
 
@@ -310,7 +443,7 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { applyTimeBias: false },
+      {},
     );
 
     expect(result.diagnostics.fitUsedDefault).toBe(false);
@@ -342,7 +475,7 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { applyTimeBias: false },
+      {},
     );
     expect(result.diagnostics.fitUsedDefault).toBe(true);
     expect(result.diagnostics.fitSamples).toBeLessThan(24);
@@ -369,13 +502,77 @@ describe("buildForecast (integration of the pure pipeline)", () => {
         seriesStartMs,
         seriesEndMs,
       },
-      { applyTimeBias: false, floor: 5 },
+      { floor: 5 },
     );
     expect(result.diagnostics.predictionFloor).toBe(5);
     expect(result.diagnostics.floorClippedQuarters).toBe(2);
     for (const point of result.series) {
       expect(point.estimatedSpotCentsKwh).toBeGreaterThanOrEqual(5);
     }
+  });
+
+  it("ranks within a day in PHASE with the lag shape (inversion gone)", () => {
+    // Regression for #69: a month of history whose price has a strong within-day
+    // SHAPE (a clean daily/weekly-repeating sinusoid) sitting on a level driven
+    // by the grid residual. The ridge model has real LEVEL skill but is rank-blind
+    // to that within-day shape; `applyWithinDayShape` stamps the persistence
+    // (1d/7d lag) shape back on, so the forecast's within-day ranking must be in
+    // phase with the lag — positive Spearman, not the old inverted negative.
+    const shape = (q: number): number =>
+      // peaks late-day, troughs at night — the realistic FI rhythm.
+      4 * Math.sin((2 * Math.PI * (q - 24)) / 96);
+    const spot = new Map<string, number>();
+    const cons: FingridRecord[] = [];
+    const wind: FingridRecord[] = [];
+    for (let q = 0; q < 30 * 96; q++) {
+      const ms = ANCHOR + q * QUARTER_MS;
+      const consumption = 8000 + ((q / 96) | 0) * 5; // slow level drift only
+      const windMw = 2000;
+      const level = 0.001 * (consumption - windMw) + 10;
+      spot.set(quarterKey(ms), level + shape(q % 96));
+      cons.push(rec(ms, consumption, 124));
+      wind.push(rec(ms, windMw, 245));
+    }
+
+    const seriesStartMs = ANCHOR + 30 * 96 * QUARTER_MS;
+    const seriesEndMs = seriesStartMs + DAY_MS; // score d+1
+    const futureCons: FingridRecord[] = [];
+    const futureWind: FingridRecord[] = [];
+    for (let q = 0; q < 96; q++) {
+      const ms = seriesStartMs + q * QUARTER_MS;
+      futureCons.push(rec(ms, 8200, 124));
+      futureWind.push(rec(ms, 2000, 245));
+    }
+
+    const result = buildForecast({
+      spotPricesByKey: spot,
+      windForecast: [...wind, ...futureWind],
+      windActual: wind,
+      consumptionForecast: [...cons, ...futureCons],
+      consumptionActual: cons,
+      seriesStartMs,
+      seriesEndMs,
+    });
+
+    // The lag shape the decomposition leans on: the published price exactly one
+    // week before each forecast quarter (the persistence profile).
+    const out: number[] = [];
+    const lag: number[] = [];
+    for (const point of result.series) {
+      const ms = new Date(point.start).getTime();
+      const weekAgo = spot.get(quarterKey(ms - WEEK_MS));
+      const dayAgo = spot.get(quarterKey(ms - DAY_MS));
+      const persistence = dayAgo ?? weekAgo;
+      if (persistence !== undefined) {
+        out.push(point.estimatedSpotCentsKwh);
+        lag.push(persistence);
+      }
+    }
+    expect(out.length).toBeGreaterThan(80);
+    // In phase with the lag shape — strongly positive, definitively not inverted.
+    expect(spearman(out, lag)).toBeGreaterThan(0.9);
+    // Diagnostics surface the within-day-shape fallback counter.
+    expect(result.diagnostics.shapeFallbackQuarters).toBe(0);
   });
 });
 
@@ -452,7 +649,7 @@ describe("buildForecast — prediction bands", () => {
         seriesStartMs: i.seriesStartMs,
         seriesEndMs: i.seriesEndMs,
       },
-      { applyTimeBias: false, bands: dark },
+      { bands: dark },
     );
     expect(result.diagnostics.bandCalibrated).toBe(false);
     expect(result.diagnostics.bandHourBuckets).toBe(0);
@@ -474,7 +671,7 @@ describe("buildForecast — prediction bands", () => {
         seriesStartMs: i.seriesStartMs,
         seriesEndMs: i.seriesEndMs,
       },
-      { applyTimeBias: false, bands: calibrated, floor: 0 },
+      { bands: calibrated, floor: 0 },
     );
     expect(result.diagnostics.bandCalibrated).toBe(true);
     expect(result.diagnostics.bandHourBuckets).toBe(result.series.length);
@@ -507,7 +704,7 @@ describe("buildForecast — prediction bands", () => {
         seriesStartMs: i.seriesStartMs,
         seriesEndMs: i.seriesEndMs,
       },
-      { applyTimeBias: false, bands: calibrated },
+      { bands: calibrated },
     );
     let banded = 0;
     for (const point of result.series) {

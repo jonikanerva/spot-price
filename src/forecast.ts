@@ -18,8 +18,8 @@ import { CALIBRATED_BANDS } from "./conformal-artifact.js";
  * Pure FI price-forecast pipeline. A pluggable closed-form regression over a
  * rich feature set (grid residual + wind/consumption + an interaction term, FI
  * and neighbour price lags, UTC calendar) — still no machine learning: the
- * default `Model` is hand-rolled ridge (`model.ts`), and a per-hour bias plus
- * an optional price floor refine the level afterwards.
+ * default `Model` is hand-rolled ridge (`model.ts`), and an optional price floor
+ * refines the level afterwards.
  *
  * This module is strictly pure: no `pg`, no `fetch`, no `env`, no `Date.now()`.
  * Everything works on UTC ISO 8601 quarter keys (15-min floor). The I/O
@@ -224,59 +224,119 @@ export const fitLinear = (
 };
 
 // ---------------------------------------------------------------------------
-// Per-UTC-hour bias correction
+// Within-day shape decomposition
 // ---------------------------------------------------------------------------
 
 /**
- * Mean residual error (actual - predicted) per UTC hour-of-day over the
- * overlap. The linear model captures the price *level* but not the daily price
- * *rhythm* (peaks/troughs driven by neighbour prices, solar/demand) — this
- * additive per-hour correction recovers that rhythm from the published prices.
- * Returns the per-hour bias plus a `globalBias` fallback for unseen hours.
+ * Look up the persistence value for a predicted quarter at `ms`: the published
+ * spot price one day earlier, else one week earlier, else null. UTC-only lag-key
+ * construction identical to `features.ts` (`ms − DAY_MS` / `ms − WEEK_MS` +
+ * `quarterKey`), so the persistence shape stays exactly the strong weekly/daily
+ * seasonality the model's own lag features draw on.
  */
-export const fitHourBias = (
-  actualPrices: ReadonlyMap<string, number>,
-  predicted: ReadonlyMap<string, number>,
-): {
-  readonly biasByHour: ReadonlyMap<number, number>;
-  readonly globalBias: number;
-} => {
-  const errorsByHour = new Map<number, number[]>();
-  const allErrors: number[] = [];
-  for (const [key, actual] of actualPrices) {
-    const pred = predicted.get(key);
-    if (pred === undefined) {
-      continue;
-    }
-    const error = actual - pred;
-    const hour = hourOfKey(key);
-    const bucket = errorsByHour.get(hour) ?? [];
-    bucket.push(error);
-    errorsByHour.set(hour, bucket);
-    allErrors.push(error);
+const persistenceAt = (
+  ms: number,
+  spotPricesByKey: ReadonlyMap<string, number>,
+): number | null => {
+  const oneDay = spotPricesByKey.get(quarterKey(ms - DAY_MS));
+  if (oneDay !== undefined) {
+    return oneDay;
   }
-  const globalBias =
-    allErrors.length > 0
-      ? allErrors.reduce((a, b) => a + b, 0) / allErrors.length
-      : 0;
-  const biasByHour = new Map<number, number>();
-  for (const [hour, errs] of errorsByHour) {
-    biasByHour.set(hour, errs.reduce((a, b) => a + b, 0) / errs.length);
+  const oneWeek = spotPricesByKey.get(quarterKey(ms - WEEK_MS));
+  if (oneWeek !== undefined) {
+    return oneWeek;
   }
-  return { biasByHour, globalBias };
+  return null;
 };
 
-/** Add the per-UTC-hour bias to each predicted quarter (global fallback). */
-export const applyHourBias = (
+/**
+ * Decompose each predicted quarter into the ridge model's per-UTC-day LEVEL
+ * (which has real skill — lower MAE, healthier band residuals) and a within-day
+ * SHAPE taken from persistence (the 1d/7d lag profile that wins the within-day
+ * ranking the ridge level is blind to). For each UTC day:
+ *
+ *   out(q) = ridgeDailyMean + (persistence(q) − persistenceDailyMean)
+ *
+ * where the daily means are over that day's quarters (`persistenceDailyMean`
+ * only over quarters that HAVE a persistence value). Quarters with no 1d/7d lag
+ * fall back to the flat `ridgeDailyMean` and increment `shapeFallbackQuarters`.
+ *
+ * WHY rank-identical to pure persistence within a day: every quarter on a UTC
+ * day shares the same additive constant `(ridgeDailyMean − persistenceDailyMean)`,
+ * so the within-day ORDER of the output equals the order of `persistence(q)`
+ * exactly — the decomposition reaches persistence's within-day rank skill while
+ * keeping ridge's level. It has ZERO tuned hyperparameters (no blend weight, no
+ * grid search), so it cannot leak a tuned knob. Pure and UTC-only.
+ *
+ * The DoD's per-horizon rank metrics are computed within a single forecast day
+ * and each backtest horizon bucket spans exactly one UTC day (`backtest.ts` keys
+ * horizons off `floor((targetMs − originMs)/DAY_MS)` with `originMs` one quarter
+ * after the last published delivery, i.e. UTC midnight), so the per-day constant
+ * never changes Spearman / precision@N — the equivalence above holds by
+ * construction.
+ */
+export const applyWithinDayShape = (
   predicted: ReadonlyMap<string, number>,
-  biasByHour: ReadonlyMap<number, number>,
-  globalBias: number,
-): Map<string, number> => {
-  const out = new Map<string, number>();
-  for (const [key, value] of predicted) {
-    out.set(key, value + (biasByHour.get(hourOfKey(key)) ?? globalBias));
+  spotPricesByKey: ReadonlyMap<string, number>,
+): { result: Map<string, number>; shapeFallbackQuarters: number } => {
+  // Group predicted quarters by UTC day and accumulate the ridge level mean plus
+  // the persistence mean over quarters that carry a lag value.
+  interface DayAgg {
+    ridgeSum: number;
+    ridgeCount: number;
+    persistenceSum: number;
+    persistenceCount: number;
   }
-  return out;
+  const byDay = new Map<number, DayAgg>();
+  for (const [key, value] of predicted) {
+    const ms = new Date(key).getTime();
+    if (!Number.isFinite(ms)) {
+      continue;
+    }
+    const day = Math.floor(ms / DAY_MS) * DAY_MS;
+    const agg = byDay.get(day) ?? {
+      ridgeSum: 0,
+      ridgeCount: 0,
+      persistenceSum: 0,
+      persistenceCount: 0,
+    };
+    agg.ridgeSum += value;
+    agg.ridgeCount += 1;
+    const persistence = persistenceAt(ms, spotPricesByKey);
+    if (persistence !== null) {
+      agg.persistenceSum += persistence;
+      agg.persistenceCount += 1;
+    }
+    byDay.set(day, agg);
+  }
+
+  const result = new Map<string, number>();
+  let shapeFallbackQuarters = 0;
+  for (const [key, value] of predicted) {
+    const ms = new Date(key).getTime();
+    if (!Number.isFinite(ms)) {
+      result.set(key, value);
+      continue;
+    }
+    const day = Math.floor(ms / DAY_MS) * DAY_MS;
+    const agg = byDay.get(day);
+    if (agg === undefined || agg.ridgeCount === 0) {
+      result.set(key, value);
+      continue;
+    }
+    const ridgeDailyMean = agg.ridgeSum / agg.ridgeCount;
+    const persistence = persistenceAt(ms, spotPricesByKey);
+    if (persistence === null || agg.persistenceCount === 0) {
+      // No lag for this quarter (or no lag anywhere on the day): flat level.
+      result.set(key, ridgeDailyMean);
+      shapeFallbackQuarters += 1;
+      continue;
+    }
+    const persistenceDailyMean = agg.persistenceSum / agg.persistenceCount;
+    result.set(key, ridgeDailyMean + (persistence - persistenceDailyMean));
+  }
+
+  return { result, shapeFallbackQuarters };
 };
 
 // ---------------------------------------------------------------------------
@@ -415,7 +475,6 @@ export interface ForecastInput {
 export interface ForecastOptions {
   readonly windExtensionWeeks?: number;
   readonly consumptionExtensionWeeks?: number;
-  readonly applyTimeBias?: boolean;
   /** Lower clip for predicted spot c/kWh; null/undefined disables clipping. */
   readonly floor?: number | null;
   /** Ridge L2 penalty forwarded to the model fit. */
@@ -445,9 +504,10 @@ export interface ForecastOptions {
  * Pipeline: build the feature matrix (`features.ts`) over the bounded training
  * window → fit the model → predict each future quarter (the model `sinh`-inverts
  * its arcsinh target transform internally, so predictions are already raw
- * c/kWh) → existing per-UTC-hour bias → existing price-floor clip →
- * `buildPredictedSeries`. Stays pure — the model and feature builders take no
- * I/O.
+ * c/kWh) → `applyWithinDayShape` (ridge level + persistence within-day shape) →
+ * price-floor clip → `buildPredictedSeries` → empirical band measured against the
+ * post-shape, post-floor point. Stays pure — the model and feature builders take
+ * no I/O.
  */
 export const buildForecast = (
   input: ForecastInput,
@@ -456,7 +516,6 @@ export const buildForecast = (
   const windWeeks = opts.windExtensionWeeks ?? WIND_EXTENSION_WEEKS;
   const consWeeks =
     opts.consumptionExtensionWeeks ?? CONSUMPTION_EXTENSION_WEEKS;
-  const applyTimeBias = opts.applyTimeBias ?? true;
   const floor = opts.floor ?? null;
   const model = opts.model ?? createRidgeModel();
   const bands = opts.bands ?? CALIBRATED_BANDS;
@@ -534,31 +593,13 @@ export const buildForecast = (
     );
   }
 
-  let hourBiasBuckets = 0;
-  if (applyTimeBias) {
-    // Recover the daily price rhythm the level model misses, from the residual
-    // between published prices and the model's in-sample predictions. Reuse the
-    // already-built training rows rather than rebuilding feature vectors — keeps
-    // the request path off a second O(rows × scans) pass.
-    const inSamplePrices = new Map<string, number>();
-    const inSamplePredicted = new Map<string, number>();
-    for (let i = 0; i < training.keys.length; i++) {
-      const key = training.keys[i];
-      const row = training.features.rows[i];
-      const target = training.targets[i];
-      if (key === undefined || row === undefined || target === undefined) {
-        continue;
-      }
-      inSamplePrices.set(key, target);
-      inSamplePredicted.set(key, fitted.predict(row));
-    }
-    const { biasByHour, globalBias } = fitHourBias(
-      inSamplePrices,
-      inSamplePredicted,
-    );
-    predicted = applyHourBias(predicted, biasByHour, globalBias);
-    hourBiasBuckets = biasByHour.size;
-  }
+  // Recover the within-day price RHYTHM the ridge level model is blind to by
+  // stamping the persistence (1d/7d lag) shape onto the ridge per-day level.
+  // Rank-identical to pure persistence within a UTC day (the rank skill) while
+  // keeping ridge's level skill — no tuned hyperparameter (`applyWithinDayShape`).
+  const shaped = applyWithinDayShape(predicted, input.spotPricesByKey);
+  predicted = shaped.result;
+  const shapeFallbackQuarters = shaped.shapeFallbackQuarters;
 
   let floorClippedQuarters = 0;
   if (floor !== null) {
@@ -577,7 +618,7 @@ export const buildForecast = (
   const built = buildPredictedSeries(predicted, seriesStartMs, numQuarters);
 
   // Empirical prediction band (P10/P90-style), applied as a pure arcsinh-space
-  // lookup onto the FULL post-bias, post-floor point — the exact quantity the
+  // lookup onto the FULL post-shape, post-floor point — the exact quantity the
   // offline backtest residual was measured against. Only quarters that carry a
   // REAL prediction get a band; a quarter the series forward-filled or
   // zero-seeded is absent from `predicted`, so it never receives bounds. When
@@ -608,7 +649,7 @@ export const buildForecast = (
     windExtendedQuarters: windExtended.size - windQ.size,
     filledQuarters: built.filledQuarters,
     zeroSeededQuarters: built.zeroSeededQuarters,
-    hourBiasBuckets,
+    shapeFallbackQuarters,
     predictionFloor: floor,
     floorClippedQuarters,
     bandCalibrated: bands.calibrated,
