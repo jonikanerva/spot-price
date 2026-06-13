@@ -138,7 +138,7 @@ Default answer to "should we add a library?" is **no**. New entries require a `S
 
 - **Allowed background work:** the `node-cron` jobs declared in `src/scheduler.ts`:
   - the day-ahead price fetch executed by `src/fetch-job.ts` — 2h baseline cadence plus a 10-minute burst window around the Nord Pool publication time;
-  - the FI-forecast Fingrid grid-data fetch executed by `src/forecast-job.ts` — hourly (`0 * * * *`), fetching the public wind/consumption datasets (245/75/165/124) from `data.fingrid.fi` into the `fingrid_series` table and pruning rows older than ~35 days. It runs only when `FINGRID_API_KEY` is set, is wrapped in its own isolated try/catch, and its Fingrid boundary degrades rather than throwing, so a forecast failure can never affect the authoritative Nord Pool price cron or the price request path.
+  - the FI-forecast Fingrid grid-data fetch executed by `src/forecast-job.ts` — hourly (`0 * * * *`), fetching the public wind/consumption datasets (245/75/165/124) from `data.fingrid.fi` into the `fingrid_series` table. It fetches a ~31-day window back from now (Fingrid serves data only forward, so a wider fetch can't backfill) but retains rows for ~2 years (`RETENTION_DAYS`), pruning only beyond that — so the table accumulates grid history forward from deploy for future forecast phases, bounded to cap storage (~280k rows ≈ ~14 MB). It runs only when `FINGRID_API_KEY` is set, is wrapped in its own isolated try/catch, and its Fingrid boundary degrades rather than throwing, so a forecast failure can never affect the authoritative Nord Pool price cron or the price request path.
 
   These are the **only** allowed background tasks; new ones require an entry here.
 
