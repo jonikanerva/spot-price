@@ -25,7 +25,11 @@ export const TotalPriceSchema = z
     transferCentsKwh: z.number().openapi({ example: 2.5 }),
     taxCentsKwh: z.number().openapi({ example: 2.79372 }),
     vatCentsKwh: z.number().openapi({ example: 2.81 }),
-    totalCentsKwh: z.number().openapi({ example: 13.83 }),
+    totalCentsKwh: z.number().openapi({
+      example: 13.83,
+      description:
+        "Total price (c/kWh) the household pays. Floored at the contract-cost minimum: negative spot is treated as 0 (a retailer does not credit negatives), so the total never drops below (margin + transfer + tax) × (1 + VAT). The displayed spotCentsKwh stays raw and may be negative.",
+    }),
     isNightRate: z.boolean().openapi({ example: false }),
   })
   .openapi("TotalPrice");
@@ -107,10 +111,10 @@ export const ErrorSchema = z
 // ---------------------------------------------------------------------------
 
 /**
- * A single predicted quarter. The money fields are named `estimated*` and the
- * entry carries `estimated: true` so this schema shares NO money-field name
- * with `TotalPriceSchema` — a misrouted consumer cannot read an estimate as a
- * published price.
+ * A single predicted quarter. The money fields are named `estimated*` so this
+ * schema shares NO money-field name with `TotalPriceSchema` — a misrouted
+ * consumer cannot read an estimate as a published price. The response's
+ * top-level `forecast: true` flags the whole payload as an estimate.
  */
 const ForecastEntrySchema = z
   .object({
@@ -121,7 +125,11 @@ const ForecastEntrySchema = z
       .openapi({ example: "2026-03-01T00:00:00.000+02:00" }),
     localEnd: z.string().openapi({ example: "2026-03-01T00:15:00.000+02:00" }),
     estimatedSpotCentsKwh: z.number().openapi({ example: 4.12 }),
-    estimatedTotalCentsKwh: z.number().openapi({ example: 11.74 }),
+    estimatedTotalCentsKwh: z.number().openapi({
+      example: 11.74,
+      description:
+        "Estimated total price (c/kWh). Floored at the contract-cost minimum: negative spot is treated as 0 (a retailer does not credit negatives), so the total never drops below (margin + transfer + tax) × (1 + VAT). The displayed estimatedSpotCentsKwh stays raw and may be negative.",
+    }),
     // Optional empirical band bounds (v1 superset). Present only when a
     // calibrated band ships AND the quarter carries a real prediction.
     estimatedSpotLowCentsKwh: z.number().optional().openapi({
@@ -144,7 +152,6 @@ const ForecastEntrySchema = z
       description:
         "Upper empirical band bound (total, contract terms applied).",
     }),
-    estimated: z.literal(true).openapi({ example: true }),
   })
   .openapi("ForecastEntry");
 

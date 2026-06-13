@@ -143,9 +143,11 @@ export interface WeatherPointFailure {
 
 /**
  * One predicted quarter of the forecast series. Money fields are deliberately
- * named `estimated*` and carry `estimated: true` so they share NO field name
- * with the real-price schemas (`TotalPrice`) — a misrouted consumer cannot
- * blind-read an estimate as a published price.
+ * named `estimated*` so they share NO field name with the real-price schemas
+ * (`TotalPrice`) — a misrouted consumer cannot blind-read an estimate as a
+ * published price. The response's top-level `forecast: true` flags the whole
+ * payload as an estimate (the old per-entry constant-true `estimated` field was
+ * redundant — removed in issue #70).
  */
 export interface ForecastEntry {
   readonly start: string;
@@ -164,7 +166,6 @@ export interface ForecastEntry {
   readonly estimatedSpotHighCentsKwh?: number;
   readonly estimatedTotalLowCentsKwh?: number;
   readonly estimatedTotalHighCentsKwh?: number;
-  readonly estimated: true;
 }
 
 /**
