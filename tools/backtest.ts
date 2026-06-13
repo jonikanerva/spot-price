@@ -27,9 +27,12 @@ import { readFileSync } from "node:fs";
 import { buildForecast, quarterKey } from "../src/forecast.js";
 import {
   buildArtifact,
+  deriveBandOffsets,
+  observedCoverageOf,
   type CalibratedBands,
   type HorizonResidual,
 } from "../src/conformal.js";
+import { precisionAtN, spearman } from "./backtest-metrics.js";
 import type { FingridRecord } from "../src/types.js";
 
 const QUARTER_MS = 15 * 60 * 1000;
@@ -39,6 +42,22 @@ const FORECAST_DAYS = 3;
 
 /** FI day-ahead publishes ~14:00 EET ≈ 12:00 UTC; prices for "tomorrow" appear then. */
 const PUBLICATION_HOUR_UTC = 12;
+
+/**
+ * Horizon labels d+1/d+2/d+3 for forecast days 0/1/2 ahead of the series start.
+ * Index 0 (the first forecast day, [origin, origin+24h)) is "d+1" — the day
+ * AFTER the last published price, which is what an automation plans against.
+ */
+export const HORIZON_LABELS = ["d+1", "d+2", "d+3"] as const;
+export type Horizon = (typeof HORIZON_LABELS)[number];
+
+/**
+ * precision@N window for the rank metric: the product-relevant flexible-load
+ * window. N = 16 quarters = 4 hours — a typical sauna/EV/heating block. "Did the
+ * forecast pick the genuinely cheapest (and peak) 4h of the day?" is the
+ * product's actual use case, so this is the headline rank signal.
+ */
+export const PRECISION_N_QUARTERS = 16;
 
 const msOf = (iso: string): number => new Date(iso).getTime();
 
@@ -361,6 +380,22 @@ const baselineFor = (
 // Rolling-origin evaluation
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-horizon metrics over the leak-free scored pairs at that horizon. Absolute
+ * (mae/smape) plus rank (spearman, precision@N for cheap and peak windows) plus
+ * the empirical band coverage at that horizon. `pairs` is the scored count.
+ * Any metric is null when undefined for the bucket (e.g. constant series).
+ */
+export interface HorizonMetrics {
+  readonly mae: number | null;
+  readonly smape: number | null;
+  readonly spearman: number | null;
+  readonly precisionAtNCheap: number | null;
+  readonly precisionAtNPeak: number | null;
+  readonly bandCoverage: number | null;
+  readonly pairs: number;
+}
+
 export interface BacktestSummary {
   readonly origins: number;
   readonly fallbackOrigins: number;
@@ -370,6 +405,13 @@ export interface BacktestSummary {
   readonly rMae: Readonly<Record<BaselineName, number | null>>;
   /** True if every reconstructed origin was leakage-free. */
   readonly leakFree: boolean;
+  /**
+   * Per-horizon (d+1/d+2/d+3) metrics — a PURE post-hoc partition of the SAME
+   * leakage-guarded pairs by `floor((targetMs − originMs)/DAY_MS)`. No new
+   * leakage: it only re-buckets pairs already scored. Rank metrics are computed
+   * per origin (so a quarter is ranked against its own day) and averaged.
+   */
+  readonly byHorizon: Readonly<Record<Horizon, HorizonMetrics>>;
   /**
    * Out-of-sample (predicted, actual) residuals tagged by UTC hour, harvested
    * from the SAME leakage-guarded realised-vs-predicted pairs used for the error
@@ -412,6 +454,29 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
     last_published_day: [],
   };
 
+  // Per-horizon accumulators. `pairs`/`residuals` are flat (for mae/smape/band
+  // coverage); `originSeries` keeps one (preds, acts) series per origin so rank
+  // metrics rank a quarter against ITS OWN forecast day, then average.
+  const horizonAcc: Record<
+    Horizon,
+    {
+      pairs: [number, number][];
+      residuals: HorizonResidual[];
+      originSeries: { preds: number[]; acts: number[] }[];
+    }
+  > = {
+    "d+1": { pairs: [], residuals: [], originSeries: [] },
+    "d+2": { pairs: [], residuals: [], originSeries: [] },
+    "d+3": { pairs: [], residuals: [], originSeries: [] },
+  };
+
+  const horizonOf = (targetMs: number, originMs: number): Horizon | null => {
+    const idx = Math.floor((targetMs - originMs) / DAY_MS);
+    return idx >= 0 && idx < HORIZON_LABELS.length
+      ? (HORIZON_LABELS[idx] ?? null)
+      : null;
+  };
+
   let origins = 0;
   let fallbackOrigins = 0;
   let leakFree = true;
@@ -428,6 +493,13 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
       }
 
       const fc = forecastAtIssueTime(inputs);
+      // Per-origin, per-horizon series for the rank metrics this origin.
+      const originByHorizon: Record<Horizon, { preds: number[]; acts: number[] }> =
+        {
+          "d+1": { preds: [], acts: [] },
+          "d+2": { preds: [], acts: [] },
+          "d+3": { preds: [], acts: [] },
+        };
       // Only score origins that actually have realised prices to compare to.
       let scored = false;
       for (const [key, pred] of fc.predictedByKey) {
@@ -439,12 +511,22 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
         modelPairs.push([pred, actual]);
         // Harvest the out-of-sample residual (tagged by the target's UTC hour)
         // for the conformal band — the same leakage-guarded pair scored above.
-        residuals.push({
+        const targetMs = msOf(key);
+        const residual: HorizonResidual = {
           utcHour: new Date(key).getUTCHours(),
           predictedRaw: pred,
           actualRaw: actual,
-        });
-        const targetMs = msOf(key);
+        };
+        residuals.push(residual);
+        // Pure post-hoc partition by horizon — no new leakage.
+        const horizon = horizonOf(targetMs, fc.seriesStartMs);
+        if (horizon !== null) {
+          const acc = horizonAcc[horizon];
+          acc.pairs.push([pred, actual]);
+          acc.residuals.push(residual);
+          originByHorizon[horizon].preds.push(pred);
+          originByHorizon[horizon].acts.push(actual);
+        }
         for (const name of BASELINES) {
           const b = baselineFor(name, targetMs, inputs);
           if (b !== undefined) {
@@ -456,6 +538,11 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
         origins++;
         if (fc.usedFallback) {
           fallbackOrigins++;
+        }
+        for (const h of HORIZON_LABELS) {
+          if (originByHorizon[h].preds.length > 0) {
+            horizonAcc[h].originSeries.push(originByHorizon[h]);
+          }
         }
       }
     }
@@ -471,6 +558,12 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
     last_published_day: rmae(modelMae, baselineMae.last_published_day),
   };
 
+  const byHorizon: Record<Horizon, HorizonMetrics> = {
+    "d+1": computeHorizonMetrics(horizonAcc["d+1"]),
+    "d+2": computeHorizonMetrics(horizonAcc["d+2"]),
+    "d+3": computeHorizonMetrics(horizonAcc["d+3"]),
+  };
+
   return {
     origins,
     fallbackOrigins,
@@ -479,7 +572,56 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
     baselineMae,
     rMae,
     leakFree,
+    byHorizon,
     residuals,
+  };
+};
+
+/** Mean of the non-null values, or null when there are none. */
+const meanOrNull = (xs: readonly (number | null)[]): number | null => {
+  const vals = xs.filter((x): x is number => x !== null);
+  if (vals.length === 0) {
+    return null;
+  }
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+};
+
+/**
+ * Compute one horizon's metrics. Absolute (mae/smape) and band coverage run on
+ * the flat pairs/residuals; rank metrics (spearman, precision@N) are computed
+ * per origin and averaged so each quarter is ranked within its own forecast day.
+ */
+const computeHorizonMetrics = (acc: {
+  pairs: [number, number][];
+  residuals: HorizonResidual[];
+  originSeries: { preds: number[]; acts: number[] }[];
+}): HorizonMetrics => {
+  const { offsetsByHour, globalOffsets } = deriveBandOffsets(acc.residuals);
+  const bandCoverage =
+    acc.residuals.length > 0
+      ? observedCoverageOf(acc.residuals, offsetsByHour, globalOffsets)
+      : null;
+
+  const spearmans: (number | null)[] = [];
+  const cheaps: (number | null)[] = [];
+  const peaks: (number | null)[] = [];
+  for (const s of acc.originSeries) {
+    if (s.preds.length < 2) {
+      continue;
+    }
+    spearmans.push(spearman(s.preds, s.acts));
+    cheaps.push(precisionAtN(s.preds, s.acts, PRECISION_N_QUARTERS, "cheap"));
+    peaks.push(precisionAtN(s.preds, s.acts, PRECISION_N_QUARTERS, "peak"));
+  }
+
+  return {
+    mae: mae(acc.pairs),
+    smape: smape(acc.pairs),
+    spearman: meanOrNull(spearmans),
+    precisionAtNCheap: meanOrNull(cheaps),
+    precisionAtNPeak: meanOrNull(peaks),
+    bandCoverage,
+    pairs: acc.pairs.length,
   };
 };
 

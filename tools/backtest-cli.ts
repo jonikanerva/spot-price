@@ -30,7 +30,9 @@ import { closeDatabase } from "../src/db.js";
 import pg from "pg";
 import { loadEnv } from "../src/env.js";
 import {
+  HORIZON_LABELS,
   loadFixture,
+  PRECISION_N_QUARTERS,
   runBacktest,
   type BacktestData,
   type PricePoint,
@@ -217,6 +219,32 @@ const printReport = (data: BacktestData): boolean => {
       offsetsByHour.size,
     )}  observed coverage ${fmt(coverage)}`,
   );
+
+  // Per-horizon: absolute (MAE/sMAPE), rank (Spearman, precision@N for the
+  // cheapest/peak N-quarter window — the actual flexible-load use case), and
+  // band coverage. d+1 is the first forecast day (the day after the last
+  // published price).
+  const nHours = PRECISION_N_QUARTERS / 4;
+  console.log(
+    `\n  per horizon (precision@N over the cheapest/peak ${String(
+      PRECISION_N_QUARTERS,
+    )} quarters = ${String(nHours)}h):`,
+  );
+  console.log(
+    `    horizon  pairs     MAE   sMAPE   Spearman  P@N-cheap  P@N-peak  bandCov`,
+  );
+  for (const h of HORIZON_LABELS) {
+    const m = summary.byHorizon[h];
+    console.log(
+      `    ${h.padEnd(7)}  ${String(m.pairs).padStart(5)}  ${fmt(m.mae).padStart(6)}  ${fmt(
+        m.smape,
+      ).padStart(6)}  ${fmt(m.spearman).padStart(8)}  ${fmt(
+        m.precisionAtNCheap,
+      ).padStart(9)}  ${fmt(m.precisionAtNPeak).padStart(8)}  ${fmt(
+        m.bandCoverage,
+      ).padStart(7)}`,
+    );
+  }
   console.log("");
 
   return !thin;
