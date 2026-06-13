@@ -192,8 +192,13 @@ export interface ForecastDiagnostics {
    * trigger — a flat-level fallback is still an honest level estimate.
    */
   readonly shapeFallbackQuarters: number;
-  readonly predictionFloor: number | null;
-  readonly floorClippedQuarters: number;
+  /**
+   * Predicted quarters clamped by the output sanity bound (`sanityBoundFromHistory`).
+   * Expected 0 in practice — the bound sits provably outside the real-data range,
+   * so a non-zero count means the model extrapolated absurdly far and the clamp
+   * caught it. NOT a price floor and never re-ties cheap/negative quarters.
+   */
+  readonly sanityClampedQuarters: number;
   /** True when a calibrated band artifact was applied to the series. */
   readonly bandCalibrated: boolean;
   /** Number of future quarters that received band bounds. */

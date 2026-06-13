@@ -18,15 +18,15 @@ import { CALIBRATED_BANDS } from "./conformal-artifact.js";
  * Pure FI price-forecast pipeline. A pluggable closed-form regression over a
  * rich feature set (grid residual + wind/consumption + an interaction term, FI
  * and neighbour price lags, UTC calendar) — still no machine learning: the
- * default `Model` is hand-rolled ridge (`model.ts`), and an optional price floor
- * refines the level afterwards.
+ * default `Model` is hand-rolled ridge (`model.ts`), and an optional output
+ * sanity clamp guards against degenerate extrapolation afterwards.
  *
  * This module is strictly pure: no `pg`, no `fetch`, no `env`, no `Date.now()`.
  * Everything works on UTC ISO 8601 quarter keys (15-min floor). The I/O
  * boundary (the route) supplies the time window, the prices (FI + neighbours),
- * the Fingrid series, and the history slice for the floor; this module computes
- * the estimate. It predicts SPOT c/kWh; the fit target is the caller's stored
- * spot price (already converted to c/kWh).
+ * the Fingrid series, and the trailing history slice for the fit/lags + sanity
+ * bound; this module computes the estimate. It predicts SPOT c/kWh; the fit
+ * target is the caller's stored spot price (already converted to c/kWh).
  */
 
 // ---------------------------------------------------------------------------
@@ -37,12 +37,15 @@ import { CALIBRATED_BANDS } from "./conformal-artifact.js";
 export const WIND_EXTENSION_WEEKS = 4;
 /** Consumption has a strong Finnish weekly cycle, so one week back is most representative. */
 export const CONSUMPTION_EXTENSION_WEEKS = 1;
-/** Days of stored price history the floor percentile is computed over (~1 month, single season). */
+/** Trailing price-history window read for the fit + lag features (~1 month, single season). */
 export const FLOOR_HISTORY_DAYS = 30;
-/** Percentile of hourly price minima used as the robust lower clip. */
-export const FLOOR_PERCENTILE = 5;
 /** Predicted series length: fixed N days after the last published price. */
 export const FORECAST_DAYS = 3;
+
+/** Multiplier on the observed price spread that widens the output sanity clamp. */
+export const SANITY_MARGIN_K = 3;
+/** Backstop lower bound (c/kWh) used when history is flat or absent. */
+export const SANITY_MIN_FALLBACK_CENTS_KWH = -50;
 
 const QUARTER_MS = 15 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -59,9 +62,6 @@ export const quarterFloorUtc = (ms: number): number =>
 /** Canonical UTC ISO quarter key for a UTC instant (ms). */
 export const quarterKey = (ms: number): string =>
   new Date(quarterFloorUtc(ms)).toISOString();
-
-/** UTC hour-of-day (0-23) of a quarter key. */
-const hourOfKey = (key: string): number => new Date(key).getUTCHours();
 
 // ---------------------------------------------------------------------------
 // Bucketing
@@ -340,43 +340,54 @@ export const applyWithinDayShape = (
 };
 
 // ---------------------------------------------------------------------------
-// Price floor
+// Output sanity bound
 // ---------------------------------------------------------------------------
 
 /**
- * Compute the prediction floor from a history slice: the FLOOR_PERCENTILE-th
- * percentile of hourly price minima. Pure — the caller passes in the trailing
- * ~FLOOR_HISTORY_DAYS of stored spot prices as `(quarterKey, spotCentsKwh)`
- * pairs. Returns null when there is no usable history (no clipping applied).
+ * Derive an OUTPUT sanity clamp from the observed price-history extremes. This
+ * is NOT a price floor: it is a wide, symmetric guard that catches only
+ * degenerate ridge/OLS extrapolation (a singular system or a pathological
+ * feature vector producing a wildly out-of-range quarter). Because the bound is
+ * pushed `SANITY_MARGIN_K` price-spreads beyond the real-data range, it sits
+ * provably outside anything the cheapest/most-expensive quarters can take, so
+ * it never re-ties cheap or genuinely-negative quarters the way the old
+ * percentile floor did — the within-day ordering down to and below zero is
+ * preserved. The lower bound is `min(0, …)` so a flat-but-positive history can
+ * never clamp a genuine near-zero/negative prediction up to a positive value;
+ * the `−50 c/kWh` term is a backstop for an essentially flat history. The bound
+ * auto-widens as FI deep-negative prices deepen the observed spread.
  *
- * A robust lower bound that prevents OLS extrapolation below the observed price
- * range; a 30-day window tracks Finnish seasonal variation without mixing
- * seasons.
+ * Pure — the caller passes the trailing ~FLOOR_HISTORY_DAYS of stored spot
+ * prices as `(quarterKey, spotCentsKwh)` pairs. Returns null when there is no
+ * finite history (no clamp applied).
  */
-export const priceFloorFromHistory = (
+export const sanityBoundFromHistory = (
   history: ReadonlyMap<string, number>,
-  percentile: number = FLOOR_PERCENTILE,
-): number | null => {
-  const minByHour = new Map<string, number>();
-  for (const [key, price] of history) {
-    const ms = new Date(key).getTime();
-    if (!Number.isFinite(ms)) {
+): { readonly min: number; readonly max: number } | null => {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const price of history.values()) {
+    if (!Number.isFinite(price)) {
       continue;
     }
-    const hourKey = new Date(
-      Math.floor(ms / DAY_MS) * DAY_MS + hourOfKey(key) * 3_600_000,
-    ).toISOString();
-    const current = minByHour.get(hourKey);
-    if (current === undefined || price < current) {
-      minByHour.set(hourKey, price);
+    if (price < lo) {
+      lo = price;
+    }
+    if (price > hi) {
+      hi = price;
     }
   }
-  const mins = [...minByHour.values()].sort((a, b) => a - b);
-  if (mins.length === 0) {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
     return null;
   }
-  const idx = Math.max(0, Math.trunc((mins.length * percentile) / 100) - 1);
-  return mins[idx] ?? null;
+  const spread = hi - lo;
+  return {
+    min: Math.min(
+      0,
+      Math.min(lo - SANITY_MARGIN_K * spread, SANITY_MIN_FALLBACK_CENTS_KWH),
+    ),
+    max: hi + SANITY_MARGIN_K * spread,
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -475,8 +486,13 @@ export interface ForecastInput {
 export interface ForecastOptions {
   readonly windExtensionWeeks?: number;
   readonly consumptionExtensionWeeks?: number;
-  /** Lower clip for predicted spot c/kWh; null/undefined disables clipping. */
-  readonly floor?: number | null;
+  /**
+   * Output sanity clamp for predicted spot c/kWh (`sanityBoundFromHistory`).
+   * Each emitted quarter is clamped to `[min, max]`. Absent ⇒ NO clamp (an
+   * honest no-op): unlike the removed percentile floor, the default is to leave
+   * predictions untouched, so near-zero/negative quarters keep their ordering.
+   */
+  readonly sanityBound?: { readonly min: number; readonly max: number };
   /** Ridge L2 penalty forwarded to the model fit. */
   readonly ridgeLambda?: number;
   /**
@@ -505,9 +521,14 @@ export interface ForecastOptions {
  * window → fit the model → predict each future quarter (the model `sinh`-inverts
  * its arcsinh target transform internally, so predictions are already raw
  * c/kWh) → `applyWithinDayShape` (ridge level + persistence within-day shape) →
- * price-floor clip → `buildPredictedSeries` → empirical band measured against the
- * post-shape, post-floor point. Stays pure — the model and feature builders take
- * no I/O.
+ * output sanity clamp → `buildPredictedSeries` → empirical band measured against
+ * the post-shape point. Stays pure — the model and feature builders take no I/O.
+ *
+ * The optional sanity clamp is an OUTPUT-only guard against degenerate
+ * extrapolation; the per-day within-day shape mean is computed from REAL stored
+ * prices, not predictions, so the clamp never feeds back into the model. Absent
+ * ⇒ predictions are emitted unclamped (the honest default that preserves the
+ * within-day ordering of cheap/negative quarters).
  */
 export const buildForecast = (
   input: ForecastInput,
@@ -516,7 +537,7 @@ export const buildForecast = (
   const windWeeks = opts.windExtensionWeeks ?? WIND_EXTENSION_WEEKS;
   const consWeeks =
     opts.consumptionExtensionWeeks ?? CONSUMPTION_EXTENSION_WEEKS;
-  const floor = opts.floor ?? null;
+  const sanityBound = opts.sanityBound;
   const model = opts.model ?? createRidgeModel();
   const bands = opts.bands ?? CALIBRATED_BANDS;
 
@@ -601,35 +622,43 @@ export const buildForecast = (
   predicted = shaped.result;
   const shapeFallbackQuarters = shaped.shapeFallbackQuarters;
 
-  let floorClippedQuarters = 0;
-  if (floor !== null) {
-    const clipped = new Map<string, number>();
+  // Output sanity clamp: symmetric, post-shape, OUTPUT-only. Clamps each
+  // emitted quarter into the wide history-derived [min, max] guard so a
+  // degenerate extrapolation cannot produce an absurd value. Because the bound
+  // sits provably outside the real-data range, in practice no quarter is hit
+  // (sanityClampedQuarters expected 0); it never re-ties cheap/negative
+  // quarters. Skipped entirely when no bound is supplied (honest no-op).
+  let sanityClampedQuarters = 0;
+  if (sanityBound !== undefined) {
+    const clamped = new Map<string, number>();
     for (const [key, value] of predicted) {
-      if (value < floor) {
-        clipped.set(key, floor);
-        floorClippedQuarters++;
-      } else {
-        clipped.set(key, value);
+      const bounded = Math.min(
+        sanityBound.max,
+        Math.max(sanityBound.min, value),
+      );
+      if (bounded !== value) {
+        sanityClampedQuarters++;
       }
+      clamped.set(key, bounded);
     }
-    predicted = clipped;
+    predicted = clamped;
   }
 
   const built = buildPredictedSeries(predicted, seriesStartMs, numQuarters);
 
   // Empirical prediction band (P10/P90-style), applied as a pure arcsinh-space
-  // lookup onto the FULL post-shape, post-floor point — the exact quantity the
-  // offline backtest residual was measured against. Only quarters that carry a
-  // REAL prediction get a band; a quarter the series forward-filled or
-  // zero-seeded is absent from `predicted`, so it never receives bounds. When
-  // the artifact is uncalibrated (`applyBand` → null), the series is unchanged.
+  // lookup onto the FULL post-shape point — the exact quantity the offline
+  // backtest residual was measured against. Only quarters that carry a REAL
+  // prediction get a band; a quarter the series forward-filled or zero-seeded is
+  // absent from `predicted`, so it never receives bounds. When the artifact is
+  // uncalibrated (`applyBand` → null), the series is unchanged.
   let bandHourBuckets = 0;
   const series: ForecastSpotPoint[] = built.series.map((point) => {
     if (!predicted.has(point.start)) {
       return point;
     }
     const utcHour = new Date(point.start).getUTCHours();
-    const band = applyBand(point.estimatedSpotCentsKwh, utcHour, bands, floor);
+    const band = applyBand(point.estimatedSpotCentsKwh, utcHour, bands);
     if (band === null) {
       return point;
     }
@@ -650,8 +679,7 @@ export const buildForecast = (
     filledQuarters: built.filledQuarters,
     zeroSeededQuarters: built.zeroSeededQuarters,
     shapeFallbackQuarters,
-    predictionFloor: floor,
-    floorClippedQuarters,
+    sanityClampedQuarters,
     bandCalibrated: bands.calibrated,
     bandHourBuckets,
   };

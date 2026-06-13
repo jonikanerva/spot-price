@@ -36,12 +36,12 @@ describe("applyBand", () => {
       globalOffsets: null,
       generatedAt: "",
     };
-    expect(applyBand(4, 12, dark, null)).toBeNull();
+    expect(applyBand(4, 12, dark)).toBeNull();
   });
 
   it("returns null when calibrated but no offsets exist for the hour", () => {
     const bands = calibratedBands(new Map(), null);
-    expect(applyBand(4, 12, bands, null)).toBeNull();
+    expect(applyBand(4, 12, bands)).toBeNull();
   });
 
   it("is asymmetric in raw space (arcsinh) — equal-magnitude offsets give a wider top", () => {
@@ -51,7 +51,7 @@ describe("applyBand", () => {
     const off: BandOffsets = { lowOffset: -0.5, highOffset: 0.5 };
     const bands = calibratedBands(new Map([[12, off]]), null);
     const point = 5;
-    const band = applyBand(point, 12, bands, null);
+    const band = applyBand(point, 12, bands);
     expect(band).not.toBeNull();
     if (band) {
       const lowerGap = point - band.low;
@@ -68,7 +68,7 @@ describe("applyBand", () => {
       new Map([[0, { lowOffset: -1, highOffset: 1 }]]),
       global,
     );
-    const band = applyBand(4, 18, bands, null); // hour 18 has no own offsets
+    const band = applyBand(4, 18, bands); // hour 18 has no own offsets
     expect(band).not.toBeNull();
     if (band) {
       // Should match the global offsets, not the hour-0 ones.
@@ -77,17 +77,31 @@ describe("applyBand", () => {
     }
   });
 
-  it("floor-clips the lower bound and keeps low ≤ point", () => {
+  it("keeps low ≤ point ≤ high at a negative point, allowing a negative lower bound", () => {
+    // No floor any more: a genuinely negative FI price must keep an ordered band
+    // whose lower bound is free to go below zero (the old floor-clip is gone).
     const off: BandOffsets = { lowOffset: -2, highOffset: 1 };
     const bands = calibratedBands(new Map([[12, off]]), null);
-    const point = 1.0;
-    const floor = 0.5;
-    const band = applyBand(point, 12, bands, floor);
+    const point = -3.0;
+    const band = applyBand(point, 12, bands);
     expect(band).not.toBeNull();
     if (band) {
-      expect(band.low).toBeGreaterThanOrEqual(floor);
       expect(band.low).toBeLessThanOrEqual(point);
       expect(band.high).toBeGreaterThanOrEqual(point);
+      expect(band.low).toBeLessThan(0); // not clipped up to a floor
+    }
+  });
+
+  it("gives two distinct sub-zero points distinct lower bounds (no re-tie at the bottom)", () => {
+    const off: BandOffsets = { lowOffset: -0.5, highOffset: 0.5 };
+    const bands = calibratedBands(new Map([[12, off]]), null);
+    const bandA = applyBand(-1.0, 12, bands);
+    const bandB = applyBand(-4.0, 12, bands);
+    expect(bandA).not.toBeNull();
+    expect(bandB).not.toBeNull();
+    if (bandA && bandB) {
+      expect(bandA.low).not.toBe(bandB.low);
+      expect(bandB.low).toBeLessThan(bandA.low);
     }
   });
 
@@ -95,7 +109,7 @@ describe("applyBand", () => {
     // A zero-width band must still satisfy low ≤ point ≤ high.
     const off: BandOffsets = { lowOffset: 0, highOffset: 0 };
     const bands = calibratedBands(new Map([[12, off]]), null);
-    const band = applyBand(3.333, 12, bands, null);
+    const band = applyBand(3.333, 12, bands);
     expect(band).not.toBeNull();
     if (band) {
       expect(band.low).toBeLessThanOrEqual(3.333);

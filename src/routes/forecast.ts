@@ -20,8 +20,8 @@ import {
   buildForecast,
   FLOOR_HISTORY_DAYS,
   FORECAST_DAYS,
-  priceFloorFromHistory,
   quarterKey,
+  sanityBoundFromHistory,
 } from "../forecast.js";
 import type { ForecastEntry, ForecastResult, UserSettings } from "../types.js";
 import { ForecastQuerySchema, ForecastResponseSchema } from "../api-schemas.js";
@@ -206,8 +206,8 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const seriesEndMs = seriesStartMs + FORECAST_DAYS * DAY_MS;
 
     // Read context off the request path only: ~30d of FI spot history (for the
-    // fit + floor) through the last published quarter, and the four Fingrid
-    // series for the full [history, seriesEnd) window.
+    // fit + lags + the output sanity bound) through the last published quarter,
+    // and the four Fingrid series for the full [history, seriesEnd) window.
     const historyStartMs = seriesStartMs - FLOOR_HISTORY_DAYS * DAY_MS;
     const historyStartUtc = new Date(historyStartMs).toISOString();
     const fingridEndUtc = new Date(seriesEndMs).toISOString();
@@ -289,7 +289,11 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
       );
     }
 
-    const floor = priceFloorFromHistory(spot);
+    // Output-only sanity clamp derived from observed price extremes. NOT a price
+    // floor: it is a wide guard against degenerate extrapolation and never
+    // re-ties cheap/negative quarters. Omitted entirely when there is no usable
+    // history, so the default is an honest no-op.
+    const sanityBound = sanityBoundFromHistory(spot);
     const result = buildForecast(
       {
         spotPricesByKey: spot,
@@ -301,7 +305,7 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
         seriesStartMs,
         seriesEndMs,
       },
-      { floor },
+      sanityBound !== null ? { sanityBound } : {},
     );
 
     const entries = toForecastEntries(result, settings);
