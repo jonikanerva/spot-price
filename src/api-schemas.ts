@@ -111,10 +111,10 @@ export const ErrorSchema = z
 // ---------------------------------------------------------------------------
 
 /**
- * A single predicted quarter. The money fields are named `estimated*` and the
- * entry carries `estimated: true` so this schema shares NO money-field name
- * with `TotalPriceSchema` — a misrouted consumer cannot read an estimate as a
- * published price.
+ * A single predicted quarter. The money fields are named `estimated*` so this
+ * schema shares NO money-field name with `TotalPriceSchema` — a misrouted
+ * consumer cannot read an estimate as a published price. The response's
+ * top-level `forecast: true` flags the whole payload as an estimate.
  */
 const ForecastEntrySchema = z
   .object({
@@ -152,7 +152,6 @@ const ForecastEntrySchema = z
       description:
         "Upper empirical band bound (total, contract terms applied).",
     }),
-    estimated: z.literal(true).openapi({ example: true }),
   })
   .openapi("ForecastEntry");
 

@@ -180,7 +180,6 @@ describe("forecast endpoint", () => {
     const first = body.entries[0];
     expect(first).toBeDefined();
     if (first) {
-      expect(first.estimated).toBe(true);
       expect(typeof first.estimatedSpotCentsKwh).toBe("number");
       expect(typeof first.estimatedTotalCentsKwh).toBe("number");
       // Total must exceed spot (margin + transfer + tax + VAT all positive here).
@@ -191,10 +190,15 @@ describe("forecast endpoint", () => {
 
     // Forecast schema shares no money-field name with the real-price schema:
     // the raw payload must NOT carry spotCentsKwh / totalCentsKwh anywhere.
+    // Issue #70: the redundant per-entry `estimated: true` is also gone — the
+    // whole payload is flagged by the top-level `forecast: true` (asserted
+    // above), so the wire response must not emit the field at all.
     const rawEntries = raw["entries"] as Record<string, unknown>[];
+    expect(rawEntries[0]).toBeDefined();
     for (const entry of rawEntries) {
       expect(entry["spotCentsKwh"]).toBeUndefined();
       expect(entry["totalCentsKwh"]).toBeUndefined();
+      expect(entry).not.toHaveProperty("estimated");
     }
 
     // Phase 2: bands ship DARK in the committed artifact, so the descriptor is

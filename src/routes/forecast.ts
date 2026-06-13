@@ -95,7 +95,6 @@ const toForecastEntries = (
       localEnd: formatDateTimeInTimeZone(endIso, settings.timezone),
       estimatedSpotCentsKwh: breakdown.spotCentsKwh,
       estimatedTotalCentsKwh: breakdown.totalCentsKwh,
-      estimated: true,
     };
     // Band bounds are present only when a calibrated artifact shipped AND this
     // quarter carried a real prediction. `applyContractTerms` is a monotone
@@ -127,7 +126,7 @@ const forecastRoute = createRoute({
     "published yet, derived from public Fingrid grid data plus stored price " +
     "history using simple closed-form math (no ML). Structurally distinct from " +
     "the real-price endpoints — every money field is named `estimated*` and " +
-    "carries `estimated: true`, the response carries `forecast: true`. FI only; " +
+    "the response carries `forecast: true`. FI only; " +
     "other areas return available:false. When data is insufficient the response " +
     "is degraded/low-confidence rather than a confident guess.",
   security: [{ BearerAuth: [] }],
