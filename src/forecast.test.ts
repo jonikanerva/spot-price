@@ -14,6 +14,7 @@ import {
   quarterFloorUtc,
   quarterKey,
 } from "./forecast.js";
+import type { CalibratedBands } from "./conformal.js";
 
 const QUARTER_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -375,5 +376,154 @@ describe("buildForecast (integration of the pure pipeline)", () => {
     for (const point of result.series) {
       expect(point.estimatedSpotCentsKwh).toBeGreaterThanOrEqual(5);
     }
+  });
+});
+
+describe("buildForecast — prediction bands", () => {
+  const dark: CalibratedBands = {
+    method: "empirical-residual",
+    nominalCoverage: 0.8,
+    observedCoverage: null,
+    calibrated: false,
+    offsetsByHour: new Map(),
+    globalOffsets: null,
+    generatedAt: "",
+  };
+  const calibrated: CalibratedBands = {
+    method: "empirical-residual",
+    nominalCoverage: 0.8,
+    observedCoverage: 0.82,
+    calibrated: true,
+    offsetsByHour: new Map(),
+    globalOffsets: { lowOffset: -0.4, highOffset: 0.4 },
+    generatedAt: "2026-06-01T00:00:00.000Z",
+  };
+
+  // A synthetic month with structure to fit, plus future grid data.
+  const buildInput = (): {
+    spot: Map<string, number>;
+    cons: FingridRecord[];
+    wind: FingridRecord[];
+    futureCons: FingridRecord[];
+    futureWind: FingridRecord[];
+    seriesStartMs: number;
+    seriesEndMs: number;
+  } => {
+    const spot = new Map<string, number>();
+    const cons: FingridRecord[] = [];
+    const wind: FingridRecord[] = [];
+    for (let q = 0; q < 30 * 96; q++) {
+      const ms = ANCHOR + q * QUARTER_MS;
+      const consumption = 8000 + (q % 96) * 20;
+      const windMw = 2000 + ((q * 137) % 1500);
+      spot.set(quarterKey(ms), 0.001 * (consumption - windMw) + 3);
+      cons.push(rec(ms, consumption, 124));
+      wind.push(rec(ms, windMw, 245));
+    }
+    const seriesStartMs = ANCHOR + 30 * 96 * QUARTER_MS;
+    const seriesEndMs = seriesStartMs + 3 * DAY_MS;
+    const futureCons: FingridRecord[] = [];
+    const futureWind: FingridRecord[] = [];
+    for (let q = 0; q < 3 * 96; q++) {
+      const ms = seriesStartMs + q * QUARTER_MS;
+      futureCons.push(rec(ms, 8500, 124));
+      futureWind.push(rec(ms, 2500, 245));
+    }
+    return {
+      spot,
+      cons,
+      wind,
+      futureCons,
+      futureWind,
+      seriesStartMs,
+      seriesEndMs,
+    };
+  };
+
+  it("emits no band fields when the artifact is dark (calibrated:false)", () => {
+    const i = buildInput();
+    const result = buildForecast(
+      {
+        spotPricesByKey: i.spot,
+        windForecast: [...i.wind, ...i.futureWind],
+        windActual: i.wind,
+        consumptionForecast: [...i.cons, ...i.futureCons],
+        consumptionActual: i.cons,
+        seriesStartMs: i.seriesStartMs,
+        seriesEndMs: i.seriesEndMs,
+      },
+      { applyTimeBias: false, bands: dark },
+    );
+    expect(result.diagnostics.bandCalibrated).toBe(false);
+    expect(result.diagnostics.bandHourBuckets).toBe(0);
+    for (const point of result.series) {
+      expect(point.estimatedSpotLowCentsKwh).toBeUndefined();
+      expect(point.estimatedSpotHighCentsKwh).toBeUndefined();
+    }
+  });
+
+  it("applies a calibrated band with low ≤ point ≤ high on real-prediction quarters", () => {
+    const i = buildInput();
+    const result = buildForecast(
+      {
+        spotPricesByKey: i.spot,
+        windForecast: [...i.wind, ...i.futureWind],
+        windActual: i.wind,
+        consumptionForecast: [...i.cons, ...i.futureCons],
+        consumptionActual: i.cons,
+        seriesStartMs: i.seriesStartMs,
+        seriesEndMs: i.seriesEndMs,
+      },
+      { applyTimeBias: false, bands: calibrated, floor: 0 },
+    );
+    expect(result.diagnostics.bandCalibrated).toBe(true);
+    expect(result.diagnostics.bandHourBuckets).toBe(result.series.length);
+    for (const point of result.series) {
+      expect(point.estimatedSpotLowCentsKwh).toBeDefined();
+      expect(point.estimatedSpotHighCentsKwh).toBeDefined();
+      const low = point.estimatedSpotLowCentsKwh ?? 0;
+      const high = point.estimatedSpotHighCentsKwh ?? 0;
+      expect(low).toBeLessThanOrEqual(point.estimatedSpotCentsKwh);
+      expect(high).toBeGreaterThanOrEqual(point.estimatedSpotCentsKwh);
+      expect(low).toBeGreaterThanOrEqual(0); // floor-clipped
+    }
+  });
+
+  it("bands exactly the quarters that carry a real prediction", () => {
+    // The band guard keys off a real prediction for the quarter. The ridge model
+    // currently produces a prediction for every future quarter (no forward-fill
+    // / zero-seed in practice), so all quarters are banded — and the invariant
+    // `bandHourBuckets === count(points with bounds)` must hold exactly. Should a
+    // future model ever leave a gap (forward-filled / zero-seeded), the same
+    // guard withholds the band from that quarter.
+    const i = buildInput();
+    const result = buildForecast(
+      {
+        spotPricesByKey: i.spot,
+        windForecast: i.wind, // no future grid data
+        windActual: i.wind,
+        consumptionForecast: i.cons,
+        consumptionActual: i.cons,
+        seriesStartMs: i.seriesStartMs,
+        seriesEndMs: i.seriesEndMs,
+      },
+      { applyTimeBias: false, bands: calibrated },
+    );
+    let banded = 0;
+    for (const point of result.series) {
+      const hasLow = point.estimatedSpotLowCentsKwh !== undefined;
+      const hasHigh = point.estimatedSpotHighCentsKwh !== undefined;
+      expect(hasLow).toBe(hasHigh); // both or neither
+      if (hasLow) {
+        banded++;
+        const low = point.estimatedSpotLowCentsKwh ?? 0;
+        const high = point.estimatedSpotHighCentsKwh ?? 0;
+        expect(low).toBeLessThanOrEqual(point.estimatedSpotCentsKwh);
+        expect(high).toBeGreaterThanOrEqual(point.estimatedSpotCentsKwh);
+      }
+    }
+    expect(banded).toBe(result.diagnostics.bandHourBuckets);
+    // No zero-seeded quarter is ever banded (none here, but the guard holds).
+    expect(result.diagnostics.zeroSeededQuarters).toBe(0);
   });
 });

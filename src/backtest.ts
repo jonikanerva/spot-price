@@ -35,6 +35,13 @@ import {
   expandHourlyToQuarters,
   quarterKey,
 } from "./forecast.js";
+import {
+  buildArtifact,
+  deriveBandOffsets,
+  observedCoverageOf,
+  type CalibratedBands,
+  type HorizonResidual,
+} from "./conformal.js";
 import type { FingridRecord } from "./types.js";
 
 const QUARTER_MS = 15 * 60 * 1000;
@@ -375,6 +382,15 @@ export interface BacktestSummary {
   readonly rMae: Readonly<Record<BaselineName, number | null>>;
   /** True if every reconstructed origin was leakage-free. */
   readonly leakFree: boolean;
+  /**
+   * Out-of-sample (predicted, actual) residuals tagged by UTC hour, harvested
+   * from the SAME leakage-guarded realised-vs-predicted pairs used for the error
+   * metrics. This — not the in-sample hour-bias pass — is the honest input the
+   * conformal band derivation must use (see `conformal.ts`). Forward-filled and
+   * zero-seeded quarters carry no band downstream, but they are harmless here
+   * because they are scored exactly as the route would emit them.
+   */
+  readonly residuals: readonly HorizonResidual[];
 }
 
 const BASELINES: readonly BaselineName[] = ["last_week", "last_published_day"];
@@ -402,6 +418,7 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
   }
 
   const modelPairs: [number, number][] = [];
+  const residuals: HorizonResidual[] = [];
   const baselinePairs: Record<BaselineName, [number, number][]> = {
     last_week: [],
     last_published_day: [],
@@ -432,6 +449,13 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
         }
         scored = true;
         modelPairs.push([pred, actual]);
+        // Harvest the out-of-sample residual (tagged by the target's UTC hour)
+        // for the conformal band — the same leakage-guarded pair scored above.
+        residuals.push({
+          utcHour: new Date(key).getUTCHours(),
+          predictedRaw: pred,
+          actualRaw: actual,
+        });
         const targetMs = msOf(key);
         for (const name of BASELINES) {
           const b = baselineFor(name, targetMs, inputs);
@@ -467,7 +491,29 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
     baselineMae,
     rMae,
     leakFree,
+    residuals,
   };
+};
+
+// ---------------------------------------------------------------------------
+// Conformal band derivation from the backtest (offline)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the backtest and build the committed band artifact from its out-of-sample
+ * residuals. Pure — the offline regeneration script and the dev report both use
+ * this so the gating logic lives in exactly one place. `generatedAt` is supplied
+ * by the caller (offline scripts may pass a real clock; this module never reads
+ * one). The artifact ships dark (`calibrated: false`) unless coverage clears the
+ * gate (`conformal.ts`).
+ */
+export const deriveBandsFromBacktest = (
+  data: BacktestData,
+  generatedAt: string,
+): { readonly summary: BacktestSummary; readonly bands: CalibratedBands } => {
+  const summary = runBacktest(data);
+  const bands = buildArtifact(summary.residuals, generatedAt);
+  return { summary, bands };
 };
 
 // ---------------------------------------------------------------------------
@@ -503,7 +549,7 @@ const toRecords = (
     value: r.value,
   }));
 
-const loadFixture = (dir: string): BacktestData => {
+export const loadFixture = (dir: string): BacktestData => {
   const text = readFileSync(path.join(dir, "fixture.json"), "utf-8");
   const fixture = JSON.parse(text) as Fixture;
   // Tolerate the older tools/ fixture shape: prices without an `area` are FI.
@@ -538,6 +584,15 @@ const main = (): void => {
   const wind = bucketRecords(ds(data.fingridByDataset, 245));
   const cons = expandHourlyToQuarters(ds(data.fingridByDataset, 124));
 
+  // Conformal band coverage from the SAME out-of-sample residuals (report only;
+  // the artifact is written by the regeneration script, not here).
+  const { offsetsByHour, globalOffsets } = deriveBandOffsets(s.residuals);
+  const coverage = observedCoverageOf(
+    s.residuals,
+    offsetsByHour,
+    globalOffsets,
+  );
+
   console.log(`\nFI forecast rolling-origin backtest (issue-time keyed)`);
   console.log(`  origins scored:      ${String(s.origins)}`);
   console.log(`  fallback origins:    ${String(s.fallbackOrigins)}`);
@@ -554,6 +609,11 @@ const main = (): void => {
       )}`,
     );
   }
+  console.log(
+    `  band residuals:      ${String(s.residuals.length)}  hour-buckets ${String(
+      offsetsByHour.size,
+    )}  observed coverage ${fmt(coverage)}`,
+  );
   console.log("");
 };
 

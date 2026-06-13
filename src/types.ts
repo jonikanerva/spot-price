@@ -91,6 +91,16 @@ export interface ForecastEntry {
   readonly localEnd: string;
   readonly estimatedSpotCentsKwh: number;
   readonly estimatedTotalCentsKwh: number;
+  /**
+   * Optional empirical prediction-band bounds (P10/P90-style). Present only when
+   * a calibrated band artifact ships AND the quarter carries a real prediction
+   * (not forward-filled / zero-seeded). Additive, v1-compatible: absent ⇒ no
+   * band. Each bound is the point's contract-applied bound (low ≤ point ≤ high).
+   */
+  readonly estimatedSpotLowCentsKwh?: number;
+  readonly estimatedSpotHighCentsKwh?: number;
+  readonly estimatedTotalLowCentsKwh?: number;
+  readonly estimatedTotalHighCentsKwh?: number;
   readonly estimated: true;
 }
 
@@ -114,6 +124,10 @@ export interface ForecastDiagnostics {
   readonly hourBiasBuckets: number;
   readonly predictionFloor: number | null;
   readonly floorClippedQuarters: number;
+  /** True when a calibrated band artifact was applied to the series. */
+  readonly bandCalibrated: boolean;
+  /** Number of future quarters that received band bounds. */
+  readonly bandHourBuckets: number;
 }
 
 /** Pure-pipeline output: the predicted spot series plus diagnostics. */
@@ -129,4 +143,11 @@ export interface ForecastResult {
 export interface ForecastSpotPoint {
   readonly start: string;
   readonly estimatedSpotCentsKwh: number;
+  /**
+   * Optional empirical band bounds in spot c/kWh, written by `buildForecast`
+   * only for quarters carrying a real prediction when a calibrated band ships.
+   * Forward-filled / zero-seeded quarters never get a band. `low ≤ point ≤ high`.
+   */
+  readonly estimatedSpotLowCentsKwh?: number;
+  readonly estimatedSpotHighCentsKwh?: number;
 }
