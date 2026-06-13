@@ -23,6 +23,29 @@ export default tseslint.config(
     },
   },
   {
+    // Offline-only guarantee, layer 3 of 4 (directory / build-root / LINT /
+    // tree-shaking): src/ runtime code must never import tools/. tools/ holds
+    // the offline backtest engine, CLI, and band regen; importing any of it from
+    // a shipped module would drag offline-only code toward the production
+    // bundle. Tests are exempt (they legitimately import the engine to test it).
+    files: ["src/**/*.ts"],
+    ignores: ["src/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/tools/**", "../tools/*", "../../tools/*"],
+              message:
+                "src/ runtime must not import tools/ (offline dev-only; must never reach the production bundle).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     ignores: [
       "dist/",
       "node_modules/",
