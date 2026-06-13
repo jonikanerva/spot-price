@@ -11,14 +11,14 @@ import {
   toFixtureJson,
 } from "./backtest-cli.js";
 import { loadFixture, runBacktest } from "./backtest.js";
-import { eurMwhToCentsKwh } from "./nordpool.js";
+import { eurMwhToCentsKwh } from "../src/nordpool.js";
 import {
   DATASET_CONSUMPTION_ACTUAL,
   DATASET_CONSUMPTION_FORECAST,
   DATASET_WIND_ACTUAL,
   DATASET_WIND_FORECAST,
-} from "./fingrid.js";
-import type { FingridRecord, HourlyPrice } from "./types.js";
+} from "../src/fingrid.js";
+import type { FingridRecord, HourlyPrice } from "../src/types.js";
 
 const QUARTER_MS = 15 * 60 * 1000;
 

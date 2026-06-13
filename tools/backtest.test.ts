@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { FingridRecord } from "./types.js";
-import { quarterKey } from "./forecast.js";
+import type { FingridRecord } from "../src/types.js";
+import { quarterKey } from "../src/forecast.js";
 import {
   collectInputTimestamps,
   deriveBandsFromBacktest,

@@ -8,8 +8,10 @@
  * number, or null where the metric is undefined (e.g. a constant series has no
  * rank correlation).
  *
- * Lives in tools/, imports nothing from src/ except via the harness, and is not
- * part of the production bundle or the vitest glob.
+ * Lives in tools/ (offline-only), imports nothing from src/, and never reaches
+ * the production bundle. Reused by the backtest engine (`tools/backtest.ts`) for
+ * the per-horizon rank metrics. Covered by `tools/backtest-metrics.test.ts`,
+ * which runs via the tools test glob added to `vitest.config.ts`.
  */
 
 const check = (pred: readonly number[], act: readonly number[]): void => {

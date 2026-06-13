@@ -1,16 +1,16 @@
 /**
  * OFFLINE / DEV-ONLY backtest CLI for the FI forecast.
  *
- * IMPORTANT: this module must NOT be imported by any route, `index.ts`,
- * `app.ts`, or `scheduler.ts`, and is NOT part of `$BUILD_CMD` or the request
- * path. Like `backtest.ts` and `regenerate-bands.ts`, the production bundle's
- * only tsup entry is `src/index.ts`; nothing in that runtime graph imports this
- * file, so it never reaches `dist/`. It runs only as a tsx script:
+ * IMPORTANT: this module lives in `tools/` (offline-only). It must NOT be
+ * imported by any `src/` runtime module — the production bundle's only tsup
+ * entry is `src/index.ts`, and an ESLint guard forbids `src/` runtime from
+ * importing `tools/`, so this file never reaches `dist/`. It runs only as a tsx
+ * script:
  *
- *     pnpm backtest --data tools/backtest-data     # replay a committed fixture
- *     pnpm backtest --db                           # score against the live DB
- *     pnpm backtest --db --window 120              # widen the DB window (days)
- *     pnpm backtest --db --export tools/x/fixture.json  # snapshot DB → fixture
+ *     pnpm backtest --data tools/backtest-data/fixture.json   # replay a fixture
+ *     pnpm backtest --db                            # score against the live DB
+ *     pnpm backtest --db --window 120               # widen the DB window (days)
+ *     pnpm backtest --db --export tools/x/fixture.json   # snapshot DB → fixture
  *
  * It is the single operator entry point for measuring forecast accuracy on
  * demand: it runs the EXISTING pure `runBacktest` (issue-time, leakage-guarded)
@@ -26,26 +26,26 @@ import { fileURLToPath } from "node:url";
 // Import db.js FIRST for its TIMESTAMPTZ→ISO type-parser side-effect (db.ts):
 // without it `pg` returns TIMESTAMPTZ columns as `Date` objects, which would
 // diverge from the ISO strings the fixture path produces and break parity.
-import { closeDatabase } from "./db.js";
+import { closeDatabase } from "../src/db.js";
 import pg from "pg";
-import { loadEnv } from "./env.js";
+import { loadEnv } from "../src/env.js";
 import {
   loadFixture,
   runBacktest,
   type BacktestData,
   type PricePoint,
 } from "./backtest.js";
-import { deriveBandOffsets, observedCoverageOf } from "./conformal.js";
-import { getPricesByAreas } from "./price-store.js";
-import { getFingridRecordsByRange } from "./fingrid-store.js";
+import { deriveBandOffsets, observedCoverageOf } from "../src/conformal.js";
+import { getPricesByAreas } from "../src/price-store.js";
+import { getFingridRecordsByRange } from "../src/fingrid-store.js";
 import {
   DATASET_CONSUMPTION_ACTUAL,
   DATASET_CONSUMPTION_FORECAST,
   DATASET_WIND_ACTUAL,
   DATASET_WIND_FORECAST,
-} from "./fingrid.js";
-import { eurMwhToCentsKwh } from "./nordpool.js";
-import type { FingridRecord, HourlyPrice } from "./types.js";
+} from "../src/fingrid.js";
+import { eurMwhToCentsKwh } from "../src/nordpool.js";
+import type { FingridRecord, HourlyPrice } from "../src/types.js";
 
 const { Pool } = pg;
 
