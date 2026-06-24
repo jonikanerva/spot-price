@@ -12,10 +12,12 @@ import type { FingridRecord } from "./types.js";
  * (dataset_id, start_time), range reads, and a prune to bound table growth.
  *
  * This file also owns the SEPARATE `fingrid_forecast_vintages` table (issue
- * #78): per-issuance archival of the FORECAST datasets only (245/165), so the
- * leakage-free history a later vintage-correct backtest (#80) needs is kept.
- * The two stores never share a transaction — the authoritative upsert below
- * must never be aborted by a vintage-write failure.
+ * #78), the SINGLE HOME for the FORECAST datasets (245/165): every issuance is
+ * archived append-only, and the live route reads the latest issuance per target
+ * via `getFingridForecastVintagesLatest`. Forecasts are NOT written to
+ * `fingrid_series` (only actuals 75/124 are). The two stores never share a
+ * transaction — the authoritative actuals upsert below must never be aborted by
+ * a vintage-write failure.
  */
 
 /** Upsert Fingrid records (idempotent via ON CONFLICT). Returns rows written. */
@@ -165,22 +167,55 @@ export const storeFingridForecastVintages = async (
 };
 
 /**
- * Plain range read over the vintage table: every archived issuance whose target
- * quarter falls within [startUtc, endUtc), ordered so that for a given target
- * the issuances arrive oldest-first. Issue #80 will add the as-of issuance
- * selection (`DISTINCT ON (start_time) ... issued_at <= asOf`) on top of this.
+ * LIVE read for the forecast route: the LATEST issuance per target quarter in
+ * [startUtc, endUtc). Returns exactly ONE row per `start_time` — the most
+ * recently issued vintage — which is the production-correct value (the freshest
+ * forecast available now).
+ *
+ * Returning exactly one row per quarter is load-bearing, not just tidy: the
+ * pure pipeline buckets records by quarter with `bucketRecords`
+ * (`forecast.ts`), which takes the MEAN when several rows share a quarter.
+ * Multiple issuances per target would silently average a stale (+44h-old) and a
+ * fresh (+1h-old) forecast into a wrong value with no error — the per-target
+ * `LIMIT 1` is what prevents that.
+ *
+ * Shape: a LATERAL skip-scan, NOT `DISTINCT ON`. Postgres has no loose/skip
+ * index scan for `DISTINCT ON`, so over a deep table (each target carries up to
+ * one issuance per forecast-horizon hour — ~72 for dataset 245) the planner
+ * reads EVERY in-range issuance and sorts them (an external-merge Sort that
+ * spilled to disk and ran ~66 ms warm / ~116 ms cold at 180-day depth — over
+ * the STACK §4 100 ms p99 budget). Instead: the inner `SELECT DISTINCT
+ * start_time` is satisfied by an index-only scan on
+ * `(dataset_id, start_time, issued_at DESC)`, then for each target the LATERAL
+ * does an index seek + `LIMIT 1` to grab the newest issuance — turning the deep
+ * scan into ~one index probe per target. Measured ~37 ms at 180-day depth for
+ * dataset 245 (see PR #82 EXPLAIN).
+ *
+ * NOTE: this takes the newest issuance unconditionally; the as-of selection
+ * (`AND f.issued_at <= $asOf` inside the LATERAL, for the vintage-correct
+ * backtest) is deferred to #80 — it composes cleanly into this shape.
  */
-export const getFingridForecastVintagesByRange = async (
+export const getFingridForecastVintagesLatest = async (
   pool: Pool,
   datasetId: number,
   startUtc: string,
   endUtc: string,
 ): Promise<readonly FingridRecord[]> => {
   const { rows } = await pool.query<FingridRow>(
-    `SELECT dataset_id, start_time, end_time, value
-     FROM fingrid_forecast_vintages
-     WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3
-     ORDER BY start_time, issued_at`,
+    `SELECT v.dataset_id, v.start_time, v.end_time, v.value
+     FROM (
+       SELECT DISTINCT start_time
+       FROM fingrid_forecast_vintages
+       WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3
+     ) AS targets
+     CROSS JOIN LATERAL (
+       SELECT dataset_id, start_time, end_time, value
+       FROM fingrid_forecast_vintages f
+       WHERE f.dataset_id = $1 AND f.start_time = targets.start_time
+       ORDER BY f.issued_at DESC
+       LIMIT 1
+     ) AS v
+     ORDER BY v.start_time`,
     [datasetId, startUtc, endUtc],
   );
   return rows.map(rowToRecord);

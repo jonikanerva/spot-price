@@ -7,7 +7,10 @@ import {
   getPricesByAreas,
   getPricesByRange,
 } from "../price-store.js";
-import { getFingridRecordsByRange } from "../fingrid-store.js";
+import {
+  getFingridForecastVintagesLatest,
+  getFingridRecordsByRange,
+} from "../fingrid-store.js";
 import { getUserSettingsFromContext } from "./settings-context.js";
 import { formatDateTimeInTimeZone } from "../time.js";
 import {
@@ -234,9 +237,12 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
       neighborPricesByArea.set(neighborArea, spotPricesByKey(neighborPrices));
     }
 
+    // Forecasts (245/165) live ONLY in the vintage table: read the latest
+    // issuance per target (single-home design, issue #78). Actuals (75/124)
+    // stay upsert-latest in `fingrid_series`.
     const [windForecast, windActual, consumptionForecast, consumptionActual] =
       await Promise.all([
-        getFingridRecordsByRange(
+        getFingridForecastVintagesLatest(
           db,
           DATASET_WIND_FORECAST,
           historyStartUtc,
@@ -248,7 +254,7 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
           historyStartUtc,
           fingridEndUtc,
         ),
-        getFingridRecordsByRange(
+        getFingridForecastVintagesLatest(
           db,
           DATASET_CONSUMPTION_FORECAST,
           historyStartUtc,

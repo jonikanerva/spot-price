@@ -64,7 +64,7 @@ const safeForecastFetch = async (
           ? `; vintages stored ${String(result.vintageStored)}, pruned ${String(result.vintagePruned)}`
           : `; vintage archival degraded — ${result.vintageDegradedReason}`;
       console.log(
-        `[scheduler] ${label}: stored ${String(result.stored)} Fingrid rows, pruned ${String(result.pruned)}${vintageNote}`,
+        `[scheduler] ${label}: stored ${String(result.stored)} Fingrid actual rows, pruned ${String(result.pruned)}${vintageNote}`,
       );
     } else {
       console.warn(`[scheduler] ${label}: Fingrid degraded — ${result.reason}`);
