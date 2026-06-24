@@ -56,8 +56,13 @@ describe("migration system", () => {
     expect(tables).toContain("account");
     expect(tables).toContain("verification");
     expect(tables).toContain("usernames");
-    expect(tables).toContain("fingrid_series");
-    expect(tables).toContain("weather_series");
+    // Content-based names after migration 006 normalized them.
+    expect(tables).toContain("fingrid_actuals");
+    expect(tables).toContain("weather_forecasts");
+    expect(tables).toContain("fingrid_forecasts");
+    // The old "*_series" names must be gone after the rename.
+    expect(tables).not.toContain("fingrid_series");
+    expect(tables).not.toContain("weather_series");
   });
 
   it("records migration versions", async () => {
@@ -66,15 +71,21 @@ describe("migration system", () => {
       "SELECT version, name FROM _migrations ORDER BY version",
     );
 
-    expect(migrations.length).toBe(4);
+    expect(migrations.length).toBe(6);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("baseline");
+    // 002/004 keep their original recorded names (the files are NOT renamed —
+    // they are deployed; the table RENAME happens in 006).
     expect(migrations[1]?.version).toBe(2);
     expect(migrations[1]?.name).toBe("fingrid_series");
     expect(migrations[2]?.version).toBe(3);
     expect(migrations[2]?.name).toBe("scrub_session_ip_ua");
     expect(migrations[3]?.version).toBe(4);
     expect(migrations[3]?.name).toBe("weather_series");
+    expect(migrations[4]?.version).toBe(5);
+    expect(migrations[4]?.name).toBe("fingrid_forecasts");
+    expect(migrations[5]?.version).toBe(6);
+    expect(migrations[5]?.name).toBe("normalize_table_names");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -84,7 +95,7 @@ describe("migration system", () => {
     const result = await runMigrations(pool);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(4);
+    expect(result.total).toBe(6);
   });
 });
 

@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 import { closeDatabase, initTestDatabase } from "./db.js";
 import { createTestApp } from "./test-utils.js";
-import { storeFingridRecords } from "./fingrid-store.js";
+import {
+  getFingridForecastVintagesLatest,
+  storeFingridForecastVintages,
+  storeFingridRecords,
+} from "./fingrid-store.js";
 import {
   DATASET_CONSUMPTION_ACTUAL,
   DATASET_CONSUMPTION_FORECAST,
@@ -79,10 +83,17 @@ const seedPriceHistory = async (
   );
 };
 
-/** Seed Fingrid datasets across the whole [history, forecast] window. */
+/**
+ * Seed Fingrid datasets across the whole [history, forecast] window, to their
+ * single homes: ACTUALS (75/124) -> `fingrid_actuals` (upsert-latest);
+ * FORECASTS (245/165) -> `fingrid_forecasts` (one issuance, as the
+ * hourly job would write). The forecast issuance is anchored at `anchorMs` so
+ * the live latest-per-target read picks it up.
+ */
 const seedFingrid = async (pool: Pool, anchorMs: number): Promise<void> => {
   const startMs = anchorMs - 21 * DAY_MS;
-  const records: FingridRecord[] = [];
+  const actuals: FingridRecord[] = [];
+  const forecasts: FingridRecord[] = [];
   for (let q = 0; q < 24 * 96; q++) {
     const ms = startMs + q * QUARTER_MS;
     const startTime = new Date(ms).toISOString();
@@ -90,15 +101,8 @@ const seedFingrid = async (pool: Pool, anchorMs: number): Promise<void> => {
     const hour = new Date(ms).getUTCHours();
     const consumption = 8000 + hour * 50;
     const wind = 3000 + ((q * 17) % 1000);
-    records.push(
-      { datasetId: DATASET_WIND_FORECAST, startTime, endTime, value: wind },
+    actuals.push(
       { datasetId: DATASET_WIND_ACTUAL, startTime, endTime, value: wind },
-      {
-        datasetId: DATASET_CONSUMPTION_FORECAST,
-        startTime,
-        endTime,
-        value: consumption,
-      },
       {
         datasetId: DATASET_CONSUMPTION_ACTUAL,
         startTime,
@@ -106,8 +110,22 @@ const seedFingrid = async (pool: Pool, anchorMs: number): Promise<void> => {
         value: consumption,
       },
     );
+    forecasts.push(
+      { datasetId: DATASET_WIND_FORECAST, startTime, endTime, value: wind },
+      {
+        datasetId: DATASET_CONSUMPTION_FORECAST,
+        startTime,
+        endTime,
+        value: consumption,
+      },
+    );
   }
-  await storeFingridRecords(pool, records);
+  await storeFingridRecords(pool, actuals);
+  await storeFingridForecastVintages(
+    pool,
+    new Date(anchorMs).toISOString(),
+    forecasts,
+  );
 };
 
 describe("forecast endpoint", () => {
@@ -237,5 +255,77 @@ describe("forecast endpoint", () => {
     if (firstStart) {
       expect(new Date(firstStart).getTime()).toBe(lastPublishedMs + QUARTER_MS);
     }
+  });
+
+  it("reads forecasts from the vintage table: a populated vintage produces an available estimate (read-source swap is value-preserving)", async () => {
+    // Single-home seed: actuals -> fingrid_actuals, forecasts -> vintage table.
+    // If the route still read 245/165 from fingrid_actuals it would get ZERO
+    // forecast rows and degrade; an available estimate proves the live read now
+    // sources forecasts from the vintage table. (issue #78 single-home.)
+    pool = await initTestDatabase();
+    await seedUserAndKey(pool);
+    const anchorMs = Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS;
+    await seedPriceHistory(pool, anchorMs);
+    await seedFingrid(pool, anchorMs);
+    const app = createTestApp(pool);
+
+    const response = await app.request("/api/v1/price/forecast", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(response.status).toBe(200);
+    const body = ForecastResponseSchema.parse(await response.json());
+    expect(body.available).toBe(true);
+    expect(body.area).toBe("FI");
+    expect(body.entries.length).toBeGreaterThan(0);
+    const first = body.entries[0];
+    expect(first).toBeDefined();
+    if (first) {
+      expect(Number.isFinite(first.estimatedSpotCentsKwh)).toBe(true);
+    }
+  });
+
+  it("uses the newest issuance per target when several vintages exist (latest-per-target on the live path)", async () => {
+    pool = await initTestDatabase();
+    await seedUserAndKey(pool);
+    const anchorMs = Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS;
+    await seedPriceHistory(pool, anchorMs);
+    // Seed actuals + a baseline forecast issuance.
+    await seedFingrid(pool, anchorMs);
+
+    // Add a STALE earlier issuance with a wildly different wind value for every
+    // forecast quarter. The live read must ignore it in favour of the newest
+    // issuance (the baseline from seedFingrid at `anchorMs`).
+    const startMs = anchorMs - 21 * DAY_MS;
+    const staleIssuedAt = new Date(anchorMs - 2 * DAY_MS).toISOString();
+    const stale: FingridRecord[] = [];
+    for (let q = 0; q < 24 * 96; q++) {
+      const ms = startMs + q * QUARTER_MS;
+      stale.push({
+        datasetId: DATASET_WIND_FORECAST,
+        startTime: new Date(ms).toISOString(),
+        endTime: new Date(ms + QUARTER_MS).toISOString(),
+        value: 999_999, // absurd — would skew the estimate if it leaked through
+      });
+    }
+    await storeFingridForecastVintages(pool, staleIssuedAt, stale);
+
+    const app = createTestApp(pool);
+    const response = await app.request("/api/v1/price/forecast", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    expect(response.status).toBe(200);
+    const body = ForecastResponseSchema.parse(await response.json());
+    expect(body.available).toBe(true);
+
+    // Cross-check directly: the latest-per-target read returns the NEWER
+    // issuance's value (3000-band wind), never the stale 999_999.
+    const latest = await getFingridForecastVintagesLatest(
+      pool,
+      DATASET_WIND_FORECAST,
+      new Date(startMs).toISOString(),
+      new Date(anchorMs + DAY_MS).toISOString(),
+    );
+    expect(latest.length).toBeGreaterThan(0);
+    expect(latest.every((r) => r.value !== 999_999)).toBe(true);
   });
 });
