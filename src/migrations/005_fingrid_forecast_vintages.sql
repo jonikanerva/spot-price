@@ -22,7 +22,8 @@
 -- available before the target, never on a hindsight-overwritten value. Never
 -- "align" this table to a latest-only upsert — collapsing to one row per target
 -- on STORE would destroy that property. (The LIVE route reads latest-per-target
--- at QUERY time via DISTINCT ON, which preserves all stored issuances.)
+-- at QUERY time via a LATERAL skip-scan — see the index comment below — which
+-- preserves all stored issuances.)
 --
 -- `issued_at` is an HOUR-TRUNCATED FETCH-TIME PROXY for issuance, not a
 -- Fingrid-provided stamp: the hourly job records its own run instant truncated
@@ -40,12 +41,22 @@ CREATE TABLE IF NOT EXISTS fingrid_forecast_vintages (
   PRIMARY KEY (dataset_id, issued_at, start_time)
 );
 
--- Backs the LIVE latest-per-target read:
---   SELECT DISTINCT ON (start_time) ...
---   WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3
---   ORDER BY start_time, issued_at DESC
--- The trailing `issued_at DESC` lets the planner satisfy the DISTINCT ON via an
--- index skip with no Sort / HashAggregate node (see the EXPLAIN in PR #82).
+-- Backs the LIVE latest-per-target read (`getFingridForecastVintagesLatest`),
+-- which is a LATERAL skip-scan, NOT `DISTINCT ON`. This index serves BOTH legs:
+--   1. the inner `SELECT DISTINCT start_time WHERE dataset_id=$1 AND
+--      start_time >= $2 AND start_time < $3` (the leading columns make this an
+--      index-only scan over the in-range targets);
+--   2. the per-target LATERAL `... WHERE dataset_id=$1 AND start_time=target
+--      ORDER BY issued_at DESC LIMIT 1` — the trailing `issued_at DESC` makes
+--      the newest issuance a single index seek (no sort) per target.
+-- `DISTINCT ON (start_time) ... ORDER BY start_time, issued_at DESC` was tried
+-- and REJECTED: Postgres has no loose/skip index scan for DISTINCT ON, so at
+-- 180-day depth (~72 issuances/target for 245) it read every in-range row and
+-- sorted them to disk (external-merge Sort, ~116 ms cold > the STACK §4 100 ms
+-- p99). The LATERAL stays ~48 ms warm / ~67 ms cold (EXPLAIN in PR #82). Do NOT
+-- "simplify" the live read back to DISTINCT ON — it reintroduces that
+-- regression. (#80 adds an as-of bound `AND issued_at <= $asOf` inside leg 2;
+-- it composes cleanly and keeps using this index.)
 CREATE INDEX IF NOT EXISTS idx_fingrid_vintages_target_issued
   ON fingrid_forecast_vintages (dataset_id, start_time, issued_at DESC);
 -- Backs the retention prune DELETE WHERE issued_at < $1.
