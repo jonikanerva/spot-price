@@ -212,6 +212,7 @@ export const getFingridForecastVintagesLatest = async (
        SELECT dataset_id, start_time, end_time, value
        FROM fingrid_forecast_vintages f
        WHERE f.dataset_id = $1 AND f.start_time = targets.start_time
+       -- #80 adds the as-of bound here: AND f.issued_at <= $asOf
        ORDER BY f.issued_at DESC
        LIMIT 1
      ) AS v
