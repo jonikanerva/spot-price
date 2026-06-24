@@ -59,8 +59,12 @@ const safeForecastFetch = async (
   try {
     const result = await runForecastFetchJob(pool, apiKey);
     if (result.ok) {
+      const vintageNote =
+        result.vintageDegradedReason === undefined
+          ? `; vintages stored ${String(result.vintageStored)}, pruned ${String(result.vintagePruned)}`
+          : `; vintage archival degraded — ${result.vintageDegradedReason}`;
       console.log(
-        `[scheduler] ${label}: stored ${String(result.stored)} Fingrid rows, pruned ${String(result.pruned)}`,
+        `[scheduler] ${label}: stored ${String(result.stored)} Fingrid rows, pruned ${String(result.pruned)}${vintageNote}`,
       );
     } else {
       console.warn(`[scheduler] ${label}: Fingrid degraded — ${result.reason}`);

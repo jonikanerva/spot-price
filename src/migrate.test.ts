@@ -58,6 +58,7 @@ describe("migration system", () => {
     expect(tables).toContain("usernames");
     expect(tables).toContain("fingrid_series");
     expect(tables).toContain("weather_series");
+    expect(tables).toContain("fingrid_forecast_vintages");
   });
 
   it("records migration versions", async () => {
@@ -66,7 +67,7 @@ describe("migration system", () => {
       "SELECT version, name FROM _migrations ORDER BY version",
     );
 
-    expect(migrations.length).toBe(4);
+    expect(migrations.length).toBe(5);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("baseline");
     expect(migrations[1]?.version).toBe(2);
@@ -75,6 +76,8 @@ describe("migration system", () => {
     expect(migrations[2]?.name).toBe("scrub_session_ip_ua");
     expect(migrations[3]?.version).toBe(4);
     expect(migrations[3]?.name).toBe("weather_series");
+    expect(migrations[4]?.version).toBe(5);
+    expect(migrations[4]?.name).toBe("fingrid_forecast_vintages");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -84,7 +87,7 @@ describe("migration system", () => {
     const result = await runMigrations(pool);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(4);
+    expect(result.total).toBe(5);
   });
 });
 

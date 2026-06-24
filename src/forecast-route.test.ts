@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 import { closeDatabase, initTestDatabase } from "./db.js";
 import { createTestApp } from "./test-utils.js";
-import { storeFingridRecords } from "./fingrid-store.js";
+import {
+  storeFingridForecastVintages,
+  storeFingridRecords,
+} from "./fingrid-store.js";
 import {
   DATASET_CONSUMPTION_ACTUAL,
   DATASET_CONSUMPTION_FORECAST,
@@ -237,5 +240,59 @@ describe("forecast endpoint", () => {
     if (firstStart) {
       expect(new Date(firstStart).getTime()).toBe(lastPublishedMs + QUARTER_MS);
     }
+  });
+
+  it("response is byte-identical whether or not the vintage table is populated (issue #78 guarantee)", async () => {
+    pool = await initTestDatabase();
+    await seedUserAndKey(pool);
+    const anchorMs = Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS;
+    await seedPriceHistory(pool, anchorMs);
+    await seedFingrid(pool, anchorMs);
+    const app = createTestApp(pool);
+
+    // Baseline: vintage table is empty (the live read path never touches it).
+    const before = await app.request("/api/v1/price/forecast", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    const beforeBody: unknown = await before.json();
+
+    // Populate the vintage table with several issuances spanning the forecast
+    // window — exactly what the hourly job would accumulate over time.
+    const startMs = anchorMs - 21 * DAY_MS;
+    for (let issuance = 0; issuance < 3; issuance++) {
+      const issuedAt = new Date(anchorMs - issuance * DAY_MS).toISOString();
+      const vintageRecords: FingridRecord[] = [];
+      for (let q = 0; q < 24 * 96; q++) {
+        const ms = startMs + q * QUARTER_MS;
+        const startTime = new Date(ms).toISOString();
+        const endTime = new Date(ms + QUARTER_MS).toISOString();
+        // A different per-issuance value to prove the live path ignores it.
+        vintageRecords.push({
+          datasetId: DATASET_WIND_FORECAST,
+          startTime,
+          endTime,
+          value: 1234 + issuance,
+        });
+      }
+      await storeFingridForecastVintages(pool, issuedAt, vintageRecords);
+    }
+
+    // Same request again, vintage table now densely populated.
+    const after = await app.request("/api/v1/price/forecast", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+    const afterBody: unknown = await after.json();
+
+    // The live forecast read path reads only fingrid_series, so the vintage
+    // data must not change the response. `generatedAt` is a per-request
+    // wall-clock stamp that varies between any two calls and is unrelated to
+    // the vintage table, so normalise it out before comparing — what must be
+    // identical is the forecast content itself.
+    const normalise = (body: unknown): Record<string, unknown> => {
+      const rest = { ...(body as Record<string, unknown>) };
+      delete rest["generatedAt"];
+      return rest;
+    };
+    expect(normalise(afterBody)).toEqual(normalise(beforeBody));
   });
 });

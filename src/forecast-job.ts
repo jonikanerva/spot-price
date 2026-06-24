@@ -1,7 +1,9 @@
 import type { Pool } from "pg";
 import { fetchFingridSeries } from "./fingrid.js";
 import {
+  pruneFingridForecastVintagesBefore,
   pruneFingridRecordsBefore,
+  storeFingridForecastVintages,
   storeFingridRecords,
 } from "./fingrid-store.js";
 import { FLOOR_HISTORY_DAYS, FORECAST_DAYS } from "./forecast.js";
@@ -47,8 +49,32 @@ export const HISTORY_DAYS = Math.max(FLOOR_HISTORY_DAYS, 4 * 7) + 1; // 31 days
  */
 export const RETENTION_DAYS = 730;
 
+/**
+ * Retention for the per-issuance forecast vintages (issue #78). 180 days — NOT
+ * the 730 of `RETENTION_DAYS`. The 730 figure on the sibling is forward-looking
+ * accumulation for seasonal backtests of the upsert-latest series; the vintage
+ * table has named consumers with shorter horizons: #79's lead-time ladder needs
+ * only days of vintages, and the #80/#81 vintage-correct backtest fits over the
+ * ~30-day window and validates across a single seasonal cycle. 180 days covers
+ * that with margin while keeping the footprint small (2 forecast datasets ×
+ * 96 quarters/day × 24 issuances/day × 180 days is bounded and trivial on
+ * Railway, VISION data-footprint principle). Reusing 730 here would be
+ * cargo-culting the sibling's number, so it is set independently.
+ */
+export const VINTAGE_RETENTION_DAYS = 180;
+
 export type ForecastFetchResult =
-  | { readonly ok: true; readonly stored: number; readonly pruned: number }
+  | {
+      readonly ok: true;
+      readonly stored: number;
+      readonly pruned: number;
+      /** Forecast vintages inserted this run (append-only per issuance). */
+      readonly vintageStored: number;
+      /** Vintages pruned this run (issuances older than retention). */
+      readonly vintagePruned: number;
+      /** Set when the vintage write/prune degraded but the authoritative upsert succeeded. */
+      readonly vintageDegradedReason?: string;
+    }
   | { readonly ok: false; readonly reason: string };
 
 /**
@@ -69,6 +95,9 @@ export const runForecastFetchJob = async (
     return { ok: false, reason: result.reason };
   }
 
+  // Step 1 — authoritative upsert. ALL four datasets stay upsert-latest in
+  // `fingrid_series`, so the live forecast read path is untouched. This commits
+  // FIRST and on its own; the vintage write below is a separate transaction.
   const stored = await storeFingridRecords(pool, result.records);
 
   // Prune only rows older than the retention window, NOT the fetch window — the
@@ -76,5 +105,53 @@ export const runForecastFetchJob = async (
   const pruneCutoff = new Date(nowMs - RETENTION_DAYS * DAY_MS).toISOString();
   const pruned = await pruneFingridRecordsBefore(pool, pruneCutoff);
 
-  return { ok: true, stored, pruned };
+  // Step 2 — per-issuance vintage archival of the FORECAST datasets (issue #78),
+  // in its OWN try/catch and its OWN transaction. Per STACK §9 the forecast path
+  // must never affect the authoritative upsert above: a vintage failure here
+  // degrades (logged + reported) and can never roll back or abort step 1.
+  // `issuedAt` is the job's `now`, hour-truncated to UTC (a fetch-time proxy for
+  // true issuance, ±1h of jitter) so re-runs within the same hour stay
+  // idempotent against the (dataset_id, issued_at, start_time) PK.
+  const issuedAt = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      now.getUTCHours(),
+    ),
+  ).toISOString();
+  let vintageStored = 0;
+  let vintagePruned = 0;
+  let vintageDegradedReason: string | undefined;
+  try {
+    vintageStored = await storeFingridForecastVintages(
+      pool,
+      issuedAt,
+      result.records,
+    );
+    const vintageCutoff = new Date(
+      nowMs - VINTAGE_RETENTION_DAYS * DAY_MS,
+    ).toISOString();
+    vintagePruned = await pruneFingridForecastVintagesBefore(
+      pool,
+      vintageCutoff,
+    );
+  } catch (err) {
+    vintageDegradedReason =
+      err instanceof Error ? err.message : "unknown error";
+    console.warn(
+      `Fingrid forecast-vintage archival degraded: ${vintageDegradedReason}`,
+    );
+  }
+
+  return vintageDegradedReason === undefined
+    ? { ok: true, stored, pruned, vintageStored, vintagePruned }
+    : {
+        ok: true,
+        stored,
+        pruned,
+        vintageStored,
+        vintagePruned,
+        vintageDegradedReason,
+      };
 };
