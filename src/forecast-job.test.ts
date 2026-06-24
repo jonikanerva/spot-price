@@ -46,7 +46,7 @@ const countVintageRows = async (
   datasetId: number,
 ): Promise<number> => {
   const { rows } = await pool.query<{ n: string }>(
-    `SELECT COUNT(*) AS n FROM fingrid_forecast_vintages WHERE dataset_id = $1`,
+    `SELECT COUNT(*) AS n FROM fingrid_forecasts WHERE dataset_id = $1`,
     [datasetId],
   );
   return parseInt(rows[0]?.n ?? "0", 10);
@@ -177,7 +177,7 @@ describe("fingrid forecast vintages", () => {
     expect(await countVintageRows(pool, DATASET_WIND_FORECAST)).toBe(1);
   });
 
-  it("leaves the fingrid_series upsert for actuals unchanged", async () => {
+  it("leaves the fingrid_actuals upsert for actuals unchanged", async () => {
     const ms = NOW.getTime();
     // The authoritative series still upserts the latest actual value.
     await storeFingridRecords(pool, [recordOf(DATASET_WIND_ACTUAL, ms, 500)]);
@@ -247,7 +247,7 @@ describe("runForecastFetchJob", () => {
     expect(values).toEqual([111, 555]);
   });
 
-  it("single-home partition: forecasts go ONLY to the vintage table, actuals ONLY to fingrid_series, counts correct", async () => {
+  it("single-home partition: forecasts go ONLY to the vintage table, actuals ONLY to fingrid_actuals, counts correct", async () => {
     const target = NOW.getTime();
     const issuedHour = new Date(
       Date.UTC(
@@ -287,14 +287,14 @@ describe("runForecastFetchJob", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      // `stored` counts ACTUALS only — the forecast did NOT touch fingrid_series.
+      // `stored` counts ACTUALS only — the forecast did NOT touch fingrid_actuals.
       expect(result.stored).toBe(1);
       expect(result.vintageStored).toBe(1); // only the forecast vintage archived
       expect(result.vintagePruned).toBe(1); // only the expired issuance pruned
       expect(result.vintageDegradedReason).toBeUndefined();
     }
 
-    // fingrid_series holds the ACTUAL only — the forecast (245) was NOT written.
+    // fingrid_actuals holds the ACTUAL only — the forecast (245) was NOT written.
     const seriesForecast = await getFingridRecordsByRange(
       pool,
       DATASET_WIND_FORECAST,
@@ -327,7 +327,7 @@ describe("runForecastFetchJob", () => {
 
     // The run's issuance was recorded hour-truncated.
     const issuedRows = await pool.query<{ issued_at: string }>(
-      `SELECT DISTINCT issued_at FROM fingrid_forecast_vintages
+      `SELECT DISTINCT issued_at FROM fingrid_forecasts
        WHERE issued_at = $1`,
       [issuedHour],
     );

@@ -16,8 +16,8 @@ import { FLOOR_HISTORY_DAYS, FORECAST_DAYS } from "./forecast.js";
  * Fingrid grid-data fetch job for the FI forecast. Mirrors `fetch-job.ts`:
  * fetches the four public datasets for [now − HISTORY_DAYS, now + FORECAST_DAYS],
  * then partitions them by class to ONE home each — ACTUALS (75/124) are
- * upsert-latest in `fingrid_series`; FORECASTS (245/165) are archived
- * append-only per issuance in `fingrid_forecast_vintages`. Each store prunes
+ * upsert-latest in `fingrid_actuals`; FORECASTS (245/165) are archived
+ * append-only per issuance in `fingrid_forecasts`. Each store prunes
  * rows older than its retention window to bound growth. Returns a typed result;
  * failures degrade (the Fingrid boundary never throws), so this job can never
  * break the authoritative price path.
@@ -43,7 +43,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const HISTORY_DAYS = Math.max(FLOOR_HISTORY_DAYS, 4 * 7) + 1; // 31 days
 
 /**
- * Retention window for the `fingrid_series` ACTUAL rows (~2 years). Forward-
+ * Retention window for the `fingrid_actuals` ACTUAL rows (~2 years). Forward-
  * looking accumulation for future forecast phases (Phase 2 conformal, Phase 3
  * trees): the table grows from deploy date as the hourly job appends fresh
  * actual quarters, building up the seasonal history those phases backtest
@@ -104,9 +104,9 @@ export const runForecastFetchJob = async (
   }
 
   // Partition the fetch result by dataset class. Each class has ONE home:
-  // actuals (75/124) -> upsert-latest in `fingrid_series`; forecasts (245/165)
-  // -> append-only per issuance in `fingrid_forecast_vintages`. Forecasts are
-  // deliberately NOT written to `fingrid_series` (single-home design — the
+  // actuals (75/124) -> upsert-latest in `fingrid_actuals`; forecasts (245/165)
+  // -> append-only per issuance in `fingrid_forecasts`. Forecasts are
+  // deliberately NOT written to `fingrid_actuals` (single-home design — the
   // product owner rejected mirroring them as legacy-driven redundancy).
   const isForecastDataset = (datasetId: number): boolean =>
     datasetId === DATASET_WIND_FORECAST ||

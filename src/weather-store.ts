@@ -36,7 +36,7 @@ export const storeWeatherRecords = async (
     await client.query("BEGIN");
     for (const r of records) {
       const result = await client.query(
-        `INSERT INTO weather_series
+        `INSERT INTO weather_forecasts
            (point_id, issued_at, target_time, temp, clouds, uvi, wind_speed, wind_deg)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (point_id, issued_at, target_time) DO NOTHING`,
@@ -100,7 +100,7 @@ export const getWeatherRecordsByRange = async (
 ): Promise<readonly WeatherRecord[]> => {
   const { rows } = await pool.query<WeatherRow>(
     `SELECT point_id, issued_at, target_time, temp, clouds, uvi, wind_speed, wind_deg
-     FROM weather_series
+     FROM weather_forecasts
      WHERE point_id = $1 AND target_time >= $2 AND target_time < $3
      ORDER BY target_time, issued_at`,
     [pointId, startUtc, endUtc],
@@ -119,7 +119,7 @@ export const pruneWeatherRecordsBefore = async (
   beforeUtc: string,
 ): Promise<number> => {
   const result = await pool.query(
-    `DELETE FROM weather_series WHERE issued_at < $1`,
+    `DELETE FROM weather_forecasts WHERE issued_at < $1`,
     [beforeUtc],
   );
   return result.rowCount ?? 0;

@@ -85,8 +85,8 @@ const seedPriceHistory = async (
 
 /**
  * Seed Fingrid datasets across the whole [history, forecast] window, to their
- * single homes: ACTUALS (75/124) -> `fingrid_series` (upsert-latest);
- * FORECASTS (245/165) -> `fingrid_forecast_vintages` (one issuance, as the
+ * single homes: ACTUALS (75/124) -> `fingrid_actuals` (upsert-latest);
+ * FORECASTS (245/165) -> `fingrid_forecasts` (one issuance, as the
  * hourly job would write). The forecast issuance is anchored at `anchorMs` so
  * the live latest-per-target read picks it up.
  */
@@ -258,8 +258,8 @@ describe("forecast endpoint", () => {
   });
 
   it("reads forecasts from the vintage table: a populated vintage produces an available estimate (read-source swap is value-preserving)", async () => {
-    // Single-home seed: actuals -> fingrid_series, forecasts -> vintage table.
-    // If the route still read 245/165 from fingrid_series it would get ZERO
+    // Single-home seed: actuals -> fingrid_actuals, forecasts -> vintage table.
+    // If the route still read 245/165 from fingrid_actuals it would get ZERO
     // forecast rows and degrade; an available estimate proves the live read now
     // sources forecasts from the vintage table. (issue #78 single-home.)
     pool = await initTestDatabase();

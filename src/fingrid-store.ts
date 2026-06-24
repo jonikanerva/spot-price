@@ -11,11 +11,11 @@ import type { FingridRecord } from "./types.js";
  * synchronously). Mirrors `price-store.ts`: idempotent upsert keyed by
  * (dataset_id, start_time), range reads, and a prune to bound table growth.
  *
- * This file also owns the SEPARATE `fingrid_forecast_vintages` table (issue
+ * This file also owns the SEPARATE `fingrid_forecasts` table (issue
  * #78), the SINGLE HOME for the FORECAST datasets (245/165): every issuance is
  * archived append-only, and the live route reads the latest issuance per target
  * via `getFingridForecastVintagesLatest`. Forecasts are NOT written to
- * `fingrid_series` (only actuals 75/124 are). The two stores never share a
+ * `fingrid_actuals` (only actuals 75/124 are). The two stores never share a
  * transaction — the authoritative actuals upsert below must never be aborted by
  * a vintage-write failure.
  */
@@ -34,7 +34,7 @@ export const storeFingridRecords = async (
     await client.query("BEGIN");
     for (const r of records) {
       await client.query(
-        `INSERT INTO fingrid_series (dataset_id, start_time, end_time, value)
+        `INSERT INTO fingrid_actuals (dataset_id, start_time, end_time, value)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (dataset_id, start_time)
          DO UPDATE SET end_time = EXCLUDED.end_time,
@@ -80,7 +80,7 @@ export const getFingridRecordsByRange = async (
 ): Promise<readonly FingridRecord[]> => {
   const { rows } = await pool.query<FingridRow>(
     `SELECT dataset_id, start_time, end_time, value
-     FROM fingrid_series
+     FROM fingrid_actuals
      WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3
      ORDER BY start_time`,
     [datasetId, startUtc, endUtc],
@@ -98,7 +98,7 @@ export const pruneFingridRecordsBefore = async (
   beforeUtc: string,
 ): Promise<number> => {
   const result = await pool.query(
-    `DELETE FROM fingrid_series WHERE start_time < $1`,
+    `DELETE FROM fingrid_actuals WHERE start_time < $1`,
     [beforeUtc],
   );
   return result.rowCount ?? 0;
@@ -110,7 +110,7 @@ export const pruneFingridRecordsBefore = async (
 // Mirrors `weather-store.ts`: APPEND-ONLY per issuance
 // (`ON CONFLICT DO NOTHING`), prune by ISSUANCE, plain range read. The actual
 // datasets (75/124) are deliberately never written here — see the guard in
-// `storeFingridForecastVintages` — they stay upsert-latest in `fingrid_series`.
+// `storeFingridForecastVintages` — they stay upsert-latest in `fingrid_actuals`.
 // ---------------------------------------------------------------------------
 
 /** Forecast datasets whose vintages we archive; actuals are excluded. */
@@ -147,7 +147,7 @@ export const storeFingridForecastVintages = async (
     await client.query("BEGIN");
     for (const r of forecastRecords) {
       const result = await client.query(
-        `INSERT INTO fingrid_forecast_vintages
+        `INSERT INTO fingrid_forecasts
            (dataset_id, issued_at, start_time, end_time, value)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (dataset_id, issued_at, start_time) DO NOTHING`,
@@ -205,12 +205,12 @@ export const getFingridForecastVintagesLatest = async (
     `SELECT v.dataset_id, v.start_time, v.end_time, v.value
      FROM (
        SELECT DISTINCT start_time
-       FROM fingrid_forecast_vintages
+       FROM fingrid_forecasts
        WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3
      ) AS targets
      CROSS JOIN LATERAL (
        SELECT dataset_id, start_time, end_time, value
-       FROM fingrid_forecast_vintages f
+       FROM fingrid_forecasts f
        WHERE f.dataset_id = $1 AND f.start_time = targets.start_time
        -- #80 adds the as-of bound here: AND f.issued_at <= $asOf
        ORDER BY f.issued_at DESC
@@ -224,7 +224,7 @@ export const getFingridForecastVintagesLatest = async (
 
 /**
  * Delete vintages whose ISSUANCE is older than `beforeUtc` to bound table
- * growth. Pruning by `issued_at` (not `start_time`, like `fingrid_series`) keeps
+ * growth. Pruning by `issued_at` (not `start_time`, like `fingrid_actuals`) keeps
  * the retention window aligned to when a forecast was made — the unit the
  * backtest reasons about, mirroring `weather-store.ts`. Returns the row count.
  */
@@ -233,7 +233,7 @@ export const pruneFingridForecastVintagesBefore = async (
   beforeUtc: string,
 ): Promise<number> => {
   const result = await pool.query(
-    `DELETE FROM fingrid_forecast_vintages WHERE issued_at < $1`,
+    `DELETE FROM fingrid_forecasts WHERE issued_at < $1`,
     [beforeUtc],
   );
   return result.rowCount ?? 0;

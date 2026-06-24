@@ -29,7 +29,7 @@ const main = async (): Promise<void> => {
   // the forward-only weather history that future forecast phases depend on.
   if (env.NODE_ENV === "production" && !env.OPENWEATHERMAP_API_KEY) {
     console.warn(
-      "Weather collection disabled: OPENWEATHERMAP_API_KEY not set — weather_series will not accumulate",
+      "Weather collection disabled: OPENWEATHERMAP_API_KEY not set — weather_forecasts will not accumulate",
     );
   }
 

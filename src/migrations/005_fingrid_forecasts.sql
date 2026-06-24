@@ -1,23 +1,23 @@
--- Per-issuance VINTAGES of the Fingrid FORECAST datasets only — wind forecast
+-- Per-issuance vintages of the Fingrid FORECAST datasets only — wind forecast
 -- (245) and consumption forecast (165). These are public grid data, not user
 -- data (VISION.md -> Persistence and Privacy Posture).
 --
 -- SINGLE HOME for the forecast datasets: forecasts live ONLY here, NOT in
--- `fingrid_series`. The two tables partition the four Fingrid datasets by how
--- they are revised:
+-- `fingrid_actuals`. The two tables partition the four Fingrid datasets by how
+-- they are revised (content-based names):
 --   * forecasts (245/165) are revised continuously toward the target, so we
 --     keep ALL issuances here (append-only) and the live read takes the LATEST
 --     issuance per target;
 --   * actuals (75/124) are not meaningfully revised, so they stay upsert-latest
---     (one near-actual row per quarter) in `fingrid_series`.
--- The dual-write that briefly mirrored forecasts into `fingrid_series` was
+--     (one near-actual row per quarter) in `fingrid_actuals`.
+-- The dual-write that briefly mirrored forecasts into the actuals table was
 -- rejected by the product owner as legacy-driven redundancy: keep-all vs
 -- keep-latest gives each dataset class exactly one home.
 --
--- !!! APPEND-ONLY PER ISSUANCE — NOT upsert-latest like `fingrid_series` !!!
+-- !!! APPEND-ONLY PER ISSUANCE — NOT upsert-latest like `fingrid_actuals` !!!
 -- storeFingridForecastVintages inserts with ON CONFLICT DO NOTHING (it does NOT
--- DO UPDATE), mirroring `weather_series`. Keeping every issuance is what makes
--- a later vintage-correct backtest (issue #80) and calibrated fit (#81)
+-- DO UPDATE), mirroring `weather_forecasts`. Keeping every issuance is what
+-- makes a later vintage-correct backtest (issue #80) and calibrated fit (#81)
 -- leakage-free: they must train/evaluate on the forecast that was actually
 -- available before the target, never on a hindsight-overwritten value. Never
 -- "align" this table to a latest-only upsert — collapsing to one row per target
@@ -31,7 +31,7 @@
 -- That is the right granularity for the lead-time ladder the backtest reasons
 -- about; do not treat it as exact. The PK below makes a re-run of the same
 -- issuance hour idempotent without overwriting prior issuances.
-CREATE TABLE IF NOT EXISTS fingrid_forecast_vintages (
+CREATE TABLE IF NOT EXISTS fingrid_forecasts (
   dataset_id INTEGER NOT NULL,
   issued_at TIMESTAMPTZ NOT NULL,
   start_time TIMESTAMPTZ NOT NULL,
@@ -57,8 +57,8 @@ CREATE TABLE IF NOT EXISTS fingrid_forecast_vintages (
 -- "simplify" the live read back to DISTINCT ON — it reintroduces that
 -- regression. (#80 adds an as-of bound `AND issued_at <= $asOf` inside leg 2;
 -- it composes cleanly and keeps using this index.)
-CREATE INDEX IF NOT EXISTS idx_fingrid_vintages_target_issued
-  ON fingrid_forecast_vintages (dataset_id, start_time, issued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fingrid_forecasts_target_issued
+  ON fingrid_forecasts (dataset_id, start_time, issued_at DESC);
 -- Backs the retention prune DELETE WHERE issued_at < $1.
-CREATE INDEX IF NOT EXISTS idx_fingrid_vintages_issued
-  ON fingrid_forecast_vintages (issued_at);
+CREATE INDEX IF NOT EXISTS idx_fingrid_forecasts_issued
+  ON fingrid_forecasts (issued_at);
