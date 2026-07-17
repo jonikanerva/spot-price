@@ -7,11 +7,13 @@
  * importing `tools/`, so it never reaches `dist/`. It runs only as a tsx script:
  *
  *     pnpm tsx tools/regenerate-bands.ts --data tools/backtest-data/fixture.json
+ *     pnpm tsx tools/regenerate-bands.ts --db [--window <days>]   # live history
  *
- * It runs the issue-time, leakage-guarded backtest over real exported
- * price/Fingrid history, derives per-UTC-hour residual offsets and measured
- * out-of-sample coverage (`src/conformal.ts`), and rewrites the SHIPPED
- * `src/conformal-artifact.ts`.
+ * It runs the issue-time, leakage-guarded backtest over real price/Fingrid
+ * history (a fixture, or `--db` live), derives per-UTC-hour residual offsets and
+ * measured out-of-sample coverage (`src/conformal.ts`), and rewrites the SHIPPED
+ * `src/conformal-artifact.ts`. `--db` reads directly (no JSON round-trip) because
+ * the vintage table is too large to serialise.
  * A human reviews and commits the result. Regenerating the artifact is a
  * documented PERIODIC MANUAL CHORE — NOT a background job (`STACK §9`). Bands
  * turn on (or off) purely by committing a new artifact; no code change.
@@ -19,11 +21,38 @@
  * This script reads `node:fs`, `process.argv`, and writes the artifact file. It
  * never reads `process.env`, the network, or the DB.
  */
+// Import db.js FIRST for its TIMESTAMPTZ→ISO type-parser side-effect (used by
+// the `--db` path); harmless for the `--data` path.
+import { closeDatabase } from "../src/db.js";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { deriveBandsFromBacktest, loadFixture } from "./backtest.js";
+import pg from "pg";
+import { loadEnv } from "../src/env.js";
+import {
+  deriveBandsFromBacktest,
+  loadFixture,
+  MIN_CALIBRATION_WINDOW_DAYS,
+  type BacktestData,
+} from "./backtest.js";
+import { fetchBacktestData, parseWindowDays } from "./backtest-cli.js";
 import type { BandOffsets, CalibratedBands } from "../src/conformal.js";
+
+const { Pool } = pg;
+
+/** Where the shipped artifact's calibration came from — for the provenance block. */
+export interface Provenance {
+  readonly scoredWindowStart: string | null;
+  readonly scoredWindowEnd: string | null;
+  readonly scoredOrigins: number;
+  readonly scoredWindowSpanDays: number;
+  /**
+   * MEASURED out-of-sample coverage — recorded here (comment only) for
+   * transparency even when the shipped `observedCoverage` field is null because
+   * the band is dark (da cut 1).
+   */
+  readonly observedCoverage: number | null;
+}
 
 const offsetsLiteral = (o: BandOffsets): string =>
   `{ lowOffset: ${String(o.lowOffset)}, highOffset: ${String(o.highOffset)} }`;
@@ -40,11 +69,19 @@ const mapLiteral = (m: ReadonlyMap<number, BandOffsets>): string => {
 };
 
 /** Render the `CalibratedBands` artifact as a committable TypeScript module. */
-export const renderArtifact = (bands: CalibratedBands): string => {
+export const renderArtifact = (
+  bands: CalibratedBands,
+  provenance: Provenance,
+): string => {
   const observed =
     bands.observedCoverage === null ? "null" : String(bands.observedCoverage);
   const global =
     bands.globalOffsets === null ? "null" : offsetsLiteral(bands.globalOffsets);
+  const span = provenance.scoredWindowSpanDays;
+  const seasonLabel =
+    span < MIN_CALIBRATION_WINDOW_DAYS
+      ? `\n *   SUMMER-ONLY — NOT validated across seasons; shipped DARK by the ${String(MIN_CALIBRATION_WINDOW_DAYS)}-day window guard.`
+      : "";
   return `import type { CalibratedBands } from "./conformal.js";
 
 /**
@@ -61,6 +98,15 @@ export const renderArtifact = (bands: CalibratedBands): string => {
  * otherwise the endpoint returns its point estimate with \`bands.calibrated:
  * false\` and no bound fields. Bands turn on/off purely by committing a new
  * artifact here — no code change.
+ *
+ * Provenance (issue #80):
+ *   scored window: ${provenance.scoredWindowStart ?? "n/a"} … ${provenance.scoredWindowEnd ?? "n/a"}
+ *   scored origins: ${String(provenance.scoredOrigins)}   span: ${span.toFixed(1)} days${seasonLabel}
+ *   measured out-of-sample coverage: ${
+   provenance.observedCoverage === null
+     ? "n/a"
+     : provenance.observedCoverage.toFixed(3)
+ } (shipped field is null while dark — see conformal.ts contract)
  */
 export const CALIBRATED_BANDS: CalibratedBands = {
   method: "empirical-residual",
@@ -74,32 +120,38 @@ export const CALIBRATED_BANDS: CalibratedBands = {
 `;
 };
 
-const main = (): void => {
-  const dataArgIdx = process.argv.indexOf("--data");
+/** Derive bands from `data`, rewrite the artifact, and log a summary. */
+const writeArtifact = (data: BacktestData): void => {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const dataFile =
-    dataArgIdx >= 0 && process.argv[dataArgIdx + 1] !== undefined
-      ? (process.argv[dataArgIdx + 1] as string)
-      : path.join(here, "backtest-data", "fixture.json");
-
-  const data = loadFixture(dataFile);
-  const { summary, bands } = deriveBandsFromBacktest(
+  const { summary, bands, observedCoverage } = deriveBandsFromBacktest(
     data,
     new Date().toISOString(),
   );
 
   // The artifact is a SHIPPED src/ module; write it back into src/.
   const outPath = path.join(here, "..", "src", "conformal-artifact.ts");
-  writeFileSync(outPath, renderArtifact(bands), "utf-8");
+  const provenance: Provenance = {
+    scoredWindowStart: summary.scoredWindowStart,
+    scoredWindowEnd: summary.scoredWindowEnd,
+    scoredOrigins: summary.origins,
+    scoredWindowSpanDays: summary.scoredWindowSpanDays,
+    observedCoverage,
+  };
+  writeFileSync(outPath, renderArtifact(bands, provenance), "utf-8");
 
   console.log(`\nConformal band artifact regenerated → ${outPath}`);
   console.log(`  residuals:           ${String(summary.residuals.length)}`);
+  console.log(
+    `  scored window:       ${provenance.scoredWindowStart ?? "n/a"} … ${
+      provenance.scoredWindowEnd ?? "n/a"
+    } (${provenance.scoredWindowSpanDays.toFixed(1)}d, ${String(
+      provenance.scoredOrigins,
+    )} origins, ${String(summary.preVintageOrigins)} pre-vintage skipped)`,
+  );
   console.log(`  leakage-free:        ${String(summary.leakFree)}`);
   console.log(
-    `  calibrated:          ${String(bands.calibrated)} (observed coverage ${
-      bands.observedCoverage === null
-        ? "n/a"
-        : bands.observedCoverage.toFixed(3)
+    `  calibrated:          ${String(bands.calibrated)} (measured coverage ${
+      observedCoverage === null ? "n/a" : observedCoverage.toFixed(3)
     } vs nominal ${String(bands.nominalCoverage)})`,
   );
   if (!bands.calibrated) {
@@ -110,7 +162,49 @@ const main = (): void => {
   console.log("");
 };
 
+/**
+ * `--data <file>` (default the committed fixture) reads a fixture; `--db`
+ * fetches live history directly. The `--db` path exists because the production
+ * vintage table (every hourly issuance per target) is far too large to round-
+ * trip through a single JSON string (`JSON.stringify` overflows the max string
+ * length), so the DA-prescribed export→`--data` protocol does not scale — see
+ * the PR. `--db` is still an offline MANUAL chore, never a background job.
+ */
+const main = async (): Promise<void> => {
+  const argv = process.argv;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+
+  if (argv.includes("--db")) {
+    const windowIdx = argv.indexOf("--window");
+    const windowDays = parseWindowDays(
+      windowIdx >= 0 ? argv[windowIdx + 1] : undefined,
+    );
+    const env = loadEnv();
+    const connectionString = env.DATABASE_PUBLIC_URL ?? env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error(
+        "DATABASE_PUBLIC_URL or DATABASE_URL must be set for `regenerate-bands --db`.",
+      );
+    }
+    const pool = new Pool({ connectionString });
+    try {
+      const data = await fetchBacktestData(pool, windowDays);
+      writeArtifact(data);
+    } finally {
+      await closeDatabase(pool);
+    }
+    return;
+  }
+
+  const dataArgIdx = argv.indexOf("--data");
+  const dataFile =
+    dataArgIdx >= 0 && argv[dataArgIdx + 1] !== undefined
+      ? (argv[dataArgIdx + 1] as string)
+      : path.join(here, "backtest-data", "fixture.json");
+  writeArtifact(loadFixture(dataFile));
+};
+
 // Run only when invoked as a script, never on import.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main();
+  void main();
 }

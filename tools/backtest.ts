@@ -32,8 +32,13 @@ import {
   type CalibratedBands,
   type HorizonResidual,
 } from "../src/conformal.js";
-import { precisionAtN, spearman } from "./backtest-metrics.js";
-import type { FingridRecord } from "../src/types.js";
+import {
+  median,
+  percentile,
+  precisionAtN,
+  spearman,
+} from "./backtest-metrics.js";
+import type { FingridRecord, ForecastVintageRecord } from "../src/types.js";
 
 const QUARTER_MS = 15 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -72,11 +77,28 @@ export interface PricePoint {
   readonly spotCentsKwh: number;
 }
 
-/** Everything the backtest reads. Public grid + price data only — no user data. */
+/** Forecast datasets (245 wind, 165 consumption) — kept as per-issuance vintages. */
+const FORECAST_DATASET_IDS = ["245", "165"] as const;
+
+/**
+ * Everything the backtest reads. Public grid + price data only — no user data.
+ *
+ * The Fingrid inputs are split by revision behaviour (issue #78/#80): ACTUALS
+ * (75/124) are single-valued per quarter (`FingridRecord`), while FORECASTS
+ * (245/165) are kept as per-issuance VINTAGES (`ForecastVintageRecord`, carrying
+ * `issuedAt`) so the backtest can reconstruct the forecast value actually
+ * knowable at each issue time instead of the hindsight-overwritten latest one.
+ */
 export interface BacktestData {
   readonly prices: readonly PricePoint[];
-  /** Fingrid records grouped by dataset id. */
-  readonly fingridByDataset: Readonly<Record<string, readonly FingridRecord[]>>;
+  /** Actual datasets (75/124), one value per quarter. */
+  readonly fingridActualsByDataset: Readonly<
+    Record<string, readonly FingridRecord[]>
+  >;
+  /** Forecast datasets (245/165), every archived issuance per target. */
+  readonly fingridForecastVintagesByDataset: Readonly<
+    Record<string, readonly ForecastVintageRecord[]>
+  >;
 }
 
 /**
@@ -107,11 +129,62 @@ export interface IssueTimeInputs {
     string,
     ReadonlyMap<string, number>
   >;
-  /** Fingrid forecast records (forward-looking input) by dataset. */
-  readonly fingridForecast: Readonly<Record<string, readonly FingridRecord[]>>;
+  /**
+   * Fingrid forecast VINTAGES selected as-of the issue time (forward-looking in
+   * TARGET time, but bounded in ISSUANCE time — see `asOfMode`). One record per
+   * target quarter: the freshest issuance admissible under the mode.
+   */
+  readonly fingridForecast: Readonly<
+    Record<string, readonly ForecastVintageRecord[]>
+  >;
   /** Fingrid actual records (only through issue time) by dataset. */
   readonly fingridActual: Readonly<Record<string, readonly FingridRecord[]>>;
 }
+
+/**
+ * How to select the forecast-vintage value at a reconstructed issue time:
+ *   - `"issue-time"` (default, HONEST): per target, the freshest vintage whose
+ *     `issuedAt` is STRICTLY before the issue time `tMs`. Strict `<` is
+ *     deliberately conservative against the ±1h hour-truncated `issued_at`
+ *     proxy (migration 005): the backtest may use a forecast up to ~1h STALER
+ *     than production would — so the harness is a mild PESSIMIST, never a
+ *     hidden optimist. Report this as "conservative", never "leak-free".
+ *   - `"latest"` (LEAKY, for the optimism comparison only): per target, the
+ *     freshest vintage regardless of `issuedAt` — reproducing the pre-#78
+ *     upsert-latest value (≈ the final, near-actual revision; #79 confirmed
+ *     ref≈actual). This is the train/serve leak #80 measures.
+ * Only the forecast-vintage selection differs between the modes; price and
+ * actual censoring is identical, so the metric delta isolates the vintage leak.
+ */
+export type AsOfMode = "issue-time" | "latest";
+
+/**
+ * Per target quarter, the freshest forecast vintage whose issuance is STRICTLY
+ * before `asOfMs` (use `Infinity` for the leaky "latest" selection). Pure. The
+ * returned record is rebuilt explicitly so callers cannot mutate the input.
+ */
+export const selectVintagesAsOf = (
+  vintages: readonly ForecastVintageRecord[],
+  asOfMs: number,
+): ForecastVintageRecord[] => {
+  const bestByTarget = new Map<string, ForecastVintageRecord>();
+  for (const v of vintages) {
+    if (msOf(v.issuedAt) >= asOfMs) {
+      continue; // issued at/after the as-of bound → not knowable yet
+    }
+    const existing = bestByTarget.get(v.startTime);
+    if (existing === undefined || msOf(v.issuedAt) > msOf(existing.issuedAt)) {
+      bestByTarget.set(v.startTime, v);
+    }
+  }
+  return [...bestByTarget.values()].map((v) => ({
+    datasetId: v.datasetId,
+    startTime: v.startTime,
+    endTime: v.endTime,
+    value: v.value,
+    issuedAt: v.issuedAt,
+  }));
+};
 
 /**
  * The publication horizon: prices delivered before this instant are knowable at
@@ -128,6 +201,7 @@ const publicationHorizonMs = (tMs: number): number => {
 export const reconstructIssueTime = (
   data: BacktestData,
   tMs: number,
+  asOfMode: AsOfMode = "issue-time",
 ): IssueTimeInputs => {
   const horizon = publicationHorizonMs(tMs);
 
@@ -154,17 +228,23 @@ export const reconstructIssueTime = (
     }
   }
 
-  // Fingrid forecast datasets are forward-looking and knowable at issue; actuals
-  // are only known strictly before issue time.
-  const fingridForecast: Record<string, FingridRecord[]> = {};
+  // Forecast VINTAGES: select the freshest issuance admissible under the mode
+  // (issue-time → issuedAt strictly before tMs; latest → the leaky final value).
+  // The selected records are forward-looking in TARGET time by design.
+  const asOfMs = asOfMode === "issue-time" ? tMs : Number.POSITIVE_INFINITY;
+  const fingridForecast: Record<string, ForecastVintageRecord[]> = {};
+  for (const [dataset, vintages] of Object.entries(
+    data.fingridForecastVintagesByDataset,
+  )) {
+    fingridForecast[dataset] = selectVintagesAsOf(vintages, asOfMs);
+  }
+
+  // Actuals are only known strictly before issue time.
   const fingridActual: Record<string, FingridRecord[]> = {};
-  const forecastDatasets = new Set(["245", "165"]);
-  for (const [dataset, records] of Object.entries(data.fingridByDataset)) {
-    if (forecastDatasets.has(dataset)) {
-      fingridForecast[dataset] = [...records];
-    } else {
-      fingridActual[dataset] = records.filter((r) => msOf(r.startTime) < tMs);
-    }
+  for (const [dataset, records] of Object.entries(
+    data.fingridActualsByDataset,
+  )) {
+    fingridActual[dataset] = records.filter((r) => msOf(r.startTime) < tMs);
   }
 
   const originMs =
@@ -236,11 +316,23 @@ export const collectInputTimestamps = (
   }
   for (const [dataset, records] of Object.entries(inputs.fingridForecast)) {
     for (const r of records) {
+      // The TARGET timestamp is legitimately forward-looking (a forecast may
+      // reference the future) — unbounded, as before.
       out.push({
         source: `fingrid_forecast_${dataset}`,
         ms: msOf(r.startTime),
         boundaryMs: Number.POSITIVE_INFINITY,
         forwardLookingAllowed: true,
+      });
+      // The ISSUANCE, however, must not postdate the issue time — that is the
+      // vintage leak #80 closes. A forecast issued at/after `tMs` was not
+      // knowable at issue time even though its target is (correctly) in the
+      // future. This entry makes "latest" mode fail the guard by design.
+      out.push({
+        source: `fingrid_forecast_vintage_${dataset}`,
+        ms: msOf(r.issuedAt),
+        boundaryMs: inputs.tMs,
+        forwardLookingAllowed: false,
       });
     }
   }
@@ -263,10 +355,10 @@ export const findLeakingInputs = (
 // Run the production forecast at one issue time
 // ---------------------------------------------------------------------------
 
-const ds = (
-  byDataset: Readonly<Record<string, readonly FingridRecord[]>>,
+const ds = <T extends FingridRecord>(
+  byDataset: Readonly<Record<string, readonly T[]>>,
   id: number,
-): readonly FingridRecord[] => byDataset[String(id)] ?? [];
+): readonly T[] => byDataset[String(id)] ?? [];
 
 export interface IssueForecast {
   /** Predicted spot (c/kWh) by quarter key over the forecast horizon. */
@@ -399,6 +491,19 @@ export interface HorizonMetrics {
 export interface BacktestSummary {
   readonly origins: number;
   readonly fallbackOrigins: number;
+  /**
+   * Origins skipped because no forecast vintage was knowable as-of issue time
+   * (the pre-vintage era before #78 began archiving). Labelled, NOT folded into
+   * the metrics — scoring them would compare an empty-forecast fallback.
+   */
+  readonly preVintageOrigins: number;
+  /** UTC ISO of the first / last SCORED origin (issue time), or null when none. */
+  readonly scoredWindowStart: string | null;
+  readonly scoredWindowEnd: string | null;
+  /** Span of the scored-origin window in days (0 when <2 scored origins). */
+  readonly scoredWindowSpanDays: number;
+  /** The set of scored origin issue-times (UTC ms) — used to align comparisons. */
+  readonly scoredOriginsMs: ReadonlySet<number>;
   readonly modelMae: number | null;
   readonly modelSmape: number | null;
   readonly baselineMae: Readonly<Record<BaselineName, number | null>>;
@@ -425,12 +530,29 @@ export interface BacktestSummary {
 
 const BASELINES: readonly BaselineName[] = ["last_week", "last_published_day"];
 
+export interface BacktestOptions {
+  /** Vintage selection mode (default "issue-time" — the honest reconstruction). */
+  readonly asOfMode?: AsOfMode;
+  /**
+   * When set, ONLY score origins whose issue time (UTC ms) is in this set —
+   * used by `compareOptimism` so the leaked and honest runs score the SAME
+   * origins. When set, the pre-vintage skip is not applied (the set already
+   * excludes pre-vintage origins).
+   */
+  readonly restrictOriginsMs?: ReadonlySet<number>;
+}
+
 /**
  * Roll a forecast issue origin across each local day at the publication hour,
  * score it against realised prices, and aggregate. Pure — `data` is supplied by
  * the caller (the script reads it from fixtures).
  */
-export const runBacktest = (data: BacktestData): BacktestSummary => {
+export const runBacktest = (
+  data: BacktestData,
+  options: BacktestOptions = {},
+): BacktestSummary => {
+  const asOfMode = options.asOfMode ?? "issue-time";
+  const restrict = options.restrictOriginsMs;
   const realized = new Map<string, number>();
   let lo = Infinity;
   let hi = -Infinity;
@@ -479,7 +601,9 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
 
   let origins = 0;
   let fallbackOrigins = 0;
+  let preVintageOrigins = 0;
   let leakFree = true;
+  const scoredOriginsMs = new Set<number>();
 
   if (Number.isFinite(lo) && Number.isFinite(hi)) {
     let day = Math.floor(lo / DAY_MS) * DAY_MS;
@@ -487,7 +611,21 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
       const tMs = day + PUBLICATION_HOUR_UTC * HOUR_MS + HOUR_MS;
       day += DAY_MS;
 
-      const inputs = reconstructIssueTime(data, tMs);
+      if (restrict !== undefined) {
+        if (!restrict.has(tMs)) {
+          continue; // origin externally excluded (aligning two comparison runs)
+        }
+      } else if (
+        selectVintagesAsOf(ds(data.fingridForecastVintagesByDataset, 245), tMs)
+          .length === 0
+      ) {
+        // Pre-vintage era: no 245 forecast knowable as-of issue time. Skip and
+        // label rather than scoring an empty-forecast fallback into the metrics.
+        preVintageOrigins++;
+        continue;
+      }
+
+      const inputs = reconstructIssueTime(data, tMs, asOfMode);
       if (findLeakingInputs(inputs).length > 0) {
         leakFree = false;
       }
@@ -538,6 +676,7 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
       }
       if (scored) {
         origins++;
+        scoredOriginsMs.add(tMs);
         if (fc.usedFallback) {
           fallbackOrigins++;
         }
@@ -566,9 +705,24 @@ export const runBacktest = (data: BacktestData): BacktestSummary => {
     "d+3": computeHorizonMetrics(horizonAcc["d+3"]),
   };
 
+  const scoredSorted = [...scoredOriginsMs].sort((a, b) => a - b);
+  const firstScored = scoredSorted[0];
+  const lastScored = scoredSorted[scoredSorted.length - 1];
+  const scoredWindowSpanDays =
+    firstScored !== undefined && lastScored !== undefined
+      ? (lastScored - firstScored) / DAY_MS
+      : 0;
+
   return {
     origins,
     fallbackOrigins,
+    preVintageOrigins,
+    scoredWindowStart:
+      firstScored !== undefined ? new Date(firstScored).toISOString() : null,
+    scoredWindowEnd:
+      lastScored !== undefined ? new Date(lastScored).toISOString() : null,
+    scoredWindowSpanDays,
+    scoredOriginsMs,
     modelMae,
     modelSmape: smape(modelPairs),
     baselineMae,
@@ -632,20 +786,186 @@ const computeHorizonMetrics = (acc: {
 // ---------------------------------------------------------------------------
 
 /**
+ * Minimum scored-origin span before a calibrated band may ship. Bands derived
+ * from under ~one season systematically UNDER-COVER the rest of the year (the
+ * residual spread is season-specific — summer wind/price dynamics differ from
+ * winter). 90 days crosses at least one season boundary. This also guards a
+ * short/synthetic fixture from accidentally shipping a live artifact.
+ */
+export const MIN_CALIBRATION_WINDOW_DAYS = 90;
+
+/**
  * Run the backtest and build the committed band artifact from its out-of-sample
  * residuals. Pure — the offline regeneration script and the dev report both use
  * this so the gating logic lives in exactly one place. `generatedAt` is supplied
  * by the caller (offline scripts may pass a real clock; this module never reads
  * one). The artifact ships dark (`calibrated: false`) unless coverage clears the
- * gate (`conformal.ts`).
+ * gate (`conformal.ts`) AND the scored window spans at least
+ * `MIN_CALIBRATION_WINDOW_DAYS`.
  */
 export const deriveBandsFromBacktest = (
   data: BacktestData,
   generatedAt: string,
-): { readonly summary: BacktestSummary; readonly bands: CalibratedBands } => {
+): {
+  readonly summary: BacktestSummary;
+  readonly bands: CalibratedBands;
+  /**
+   * The MEASURED out-of-sample coverage, surfaced separately so it can be
+   * recorded in the artifact's PROVENANCE COMMENT (da cut 1 transparency)
+   * WITHOUT violating the `CalibratedBands.observedCoverage` contract ("null
+   * when uncalibrated") or changing the live API value (UX condition 2). It is
+   * NOT written into the shipped `observedCoverage` field when dark.
+   */
+  readonly observedCoverage: number | null;
+} => {
   const summary = runBacktest(data);
-  const bands = buildArtifact(summary.residuals, generatedAt);
-  return { summary, bands };
+  const candidate = buildArtifact(summary.residuals, generatedAt);
+
+  if (summary.scoredWindowSpanDays < MIN_CALIBRATION_WINDOW_DAYS) {
+    // Too short a window to trust cross-season → ship dark. The field stays null
+    // (contract + unchanged API); the measured coverage rides the provenance.
+    const dark: CalibratedBands = {
+      method: "empirical-residual",
+      nominalCoverage: candidate.nominalCoverage,
+      observedCoverage: null,
+      calibrated: false,
+      offsetsByHour: new Map(),
+      globalOffsets: null,
+      generatedAt: "",
+    };
+    return {
+      summary,
+      bands: dark,
+      observedCoverage: candidate.observedCoverage,
+    };
+  }
+
+  return {
+    summary,
+    bands: candidate,
+    observedCoverage: candidate.observedCoverage,
+  };
+};
+
+// ---------------------------------------------------------------------------
+// Vintage-leak optimism comparison (issue #80) — the deliverable
+// ---------------------------------------------------------------------------
+
+/** Per-horizon deltas between the leaked and honest runs. */
+export interface HorizonDelta {
+  readonly deltaMae: number | null;
+  readonly deltaSmape: number | null;
+  readonly deltaBandCoverage: number | null;
+}
+
+/**
+ * Cron-gap diagnostic for one forecast dataset's vintage ladder. Sparse ladders
+ * (missing hourly issuances) mean the reconstructed as-of value is fresher than
+ * a real gap would have allowed, which UNDERSTATES the measured leak.
+ */
+export interface LadderDiagnostic {
+  /** Median number of archived issuances per target. */
+  readonly medianDepth: number | null;
+  /** p90 issuances per target — a proxy for the "full" ladder depth. */
+  readonly expectedDepth: number | null;
+  /** Fraction of targets with depth < 0.5 × expectedDepth (thin ladders). */
+  readonly sparseTargetFraction: number | null;
+}
+
+export interface OptimismComparison {
+  /** Leaked (latest-vintage) run, restricted to the honest run's scored origins. */
+  readonly leaked: BacktestSummary;
+  /** Honest (issue-time) run. */
+  readonly honest: BacktestSummary;
+  /** Number of origins scored by BOTH runs (identical set by construction). */
+  readonly scoredOrigins: number;
+  /** delta = leaked − honest (see the CLI caveat for the sign convention). */
+  readonly deltaMae: number | null;
+  readonly deltaSmape: number | null;
+  readonly deltaBandCoverage: number | null;
+  readonly deltaByHorizon: Readonly<Record<Horizon, HorizonDelta>>;
+  /** Per-dataset ladder-depth diagnostic (245/165). */
+  readonly ladderDiagnostic: Readonly<Record<string, LadderDiagnostic>>;
+}
+
+const sub = (a: number | null, b: number | null): number | null =>
+  a === null || b === null ? null : a - b;
+
+/** Bucket-average band coverage over a summary's residuals (for the delta). */
+const overallBandCoverage = (summary: BacktestSummary): number | null => {
+  if (summary.residuals.length === 0) {
+    return null;
+  }
+  const { offsetsByHour, globalOffsets } = deriveBandOffsets(summary.residuals);
+  return observedCoverageOf(summary.residuals, offsetsByHour, globalOffsets);
+};
+
+/** Ladder-depth diagnostic for one dataset's vintages. Pure. */
+const ladderDiagnosticFor = (
+  vintages: readonly ForecastVintageRecord[],
+): LadderDiagnostic => {
+  const depthByTarget = new Map<string, number>();
+  for (const v of vintages) {
+    depthByTarget.set(v.startTime, (depthByTarget.get(v.startTime) ?? 0) + 1);
+  }
+  const depths = [...depthByTarget.values()];
+  const expectedDepth = percentile(depths, 90);
+  const sparseTargetFraction =
+    depths.length > 0 && expectedDepth !== null
+      ? depths.filter((d) => d < 0.5 * expectedDepth).length / depths.length
+      : null;
+  return { medianDepth: median(depths), expectedDepth, sparseTargetFraction };
+};
+
+/**
+ * Measure the vintage-leak optimism: the same backtest run twice over the SAME
+ * scored origins, differing ONLY in forecast-vintage selection — honest
+ * (issue-time) vs leaked (latest, the pre-#78 upsert-latest value). The delta is
+ * how much better the leaked scoreboard looks. Pure.
+ *
+ * The covered-origin set is taken from the honest run (it skips pre-vintage
+ * origins); the leaked run is restricted to exactly that set, so both score the
+ * identical origins and the delta is a clean vintage-only difference.
+ */
+export const compareOptimism = (data: BacktestData): OptimismComparison => {
+  const honest = runBacktest(data, { asOfMode: "issue-time" });
+  const leaked = runBacktest(data, {
+    asOfMode: "latest",
+    restrictOriginsMs: honest.scoredOriginsMs,
+  });
+
+  const honestCov = overallBandCoverage(honest);
+  const leakedCov = overallBandCoverage(leaked);
+
+  const deltaByHorizon = {} as Record<Horizon, HorizonDelta>;
+  for (const h of HORIZON_LABELS) {
+    deltaByHorizon[h] = {
+      deltaMae: sub(leaked.byHorizon[h].mae, honest.byHorizon[h].mae),
+      deltaSmape: sub(leaked.byHorizon[h].smape, honest.byHorizon[h].smape),
+      deltaBandCoverage: sub(
+        leaked.byHorizon[h].bandCoverage,
+        honest.byHorizon[h].bandCoverage,
+      ),
+    };
+  }
+
+  const ladderDiagnostic: Record<string, LadderDiagnostic> = {};
+  for (const id of FORECAST_DATASET_IDS) {
+    ladderDiagnostic[id] = ladderDiagnosticFor(
+      data.fingridForecastVintagesByDataset[id] ?? [],
+    );
+  }
+
+  return {
+    leaked,
+    honest,
+    scoredOrigins: honest.scoredOriginsMs.size,
+    deltaMae: sub(leaked.modelMae, honest.modelMae),
+    deltaSmape: sub(leaked.modelSmape, honest.modelSmape),
+    deltaBandCoverage: sub(leakedCov, honestCov),
+    deltaByHorizon,
+    ladderDiagnostic,
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -653,6 +973,13 @@ export const deriveBandsFromBacktest = (
 // ---------------------------------------------------------------------------
 
 interface RawFingrid {
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly value: number;
+}
+
+interface RawVintage {
+  readonly issuedAt: string;
   readonly startTime: string;
   readonly endTime: string;
   readonly value: number;
@@ -667,7 +994,19 @@ interface RawPrice {
 
 interface Fixture {
   readonly prices: readonly RawPrice[];
-  readonly fingrid: Readonly<Record<string, readonly RawFingrid[]>>;
+  /** New shape: actuals (75/124) split from forecast vintages (245/165). */
+  readonly fingridActuals?: Readonly<Record<string, readonly RawFingrid[]>>;
+  readonly fingridForecastVintages?: Readonly<
+    Record<string, readonly RawVintage[]>
+  >;
+  /**
+   * OLD shape (pre-#80): a single `fingrid` map with no `issuedAt`. Kept only so
+   * old-shape fixtures still LOAD (and degrade): actuals map through, but the
+   * forecast datasets are DROPPED (empty vintages) — we must NEVER fabricate an
+   * `issuedAt`, so an old fixture has no admissible vintages and every origin is
+   * pre-vintage. This is the documented old-shape degrade path (tested).
+   */
+  readonly fingrid?: Readonly<Record<string, readonly RawFingrid[]>>;
 }
 
 const toRecords = (
@@ -681,11 +1020,24 @@ const toRecords = (
     value: r.value,
   }));
 
+const toVintages = (
+  raw: readonly RawVintage[],
+  datasetId: number,
+): ForecastVintageRecord[] =>
+  raw.map((r) => ({
+    datasetId,
+    issuedAt: r.issuedAt,
+    startTime: r.startTime,
+    endTime: r.endTime,
+    value: r.value,
+  }));
+
 /**
  * Read a backtest fixture from a single JSON FILE path (e.g.
  * `tools/backtest-data/fixture.json`). Symmetric with the CLI's `--export
  * <file>`: a `--db --export X.json` snapshot round-trips through `--data X.json`
  * with no re-conversion (the exported `spotCentsKwh` is already post-conversion).
+ * Accepts both the new split shape and the old single-`fingrid` shape (degrade).
  */
 export const loadFixture = (filePath: string): BacktestData => {
   const text = readFileSync(filePath, "utf-8");
@@ -696,9 +1048,38 @@ export const loadFixture = (filePath: string): BacktestData => {
     start: p.start,
     spotCentsKwh: p.spotCentsKwh,
   }));
-  const fingridByDataset: Record<string, FingridRecord[]> = {};
-  for (const [dataset, raw] of Object.entries(fixture.fingrid)) {
-    fingridByDataset[dataset] = toRecords(raw, Number(dataset));
+
+  const fingridActualsByDataset: Record<string, FingridRecord[]> = {};
+  const fingridForecastVintagesByDataset: Record<
+    string,
+    ForecastVintageRecord[]
+  > = {};
+
+  if (fixture.fingridActuals || fixture.fingridForecastVintages) {
+    for (const [dataset, raw] of Object.entries(fixture.fingridActuals ?? {})) {
+      fingridActualsByDataset[dataset] = toRecords(raw, Number(dataset));
+    }
+    for (const [dataset, raw] of Object.entries(
+      fixture.fingridForecastVintages ?? {},
+    )) {
+      fingridForecastVintagesByDataset[dataset] = toVintages(
+        raw,
+        Number(dataset),
+      );
+    }
+  } else if (fixture.fingrid) {
+    // Old shape: actuals map through; forecasts are dropped (no issuedAt to
+    // reconstruct a vintage from — never fabricate one).
+    for (const [dataset, raw] of Object.entries(fixture.fingrid)) {
+      if (!FORECAST_DATASET_IDS.includes(dataset as "245" | "165")) {
+        fingridActualsByDataset[dataset] = toRecords(raw, Number(dataset));
+      }
+    }
   }
-  return { prices, fingridByDataset };
+
+  return {
+    prices,
+    fingridActualsByDataset,
+    fingridForecastVintagesByDataset,
+  };
 };

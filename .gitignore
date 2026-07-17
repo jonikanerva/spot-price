@@ -39,3 +39,7 @@ playwright-report/
 
 # Fingrid Avoin Data API spec (fetched locally, not part of the repo)
 avoindata-api.yaml
+
+# Backtest DB snapshots (operator exports via `backtest --db --export`); the
+# committed fixture is the small tools/backtest-data/fixture.json only.
+*.snapshot.json

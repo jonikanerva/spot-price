@@ -31,6 +31,11 @@ export default defineConfig({
   test: {
     globals: false,
     environment: "node",
+    // The offline backtest engine tests (tools/backtest*.test.ts) run the real
+    // ridge forecast over many rolling origins — legitimately heavier than a
+    // unit test, and slower under parallel CPU load. 30s gives ample headroom
+    // over their ~5s worst case without masking a genuinely hung test.
+    testTimeout: 30_000,
     // src/ holds the shipped code and the conformal tests; tools/ holds the
     // offline backtest engine/CLI/regen and their tests. Both globs run so
     // moving a test to tools/ never silently drops it from the suite.
