@@ -10,17 +10,16 @@ import {
   parseWindowDays,
   toFixtureJson,
 } from "./backtest-cli.js";
-import { loadFixture, runBacktest } from "./backtest.js";
+import { compareOptimism, loadFixture, runBacktest } from "./backtest.js";
 import { eurMwhToCentsKwh } from "../src/nordpool.js";
-import {
-  DATASET_CONSUMPTION_ACTUAL,
-  DATASET_CONSUMPTION_FORECAST,
-  DATASET_WIND_ACTUAL,
-  DATASET_WIND_FORECAST,
-} from "../src/fingrid.js";
-import type { FingridRecord, HourlyPrice } from "../src/types.js";
+import type {
+  FingridRecord,
+  ForecastVintageRecord,
+  HourlyPrice,
+} from "../src/types.js";
 
 const QUARTER_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 const price = (area: string, ms: number, eurMwh: number): HourlyPrice => ({
   deliveryStart: new Date(ms).toISOString(),
@@ -29,7 +28,7 @@ const price = (area: string, ms: number, eurMwh: number): HourlyPrice => ({
   area,
 });
 
-const fgRecord = (
+const actual = (
   ms: number,
   value: number,
   datasetId: number,
@@ -40,39 +39,53 @@ const fgRecord = (
   value,
 });
 
+const vintage = (
+  ms: number,
+  value: number,
+  datasetId: number,
+  issuedMs: number,
+): ForecastVintageRecord => ({
+  datasetId,
+  issuedAt: new Date(issuedMs).toISOString(),
+  startTime: new Date(ms).toISOString(),
+  endTime: new Date(ms + QUARTER_MS).toISOString(),
+  value,
+});
+
 /**
- * Build a synthetic month of FI + neighbour DB rows and the four Fingrid
- * datasets, returned in the shapes the stores produce: prices grouped by area,
- * Fingrid keyed by string dataset id.
+ * DB-shaped inputs: prices grouped by area, actuals (75/124) and forecast
+ * VINTAGES (245/165) keyed by string dataset id, with a 2-deep issuance ladder.
  */
-const buildDbShapedInput = (): {
+const buildDbShaped = (): {
   pricesByArea: Map<string, HourlyPrice[]>;
-  fingridByDataset: Record<string, FingridRecord[]>;
+  fingridActualsByDataset: Record<string, FingridRecord[]>;
+  fingridForecastVintagesByDataset: Record<string, ForecastVintageRecord[]>;
 } => {
   const start = Date.parse("2026-02-01T00:00:00.000Z");
   const fi: HourlyPrice[] = [];
   const se1: HourlyPrice[] = [];
   const se3: HourlyPrice[] = [];
   const ee: HourlyPrice[] = [];
-  const wind245: FingridRecord[] = [];
   const wind75: FingridRecord[] = [];
-  const cons165: FingridRecord[] = [];
   const cons124: FingridRecord[] = [];
-  const totalQuarters = 40 * 96;
+  const wind245: ForecastVintageRecord[] = [];
+  const cons165: ForecastVintageRecord[] = [];
+  const totalQuarters = 14 * 96;
   for (let q = 0; q < totalQuarters; q++) {
     const ms = start + q * QUARTER_MS;
     const consumption = 8000 + (q % 96) * 15;
     const windMw = 2000 + ((q * 131) % 1800);
-    // EUR/MWh with real structure; conversion happens in assembleBacktestData.
     const eur = 0.12 * (consumption - windMw) + 200;
     fi.push(price("FI", ms, eur));
     se1.push(price("SE1", ms, eur - 5));
     se3.push(price("SE3", ms, eur + 3));
     ee.push(price("EE", ms, eur + 1));
-    cons124.push(fgRecord(ms, consumption, DATASET_CONSUMPTION_ACTUAL));
-    wind75.push(fgRecord(ms, windMw, DATASET_WIND_ACTUAL));
-    cons165.push(fgRecord(ms, consumption, DATASET_CONSUMPTION_FORECAST));
-    wind245.push(fgRecord(ms, windMw, DATASET_WIND_FORECAST));
+    cons124.push(actual(ms, consumption, 124));
+    wind75.push(actual(ms, windMw, 75));
+    cons165.push(vintage(ms, consumption, 165, ms - 2 * HOUR_MS));
+    cons165.push(vintage(ms, consumption + 300, 165, ms - 80 * HOUR_MS));
+    wind245.push(vintage(ms, windMw, 245, ms - 2 * HOUR_MS));
+    wind245.push(vintage(ms, windMw + 300, 245, ms - 80 * HOUR_MS));
   }
   return {
     pricesByArea: new Map([
@@ -81,22 +94,24 @@ const buildDbShapedInput = (): {
       ["SE3", se3],
       ["EE", ee],
     ]),
-    fingridByDataset: {
-      "245": wind245,
-      "75": wind75,
-      "165": cons165,
-      "124": cons124,
-    },
+    fingridActualsByDataset: { "75": wind75, "124": cons124 },
+    fingridForecastVintagesByDataset: { "245": wind245, "165": cons165 },
   };
 };
 
 describe("assembleBacktestData — parity with loadFixture", () => {
   it("produces a BacktestData deep-equal to loadFixture from the equivalent fixture", () => {
-    const { pricesByArea, fingridByDataset } = buildDbShapedInput();
-    const assembled = assembleBacktestData(pricesByArea, fingridByDataset);
+    const {
+      pricesByArea,
+      fingridActualsByDataset,
+      fingridForecastVintagesByDataset,
+    } = buildDbShaped();
+    const assembled = assembleBacktestData(
+      pricesByArea,
+      fingridActualsByDataset,
+      fingridForecastVintagesByDataset,
+    );
 
-    // Equivalent fixture JSON file: prices already post-conversion (c/kWh) so
-    // loadFixture reads them as-is, exactly like an --export → --data replay.
     const tmp = mkdtempSync(path.join(tmpdir(), "bt-parity-"));
     try {
       const file = path.join(tmp, "fixture.json");
@@ -112,62 +127,124 @@ describe("assembleBacktestData — parity with loadFixture", () => {
     const pricesByArea = new Map<string, HourlyPrice[]>([
       ["FI", [price("FI", Date.parse("2026-02-01T00:00:00.000Z"), 312.5)]],
     ]);
-    const assembled = assembleBacktestData(pricesByArea, {});
+    const assembled = assembleBacktestData(pricesByArea, {}, {});
     expect(assembled.prices[0]?.spotCentsKwh).toBe(eurMwhToCentsKwh(312.5));
   });
 
-  it("passes Fingrid records through raw, keyed by string dataset id", () => {
-    const { fingridByDataset } = buildDbShapedInput();
-    const assembled = assembleBacktestData(new Map(), fingridByDataset);
-    expect(Object.keys(assembled.fingridByDataset).sort()).toEqual([
+  it("keeps actuals and forecast vintages in their split maps, keyed by string id", () => {
+    const { fingridActualsByDataset, fingridForecastVintagesByDataset } =
+      buildDbShaped();
+    const assembled = assembleBacktestData(
+      new Map(),
+      fingridActualsByDataset,
+      fingridForecastVintagesByDataset,
+    );
+    expect(Object.keys(assembled.fingridActualsByDataset).sort()).toEqual([
       "124",
-      "165",
-      "245",
       "75",
     ]);
-    // Raw pass-through: same record count, no bucketing.
-    expect(assembled.fingridByDataset["124"]).toHaveLength(
-      fingridByDataset["124"]?.length ?? -1,
-    );
+    expect(
+      Object.keys(assembled.fingridForecastVintagesByDataset).sort(),
+    ).toEqual(["165", "245"]);
+    // Vintages carry issuedAt (the whole point of #80).
+    expect(
+      assembled.fingridForecastVintagesByDataset["245"]?.[0]?.issuedAt,
+    ).toBeTypeOf("string");
   });
 });
 
-describe("export round-trip — assemble vs fixture replay (da Obj.2)", () => {
+describe("export round-trip and comparison alignment", () => {
   it("runBacktest(assembled) deep-equals runBacktest(loadFixture(export))", () => {
-    const { pricesByArea, fingridByDataset } = buildDbShapedInput();
-    const assembled = assembleBacktestData(pricesByArea, fingridByDataset);
+    const {
+      pricesByArea,
+      fingridActualsByDataset,
+      fingridForecastVintagesByDataset,
+    } = buildDbShaped();
+    const assembled = assembleBacktestData(
+      pricesByArea,
+      fingridActualsByDataset,
+      fingridForecastVintagesByDataset,
+    );
     const summaryA = runBacktest(assembled);
 
     const tmp = mkdtempSync(path.join(tmpdir(), "bt-roundtrip-"));
     try {
-      // --export <file> ↔ --data <file>: write the snapshot to a file path and
-      // replay it through the same file path (the new symmetric contract).
       const file = path.join(tmp, "snapshot.json");
       writeFileSync(file, toFixtureJson(assembled), "utf-8");
-      const replayed = loadFixture(file);
-      const summaryB = runBacktest(replayed);
-
-      // Catches double-conversion, Date-vs-ISO, string-vs-number keys, and
-      // any accidental pre-bucketing.
+      const summaryB = runBacktest(loadFixture(file));
       expect(summaryB.origins).toBe(summaryA.origins);
-      expect(summaryB.fallbackOrigins).toBe(summaryA.fallbackOrigins);
+      expect(summaryB.preVintageOrigins).toBe(summaryA.preVintageOrigins);
       expect(summaryB.leakFree).toBe(summaryA.leakFree);
       expect(summaryB.modelMae).toBe(summaryA.modelMae);
-      expect(summaryB.modelSmape).toBe(summaryA.modelSmape);
-      expect(summaryB.rMae).toEqual(summaryA.rMae);
-      expect(summaryB.baselineMae).toEqual(summaryA.baselineMae);
       expect(summaryB.residuals).toEqual(summaryA.residuals);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("a real DB window of several days produces a scoreable, leak-free run", () => {
-    const { pricesByArea, fingridByDataset } = buildDbShapedInput();
-    const assembled = assembleBacktestData(pricesByArea, fingridByDataset);
-    const summary = runBacktest(assembled);
-    expect(summary.leakFree).toBe(true);
-    expect(summary.origins).toBeGreaterThan(0);
+  it("--compare scores an identical origin set for both runs", () => {
+    const {
+      pricesByArea,
+      fingridActualsByDataset,
+      fingridForecastVintagesByDataset,
+    } = buildDbShaped();
+    const assembled = assembleBacktestData(
+      pricesByArea,
+      fingridActualsByDataset,
+      fingridForecastVintagesByDataset,
+    );
+    const cmp = compareOptimism(assembled);
+    expect(cmp.scoredOrigins).toBeGreaterThan(0);
+    expect(cmp.leaked.scoredOriginsMs.size).toBe(cmp.scoredOrigins);
+    expect(cmp.honest.scoredOriginsMs.size).toBe(cmp.scoredOrigins);
+    // Same origins scored on both sides.
+    for (const ms of cmp.honest.scoredOriginsMs) {
+      expect(cmp.leaked.scoredOriginsMs.has(ms)).toBe(true);
+    }
+  });
+});
+
+describe("old-shape fixture degrade (never fabricate issuedAt)", () => {
+  it("loads an old single-`fingrid` fixture with actuals only, forecasts empty", () => {
+    const start = Date.parse("2026-02-01T00:00:00.000Z");
+    const wind: { startTime: string; endTime: string; value: number }[] = [];
+    const cons: { startTime: string; endTime: string; value: number }[] = [];
+    const prices: { start: string; spotCentsKwh: number }[] = [];
+    for (let q = 0; q < 10 * 96; q++) {
+      const ms = start + q * QUARTER_MS;
+      prices.push({ start: new Date(ms).toISOString(), spotCentsKwh: 2 });
+      const rec = {
+        startTime: new Date(ms).toISOString(),
+        endTime: new Date(ms + QUARTER_MS).toISOString(),
+        value: 3000,
+      };
+      wind.push(rec);
+      cons.push(rec);
+    }
+    const oldShape = {
+      prices,
+      fingrid: { "245": wind, "75": wind, "165": cons, "124": cons },
+    };
+    const tmp = mkdtempSync(path.join(tmpdir(), "bt-oldshape-"));
+    try {
+      const file = path.join(tmp, "old.json");
+      writeFileSync(file, JSON.stringify(oldShape), "utf-8");
+      const data = loadFixture(file);
+      // Actuals map through; forecast vintages are EMPTY (no issuedAt to invent).
+      expect(Object.keys(data.fingridActualsByDataset).sort()).toEqual([
+        "124",
+        "75",
+      ]);
+      expect(Object.keys(data.fingridForecastVintagesByDataset)).toHaveLength(
+        0,
+      );
+      // With no vintages, every origin is pre-vintage → nothing is scored.
+      const summary = runBacktest(data);
+      expect(summary.origins).toBe(0);
+      expect(summary.preVintageOrigins).toBeGreaterThan(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
@@ -180,7 +257,7 @@ describe("parseWindowDays", () => {
     expect(parseWindowDays("120")).toBe(120);
   });
 
-  it("rejects non-integers, zero, negatives, and junk (no unchecked parseInt)", () => {
+  it("rejects non-integers, zero, negatives, and junk", () => {
     expect(() => parseWindowDays("0")).toThrow();
     expect(() => parseWindowDays("-5")).toThrow();
     expect(() => parseWindowDays("30.5")).toThrow();
@@ -190,7 +267,7 @@ describe("parseWindowDays", () => {
 });
 
 describe("thin-data guard", () => {
-  it("flags fewer than MIN_SCOREABLE_ORIGINS as thin (warn + non-zero exit)", () => {
+  it("flags fewer than MIN_SCOREABLE_ORIGINS as thin", () => {
     expect(isThinData(MIN_SCOREABLE_ORIGINS - 1)).toBe(true);
     expect(isThinData(0)).toBe(true);
   });

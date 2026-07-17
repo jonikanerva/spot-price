@@ -9,12 +9,17 @@ import type { CalibratedBands } from "./conformal.js";
  * rewrites this module. A human reviews and commits the result. This is the ONLY
  * band-related thing shipped on the request path: a static lookup table.
  *
- * Shipped state: `calibrated: false` (bands DARK). Real exported history is
- * still too thin to clear the coverage ship gate (≥ 0.70 observed vs 0.80
- * nominal), so no offsets are emitted and the forecast endpoint returns its
- * point estimate with `bands.calibrated: false` and no bound fields. Bands turn
- * on with no code change once a regenerated `calibrated: true` artifact that
- * clears the gate is reviewed and committed here.
+ * `calibrated: false`. Bands are emitted by the forecast
+ * endpoint only when calibrated is true (observed coverage cleared the gate);
+ * otherwise the endpoint returns its point estimate with `bands.calibrated:
+ * false` and no bound fields. Bands turn on/off purely by committing a new
+ * artifact here — no code change.
+ *
+ * Provenance (issue #80):
+ *   scored window: 2026-06-24T13:00:00.000Z … 2026-07-15T13:00:00.000Z
+ *   scored origins: 22   span: 21.0 days
+ *   SUMMER-ONLY — NOT validated across seasons; shipped DARK by the 90-day window guard.
+ *   measured out-of-sample coverage: 0.801 (shipped field is null while dark — see conformal.ts contract)
  */
 export const CALIBRATED_BANDS: CalibratedBands = {
   method: "empirical-residual",

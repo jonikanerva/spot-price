@@ -1,11 +1,14 @@
 /**
  * Deterministic synthetic fixture generator for the forecast backtest.
  *
- * We do NOT commit real Fingrid/Nord Pool dumps (multi-MB, and the forecast is
- * about ranking behaviour, not reproducing a specific month). Instead this
- * generates a small, fully deterministic ~21-day fixture where spot price has a
- * genuine relationship to (consumption − wind) plus a daily rhythm and noise —
- * enough for the backtest to demonstrate the model beats naive baselines.
+ * We do NOT commit real Fingrid/Nord Pool dumps. Since issue #80 the committed
+ * fixture is deliberately TEST-SIZED (< ~100 KB): its only role is the parity
+ * round-trip and the old-shape-degrade tests, NOT a scoreable backtest — the
+ * real delta and artifact recalibration run against the DB (`--db`). So this
+ * generates a compact NEW-SHAPE fixture: FI prices + Fingrid ACTUALS (75/124) +
+ * per-issuance forecast VINTAGES (245/165) with a small 2-deep issuance ladder
+ * (a stale early issuance and a fresh near-delivery one) whose values DIFFER, so
+ * the sample exercises the vintage-selection path.
  *
  * Run once with: pnpm tsx tools/backtest-data/generate-fixture.ts
  * The output fixture.json is committed; the backtest reads it by FILE PATH with
@@ -16,8 +19,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const QUARTER_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 const START = Date.parse("2026-03-02T00:00:00.000Z");
-const DAYS = 21;
+const DAYS = 1; // ~82 KB at quarter resolution with a 2-deep vintage ladder
 const QUARTERS = DAYS * 96;
 
 // Deterministic LCG so the fixture is reproducible across machines.
@@ -28,73 +32,91 @@ const rand = (): number => {
 };
 
 const iso = (ms: number): string => new Date(ms).toISOString();
+const r1 = (x: number): number => Math.round(x * 10) / 10;
 
 interface Price {
   start: string;
   spotCentsKwh: number;
 }
-interface Fingrid {
+interface Actual {
+  startTime: string;
+  endTime: string;
+  value: number;
+}
+interface Vintage {
+  issuedAt: string;
   startTime: string;
   endTime: string;
   value: number;
 }
 
 const prices: Price[] = [];
-const wind: Fingrid[] = [];
-const cons: Fingrid[] = [];
+const wind75: Actual[] = [];
+const cons124: Actual[] = [];
+const wind245: Vintage[] = [];
+const cons165: Vintage[] = [];
 
 const TRUE_SLOPE = 0.0018;
 const TRUE_INTERCEPT = -1.5;
 
+/** Two issuance leads (hours before delivery): a stale early one and a fresh one. */
+const LADDER_LEADS_H = [20, 1] as const;
+
 for (let q = 0; q < QUARTERS; q++) {
   const ms = START + q * QUARTER_MS;
   const hour = new Date(ms).getUTCHours();
-  // Consumption: daily double-peak (morning + evening) + weekly weekday lift.
-  const dayOfWeek = new Date(ms).getUTCDay();
-  const weekday = dayOfWeek >= 1 && dayOfWeek <= 5 ? 1 : 0;
   const morning = Math.exp(-((hour - 8) ** 2) / 6);
   const evening = Math.exp(-((hour - 18) ** 2) / 6);
-  const consumption =
-    7000 + 3000 * (morning + evening) + 800 * weekday + 200 * (rand() - 0.5);
-  // Wind: slow random walk, no daily/weekly cycle.
+  const consumption = 7000 + 3000 * (morning + evening) + 200 * (rand() - 0.5);
   const windMw = 3000 + 1500 * Math.sin(q / 50) + 500 * (rand() - 0.5);
   const residual = consumption - windMw;
-  // Daily price rhythm the linear model alone can't capture (hour bias target).
   const rhythm = 2 * (morning + evening) - 1;
   const noise = 0.6 * (rand() - 0.5);
   const spot = TRUE_SLOPE * residual + TRUE_INTERCEPT + rhythm + noise;
 
   prices.push({ start: iso(ms), spotCentsKwh: Math.round(spot * 1000) / 1000 });
-  wind.push({
+  wind75.push({
     startTime: iso(ms),
     endTime: iso(ms + QUARTER_MS),
-    value: Math.round(windMw * 10) / 10,
+    value: r1(windMw),
   });
-  cons.push({
+  cons124.push({
     startTime: iso(ms),
     endTime: iso(ms + QUARTER_MS),
-    value: Math.round(consumption * 10) / 10,
+    value: r1(consumption),
   });
+
+  // Vintage ladder: earlier issuances carry a lead-scaled revision away from the
+  // near-delivery value, so honest (stale) and leaked (fresh) selections differ.
+  for (const leadH of LADDER_LEADS_H) {
+    const issuedAt = iso(ms - leadH * HOUR_MS);
+    const revision = leadH * (0.5 * (rand() - 0.5)); // grows with lead
+    wind245.push({
+      issuedAt,
+      startTime: iso(ms),
+      endTime: iso(ms + QUARTER_MS),
+      value: r1(windMw + revision * 20),
+    });
+    cons165.push({
+      issuedAt,
+      startTime: iso(ms),
+      endTime: iso(ms + QUARTER_MS),
+      value: r1(consumption + revision * 10),
+    });
+  }
 }
 
-// Datasets: forecast (245/165) ≈ actual here (clean synthetic), actual (75/124)
-// identical so the weekly extension has history to draw on.
 const fixture = {
   prices,
-  fingrid: {
-    "245": wind,
-    "75": wind,
-    "165": cons,
-    "124": cons,
-  },
+  fingridActuals: { "75": wind75, "124": cons124 },
+  fingridForecastVintages: { "245": wind245, "165": cons165 },
 };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-writeFileSync(
-  path.join(here, "fixture.json"),
-  JSON.stringify(fixture),
-  "utf-8",
-);
+const outPath = path.join(here, "fixture.json");
+writeFileSync(outPath, JSON.stringify(fixture), "utf-8");
 console.log(
-  `Wrote fixture.json: ${String(prices.length)} price quarters, ${String(wind.length)} wind, ${String(cons.length)} cons`,
+  `Wrote fixture.json: ${String(prices.length)} prices, ${String(
+    wind75.length + cons124.length,
+  )} actuals, ${String(wind245.length + cons165.length)} vintages`,
 );
