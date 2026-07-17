@@ -114,6 +114,84 @@ export const spearman = (
   return cov / Math.sqrt(vp * va);
 };
 
+// ---------------------------------------------------------------------------
+// Distribution summaries — single-array descriptive stats
+//
+// Added for the offline vintage-revision study (issue #79): it summarises a
+// distribution of forecast-revision deltas (a single array), which the aligned
+// two-array metrics above don't cover. Null-on-empty (and null on n<2 for sd)
+// mirrors the convention here — an undefined statistic is null, never a throw
+// or a silent 0. Pure, dependency-free.
+// ---------------------------------------------------------------------------
+
+/** Median (50th percentile); null for an empty array. */
+export const median = (xs: readonly number[]): number | null => {
+  if (xs.length === 0) {
+    return null;
+  }
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[mid] ?? null;
+  }
+  const lo = sorted[mid - 1];
+  const hi = sorted[mid];
+  if (lo === undefined || hi === undefined) {
+    return null;
+  }
+  return (lo + hi) / 2;
+};
+
+/**
+ * The `p`-th percentile (p in [0, 100]) by linear interpolation between the two
+ * closest ranks. Null for an empty array; `p` is clamped to [0, 100].
+ */
+export const percentile = (xs: readonly number[], p: number): number | null => {
+  if (xs.length === 0) {
+    return null;
+  }
+  const sorted = [...xs].sort((a, b) => a - b);
+  const clamped = Math.max(0, Math.min(100, p));
+  const rank = (clamped / 100) * (sorted.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  const loVal = sorted[lo];
+  const hiVal = sorted[hi];
+  if (loVal === undefined || hiVal === undefined) {
+    return null;
+  }
+  if (lo === hi) {
+    return loVal;
+  }
+  return loVal + (hiVal - loVal) * (rank - lo);
+};
+
+/** Sample standard deviation (n−1 denominator); null when fewer than 2 values. */
+export const standardDeviation = (xs: readonly number[]): number | null => {
+  if (xs.length < 2) {
+    return null;
+  }
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  let sumSq = 0;
+  for (const x of xs) {
+    const d = x - mean;
+    sumSq += d * d;
+  }
+  return Math.sqrt(sumSq / (xs.length - 1));
+};
+
+/** Root mean square (quadratic mean) of the values; null for an empty array. */
+export const rms = (xs: readonly number[]): number | null => {
+  if (xs.length === 0) {
+    return null;
+  }
+  let sumSq = 0;
+  for (const x of xs) {
+    sumSq += x * x;
+  }
+  return Math.sqrt(sumSq / xs.length);
+};
+
 /**
  * Fraction of the predicted N-cheapest (or N-most-expensive) entries that are
  * genuinely in the actual N-cheapest (or N-most-expensive) set. The core

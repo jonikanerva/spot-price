@@ -36,3 +36,6 @@ playwright-report/
 # Agents
 .claude/worktrees
 .claude/settings.local.json
+
+# Fingrid Avoin Data API spec (fetched locally, not part of the repo)
+avoindata-api.yaml

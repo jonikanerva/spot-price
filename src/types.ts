@@ -65,6 +65,18 @@ export interface FingridRecord {
 }
 
 /**
+ * One archived per-issuance vintage of a Fingrid FORECAST dataset (245/165): a
+ * `FingridRecord` plus the `issuedAt` at which that value was recorded (the
+ * hour-truncated fetch-time proxy from migration 005). Public grid data, not
+ * user data. Read only off the request path — by the offline revision study
+ * (#79) and the vintage-correct backtest (#80), which need the full lead-time
+ * ladder; the live forecast route uses the latest-per-target read instead.
+ */
+export interface ForecastVintageRecord extends FingridRecord {
+  readonly issuedAt: string;
+}
+
+/**
  * Result of a Fingrid fetch. Tagged union over success/degraded so the caller
  * never has to inspect parallel booleans: a failure (timeout, auth, parse)
  * yields an empty `records` plus a `reason`, and never throws into the price
