@@ -8,8 +8,9 @@
  * DB, no clock). It lives in `tools/` so it can never reach the production
  * bundle (tsup's only entry is `src/index.ts`; the ESLint guard forbids `src/`
  * runtime from importing `tools/`). The single runnable entry point is
- * `tools/vintage-revision-cli.ts`, which loads the vintages off the DB and
- * feeds them here. It adds NO background job (`STACK §9`) and NO endpoint.
+ * `tools/revision-magnitude-cli.ts`, which loads the vintages off the DB (via
+ * `getFingridForecastVintagesAll`) and feeds them here. It adds NO background
+ * job (`STACK §9`) and NO endpoint.
  *
  * The idea (errors-in-variables): the leaky training/backtest fed the model the
  * FINAL (≈near-delivery) forecast value for every past quarter — that is what
@@ -20,16 +21,22 @@
  * engine measures that difference (the "revision") as a function of lead time.
  *
  * Reference = the FRESHEST vintage per target (max `issued_at`), i.e. exactly
- * the value upsert-latest would have kept and fed the leaky pipeline. A
- * revision at lead L is `value@L − reference`. Metrics are reported per dataset
- * and per lead-time bucket. All arithmetic is on UTC epoch ms parsed from ISO
- * strings (`VISION.md → UTC internally`).
+ * the value upsert-latest would have kept and fed the leaky pipeline. A revision
+ * at lead L is `value@L − reference`. Metrics are reported per dataset and per
+ * lead-time bin. All arithmetic is on UTC epoch ms parsed from ISO strings
+ * (`VISION.md → UTC internally`).
  */
-import { median, percentile, rms, sd } from "./backtest-metrics.js";
+import {
+  median,
+  percentile,
+  rms,
+  standardDeviation,
+} from "./backtest-metrics.js";
 import {
   DATASET_CONSUMPTION_FORECAST,
   DATASET_WIND_FORECAST,
 } from "../src/fingrid.js";
+import type { ForecastVintageRecord } from "../src/types.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -40,9 +47,9 @@ export const VINTAGE_DATASET_IDS: readonly number[] = [
 ];
 
 /**
- * A target is admissible only if its freshest issuance is within this many
- * hours of delivery, so the reference is a genuine near-delivery value and not
- * a stale mid-horizon forecast. Inherits the ±1h `issued_at` fetch-time-proxy
+ * A target is admissible only if its freshest issuance is within this many hours
+ * of delivery, so the reference is a genuine near-delivery value and not a stale
+ * mid-horizon forecast. Inherits the ±1h `issued_at` fetch-time-proxy
  * uncertainty (migration 005), so 2h ≈ "the last issuance or two before/after
  * delivery". A negative lead (issuance postdates delivery) is also admissible —
  * that is the settled value, the best possible reference.
@@ -50,12 +57,10 @@ export const VINTAGE_DATASET_IDS: readonly number[] = [
 export const REFERENCE_MAX_LEAD_H = 2;
 
 /**
- * Lead-time buckets `(loH, hiH]` in hours. Edges chosen to be finer near
- * delivery (where the served forecast leans hardest on the freshest forecast)
- * and coarser far out, and to straddle the two datasets' empirical ladders
- * (wind 245 reaches ~+44h, consumption 165 ~+24h — the served forecast reaches
- * 72h but has NO Fingrid forecast feature beyond the ladder, so the `>48h`
- * bucket is expected sparse and is reported for completeness).
+ * Lead-time bins `(loH, hiH]` in hours. Edges are finer near delivery (where the
+ * served forecast leans hardest on the freshest forecast) and coarser far out,
+ * and straddle the two datasets' empirical ladders (wind 245 reaches ~+72h,
+ * consumption 165 ~+24h). Bins beyond a dataset's ladder are simply empty.
  */
 export const LEAD_BUCKETS: readonly {
   readonly label: string;
@@ -72,31 +77,28 @@ export const LEAD_BUCKETS: readonly {
 ];
 
 /**
- * Minimum revision observations in a dataset's production band before its
- * attenuation is allowed to drive a GO. Below this the recommendation DEFERs —
- * a near-empty band is not a verdict. A floor, not a target (a few weeks of
- * hourly vintages produce far more).
+ * Below this many revision observations a bin is "insufficient": its stats are
+ * suppressed and it is IGNORED by the recommendation and the dataset aggregate
+ * (a near-empty bin — e.g. consumption's long-lead bins — is not evidence). The
+ * sample COUNT is always reported so the emptiness is visible.
+ */
+export const MIN_SAMPLES_PER_BIN = 100;
+
+/**
+ * Minimum revision observations (summed over a dataset's sufficient bins) before
+ * its attenuation may drive the verdict. Below this the recommendation DEFERs.
  */
 export const MIN_BAND_SAMPLES = 200;
 
 /** GO threshold: attenuation at or below this on either dataset earns #81. */
 export const GO_ATTENUATION = 0.9;
 
+/** At/above this the effect "barely moves" → MARGINAL, provisional (summer). */
+export const MARGINAL_ATTENUATION = 0.95;
+
 // ---------------------------------------------------------------------------
 // Inputs (public grid data only — no user data)
 // ---------------------------------------------------------------------------
-
-/**
- * One archived forecast vintage: the value dataset `datasetId` reported for
- * target quarter `startTime`, as issued at `issuedAt` (the hour-truncated
- * fetch-time proxy from migration 005). All times are UTC ISO 8601 strings.
- */
-export interface VintageRecord {
-  readonly datasetId: number;
-  readonly issuedAt: string;
-  readonly startTime: string;
-  readonly value: number;
-}
 
 /**
  * One actual (settled) value for a target quarter, used ONLY as a secondary
@@ -110,9 +112,9 @@ export interface ActualRecord {
 }
 
 export interface RevisionStudyInput {
-  /** Vintages keyed by string dataset id (as the DB/fixture produce them). */
+  /** Forecast vintages keyed by string dataset id (as the store produces them). */
   readonly vintagesByDataset: Readonly<
-    Record<string, readonly VintageRecord[]>
+    Record<string, readonly ForecastVintageRecord[]>
   >;
   /** Optional settled actuals (75 wind, 124 consumption) for the sanity check. */
   readonly actualsByDataset?: Readonly<Record<string, readonly ActualRecord[]>>;
@@ -122,7 +124,11 @@ export interface RevisionStudyInput {
 // Outputs
 // ---------------------------------------------------------------------------
 
-/** Per (dataset, lead bucket) revision statistics. */
+/**
+ * Per (dataset, lead bin) revision statistics. When `sufficient` is false
+ * (samples < MIN_SAMPLES_PER_BIN) the stat fields are null — the count is still
+ * reported, but the bin is not treated as evidence.
+ */
 export interface BucketMetrics {
   readonly label: string;
   readonly loH: number;
@@ -131,18 +137,24 @@ export interface BucketMetrics {
   readonly samples: number;
   /** Number of distinct targets contributing. */
   readonly targets: number;
-  /** Median absolute revision, in the dataset's native unit (MW). */
+  /** Whether the bin has enough samples to be treated as evidence. */
+  readonly sufficient: boolean;
+  /** Mean absolute revision (MW). */
+  readonly meanAbsRevision: number | null;
+  /** Median absolute revision (MW). */
   readonly medianAbsRevision: number | null;
   /** 90th-percentile absolute revision (MW). */
   readonly p90AbsRevision: number | null;
-  /** Median SIGNED revision (MW) — a systematic early-forecast bias if non-zero. */
-  readonly medianSignedRevision: number | null;
   /** RMS revision (MW) — the errors-in-variables "noise" amplitude at this lead. */
   readonly rmsRevision: number | null;
+  /** Mean SIGNED revision (MW) — a systematic early-forecast bias if non-zero. */
+  readonly signedBiasRevision: number | null;
   /** rmsRevision / sd(reference series) — noise-to-signal at this lead. */
   readonly noiseToSignal: number | null;
-  /** medianAbsRevision / median(|reference|) — revision as a share of the level. */
-  readonly relMedianAbs: number | null;
+  /** 1/(1+NSR²) — labelled single-variable errors-in-variables illustration. */
+  readonly attenuation: number | null;
+  /** meanAbsRevision / mean(|reference|) — revision as a share of the level. */
+  readonly relMeanAbs: number | null;
 }
 
 /** Reference-vs-actual sanity result (da amendment 4). */
@@ -172,21 +184,21 @@ export interface DatasetRevisionSummary {
   readonly empiricalP90LeadH: number | null;
   /** sd of the near-delivery reference series (MW) — the "signal" amplitude. */
   readonly sdReference: number | null;
-  /** median(|reference|) (MW) — the typical level for relative reporting. */
-  readonly medianAbsReference: number | null;
-  /** Aggregate RMS revision across the whole positive-lead production band (MW). */
+  /** mean(|reference|) (MW) — the typical level for relative reporting. */
+  readonly meanAbsReference: number | null;
+  /** Aggregate RMS revision over the SUFFICIENT bins only (MW). */
   readonly productionBandRms: number | null;
   /** productionBandRms / sdReference — the aggregate noise-to-signal ratio. */
   readonly productionBandNsr: number | null;
   /**
-   * Single-variable errors-in-variables ILLUSTRATION: `1 / (1 + NSR²)`, the
-   * classic OLS attenuation factor for one noisy regressor. Deliberately a
-   * derived, explicitly-labelled illustration — NOT the multivariate factor the
-   * real ridge fit applies (da amendment 3). Lower ⇒ the leaky fit over-trusts
-   * the feature more ⇒ more to gain from #81.
+   * Aggregate `1 / (1 + NSR²)` over the sufficient bins — the classic OLS
+   * attenuation factor for one noisy regressor. Deliberately a derived,
+   * explicitly-labelled illustration, NOT the multivariate factor the real ridge
+   * fit applies (da amendment 3). Lower ⇒ the leaky fit over-trusts the feature
+   * more ⇒ more to gain from #81.
    */
   readonly attenuationIllustration: number | null;
-  /** Total revision observations in the positive-lead production band. */
+  /** Total revision observations in the sufficient bins. */
   readonly productionBandSamples: number;
   readonly actualCheck: ActualCheck | null;
   readonly buckets: readonly BucketMetrics[];
@@ -207,6 +219,10 @@ export interface RevisionStudyResult {
 
 const msOf = (iso: string): number => new Date(iso).getTime();
 
+/** Mean of the values, or null when empty. */
+const meanOrNull = (xs: readonly number[]): number | null =>
+  xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length;
+
 /**
  * Max of the values, or null when empty. A reduce — NOT `Math.max(...xs)`, which
  * blows the call stack when spread over the hundreds of thousands of leads a
@@ -225,7 +241,7 @@ const maxOrNull = (xs: readonly number[]): number | null => {
   return max;
 };
 
-/** The bucket a positive lead (hours) falls into, or null if lead ≤ 0. */
+/** The bin a positive lead (hours) falls into, or null if lead ≤ 0. */
 const bucketIndexOf = (leadH: number): number | null => {
   if (leadH <= 0) {
     return null;
@@ -255,7 +271,7 @@ interface TargetOutcome {
  */
 const classifyTarget = (
   targetMs: number,
-  vintages: readonly VintageRecord[],
+  vintages: readonly ForecastVintageRecord[],
   nowProxyMs: number,
 ): TargetOutcome => {
   const empty: TargetOutcome = {
@@ -327,23 +343,9 @@ interface BucketAccumulator {
 
 const summariseDataset = (
   datasetId: number,
-  vintages: readonly VintageRecord[],
+  vintages: readonly ForecastVintageRecord[],
   actuals: readonly ActualRecord[],
 ): DatasetRevisionSummary => {
-  const emptyBuckets = LEAD_BUCKETS.map((b) => ({
-    label: b.label,
-    loH: b.loH,
-    hiH: b.hiH,
-    samples: 0,
-    targets: 0,
-    medianAbsRevision: null,
-    p90AbsRevision: null,
-    medianSignedRevision: null,
-    rmsRevision: null,
-    noiseToSignal: null,
-    relMedianAbs: null,
-  }));
-
   if (vintages.length === 0) {
     return {
       datasetId,
@@ -356,18 +358,18 @@ const summariseDataset = (
       empiricalMaxLeadH: null,
       empiricalP90LeadH: null,
       sdReference: null,
-      medianAbsReference: null,
+      meanAbsReference: null,
       productionBandRms: null,
       productionBandNsr: null,
       attenuationIllustration: null,
       productionBandSamples: 0,
       actualCheck: null,
-      buckets: emptyBuckets,
+      buckets: LEAD_BUCKETS.map((b) => emptyBucket(b)),
     };
   }
 
   // Group vintages by target quarter.
-  const byTarget = new Map<number, VintageRecord[]>();
+  const byTarget = new Map<number, ForecastVintageRecord[]>();
   let nowProxyMs = -Infinity;
   for (const v of vintages) {
     const issuedMs = msOf(v.issuedAt);
@@ -386,7 +388,6 @@ const summariseDataset = (
   }));
   const refValues: number[] = [];
   const allPositiveLeadsH: number[] = [];
-  const bandRevisions: number[] = [];
   const refByTarget = new Map<number, number>();
 
   let admissibleTargets = 0;
@@ -416,7 +417,6 @@ const summariseDataset = (
     for (const obs of outcome.observations) {
       const leadH = obs.leadMs / HOUR_MS;
       allPositiveLeadsH.push(leadH);
-      bandRevisions.push(obs.revision);
       const idx = bucketIndexOf(leadH);
       if (idx !== null) {
         const acc = bucketAcc[idx];
@@ -428,35 +428,26 @@ const summariseDataset = (
     }
   }
 
-  const sdReference = sd(refValues);
-  const medianAbsReference = median(refValues.map((v) => Math.abs(v)));
+  const sdReference = standardDeviation(refValues);
+  const meanAbsReference = meanOrNull(refValues.map((v) => Math.abs(v)));
 
   const buckets: BucketMetrics[] = LEAD_BUCKETS.map((b, i) => {
     const acc = bucketAcc[i] ?? { revisions: [], targets: new Set<number>() };
-    const abs = acc.revisions.map((r) => Math.abs(r));
-    const rmsRevision = rms(acc.revisions);
-    const medianAbsRevision = median(abs);
-    return {
-      label: b.label,
-      loH: b.loH,
-      hiH: b.hiH,
-      samples: acc.revisions.length,
-      targets: acc.targets.size,
-      medianAbsRevision,
-      p90AbsRevision: percentile(abs, 90),
-      medianSignedRevision: median(acc.revisions),
-      rmsRevision,
-      noiseToSignal: ratioOrNull(rmsRevision, sdReference),
-      relMedianAbs: ratioOrNull(medianAbsRevision, medianAbsReference),
-    };
+    return bucketMetrics(b, acc, sdReference, meanAbsReference);
   });
 
+  // Aggregate over SUFFICIENT bins only (thin bins ignored — da / final design).
+  const bandRevisions: number[] = [];
+  for (let i = 0; i < LEAD_BUCKETS.length; i++) {
+    const acc = bucketAcc[i];
+    if (acc !== undefined && acc.revisions.length >= MIN_SAMPLES_PER_BIN) {
+      bandRevisions.push(...acc.revisions);
+    }
+  }
   const productionBandRms = rms(bandRevisions);
   const productionBandNsr = ratioOrNull(productionBandRms, sdReference);
   const attenuationIllustration =
-    productionBandNsr === null
-      ? null
-      : 1 / (1 + productionBandNsr * productionBandNsr);
+    productionBandNsr === null ? null : attenuationOf(productionBandNsr);
 
   const consideredTargets = admissibleTargets + excludedTargets;
 
@@ -472,7 +463,7 @@ const summariseDataset = (
     empiricalMaxLeadH: maxOrNull(allPositiveLeadsH),
     empiricalP90LeadH: percentile(allPositiveLeadsH, 90),
     sdReference,
-    medianAbsReference,
+    meanAbsReference,
     productionBandRms,
     productionBandNsr,
     attenuationIllustration,
@@ -481,6 +472,67 @@ const summariseDataset = (
     buckets,
   };
 };
+
+const emptyBucket = (b: {
+  label: string;
+  loH: number;
+  hiH: number;
+}): BucketMetrics => ({
+  label: b.label,
+  loH: b.loH,
+  hiH: b.hiH,
+  samples: 0,
+  targets: 0,
+  sufficient: false,
+  meanAbsRevision: null,
+  medianAbsRevision: null,
+  p90AbsRevision: null,
+  rmsRevision: null,
+  signedBiasRevision: null,
+  noiseToSignal: null,
+  attenuation: null,
+  relMeanAbs: null,
+});
+
+const bucketMetrics = (
+  b: { label: string; loH: number; hiH: number },
+  acc: BucketAccumulator,
+  sdReference: number | null,
+  meanAbsReference: number | null,
+): BucketMetrics => {
+  const samples = acc.revisions.length;
+  const sufficient = samples >= MIN_SAMPLES_PER_BIN;
+  if (!sufficient) {
+    return {
+      ...emptyBucket(b),
+      samples,
+      targets: acc.targets.size,
+    };
+  }
+  const abs = acc.revisions.map((r) => Math.abs(r));
+  const rmsRevision = rms(acc.revisions);
+  const meanAbsRevision = meanOrNull(abs);
+  const noiseToSignal = ratioOrNull(rmsRevision, sdReference);
+  return {
+    label: b.label,
+    loH: b.loH,
+    hiH: b.hiH,
+    samples,
+    targets: acc.targets.size,
+    sufficient: true,
+    meanAbsRevision,
+    medianAbsRevision: median(abs),
+    p90AbsRevision: percentile(abs, 90),
+    rmsRevision,
+    signedBiasRevision: meanOrNull(acc.revisions),
+    noiseToSignal,
+    attenuation: noiseToSignal === null ? null : attenuationOf(noiseToSignal),
+    relMeanAbs: ratioOrNull(meanAbsRevision, meanAbsReference),
+  };
+};
+
+/** The single-variable errors-in-variables attenuation factor for a given NSR. */
+const attenuationOf = (nsr: number): number => 1 / (1 + nsr * nsr);
 
 /** `a / b`, or null when either is null or the denominator is ~0. */
 const ratioOrNull = (a: number | null, b: number | null): number | null => {
@@ -519,7 +571,7 @@ const actualCheckOf = (
   return {
     targetsCompared: diffs.length,
     medianAbsRefMinusActual: median(diffs),
-    meanAbsRefMinusActual: diffs.reduce((a, b) => a + b, 0) / diffs.length,
+    meanAbsRefMinusActual: meanOrNull(diffs),
   };
 };
 
@@ -576,7 +628,7 @@ const actualIdFor = (forecastId: number): number => {
 };
 
 // ---------------------------------------------------------------------------
-// Recommendation (da amendments 1, 2, 6)
+// Recommendation (da amendments 1, 2, 6 + architect final design)
 // ---------------------------------------------------------------------------
 
 export type Recommendation = "GO" | "MARGINAL" | "DEFER";
@@ -594,13 +646,15 @@ const fmt = (v: number | null, dec = 3): string =>
  * close can only be recorded later, after #80's measured backtest delta or a
  * winter re-measure, since this data is summer-only.
  *
- *   - DEFER  — no dataset has enough production-band samples to judge.
- *   - GO     — attenuation ≤ GO_ATTENUATION on either dataset (with samples ≥
- *              MIN_BAND_SAMPLES): the leaky fit over-trusts the feature enough
- *              that lead-time-matched training in #81 should pay off.
- *   - MARGINAL — otherwise: the effect is weak (incl. the ≥0.95 "barely moves"
- *              case, da amendment 2). Confirm via #80's honest backtest before
- *              investing in #81 rather than closing it outright.
+ *   - DEFER  — no dataset has enough sufficient-bin samples to judge; re-measure
+ *              once more vintages (ideally a winter regime) have accrued.
+ *   - GO     — attenuation ≤ GO_ATTENUATION on either dataset: the leaky fit
+ *              over-trusts the feature enough that lead-time-matched training
+ *              (#81) should pay off.
+ *   - MARGINAL — otherwise. At/above MARGINAL_ATTENUATION the effect "barely
+ *              moves" and the verdict is provisional (summer); either way,
+ *              confirm the real gain via #80's honest backtest before investing
+ *              in #81 rather than closing it.
  */
 export const recommendation = (
   result: RevisionStudyResult,
@@ -614,7 +668,7 @@ export const recommendation = (
   if (judged.length === 0) {
     return {
       verdict: "DEFER",
-      reason: `No dataset reached ${String(MIN_BAND_SAMPLES)} production-band revision samples with a computable attenuation — insufficient data to decide.`,
+      reason: `No dataset reached ${String(MIN_BAND_SAMPLES)} revision samples across its sufficient bins with a computable attenuation — insufficient data to decide; re-measure once more (ideally winter) vintages have accrued.`,
     };
   }
 
@@ -629,10 +683,7 @@ export const recommendation = (
     }
   }
   if (strongest === null) {
-    return {
-      verdict: "DEFER",
-      reason: "No judgeable dataset — insufficient data to decide.",
-    };
+    return { verdict: "DEFER", reason: "No judgeable dataset." };
   }
 
   const att = strongest.attenuationIllustration;
@@ -644,8 +695,14 @@ export const recommendation = (
       reason: `${detail} ≤ ${fmt(GO_ATTENUATION, 2)} — the leaky fit over-trusts the forecast enough that lead-time-matched training (#81) should pay off.`,
     };
   }
+  if (att !== null && att >= MARGINAL_ATTENUATION) {
+    return {
+      verdict: "MARGINAL",
+      reason: `${detail} ≥ ${fmt(MARGINAL_ATTENUATION, 2)} — the revision effect barely moves the fit; PROVISIONAL (summer). Confirm via #80's vintage-correct backtest; do not close #81 on summer-only data.`,
+    };
+  }
   return {
     verdict: "MARGINAL",
-    reason: `${detail} > ${fmt(GO_ATTENUATION, 2)} — revision effect is weak; confirm the real gain via #80's vintage-correct backtest before investing in #81 (do not close #81 on summer-only data).`,
+    reason: `${detail} in (${fmt(GO_ATTENUATION, 2)}, ${fmt(MARGINAL_ATTENUATION, 2)}) — a modest effect; confirm the real gain via #80's vintage-correct backtest before investing in #81 (do not close #81 on summer-only data).`,
   };
 };

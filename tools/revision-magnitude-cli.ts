@@ -7,51 +7,54 @@
  * importing `tools/`, so this file never reaches `dist/`. It runs only as a tsx
  * script:
  *
- *     pnpm vintage-revision --data tools/backtest-data/vintages.json  # replay
- *     pnpm vintage-revision --db                            # study the live DB
- *     pnpm vintage-revision --db --window 60                # widen the window
- *     pnpm vintage-revision --db --export tools/x/v.json    # snapshot DB → file
+ *     pnpm revision-magnitude --data tools/backtest-data/vintages.json  # replay
+ *     pnpm revision-magnitude --db                          # study the live DB
+ *     pnpm revision-magnitude --db --window 60              # widen the window
+ *     pnpm revision-magnitude --db --export tools/x/v.json  # snapshot DB → file
  *
- * It reconstructs, per forecast dataset and lead-time bucket, how much the
- * archived vintages (`fingrid_forecasts`, issue #78) were revised between early
- * issuance and delivery, and prints a GO / MARGINAL / DEFER recommendation for
- * #81. All DB I/O lives here; `vintage-revision.ts` stays pure. This is NOT a
- * scheduled job and adds no endpoint (`STACK §9`). It never logs the connection
- * string or any secret (`STACK §8`).
+ * It reconstructs, per forecast dataset and lead-time bin, how much the archived
+ * vintages (`fingrid_forecasts`, issue #78) were revised between early issuance
+ * and delivery, and prints a GO / MARGINAL / DEFER recommendation for #81. All
+ * DB I/O lives here; `revision-magnitude.ts` stays pure. This is NOT a scheduled
+ * job and adds no endpoint (`STACK §9`). It never logs the connection string or
+ * any secret (`STACK §8`).
  *
- * The `fingrid_forecasts` ladder read is deliberately CLI-LOCAL rather than in
- * `src/fingrid-store.ts`: it is an offline analysis query (every issuance per
- * target, no as-of bound) with no server caller, so keeping it here avoids
- * widening the shipped store surface. (An alternative — adding it to the store
- * next to `getFingridForecastVintagesLatest` — was considered and rejected on
- * that ground; see the PR.)
+ * The all-vintages ladder read lives in `src/fingrid-store.ts`
+ * (`getFingridForecastVintagesAll`), NOT inline here: #80's vintage-correct
+ * backtest needs the same read, `backtest-cli.ts` already imports store reads
+ * from `src/`, and one home avoids duplicating the SQL + row mapping (architect
+ * final design — reversing the earlier CLI-local plan). A pure read the server
+ * never calls is not a server behaviour change.
  */
 // Import db.js FIRST for its TIMESTAMPTZ→ISO type-parser side-effect (db.ts):
 // without it `pg` returns TIMESTAMPTZ columns as `Date` objects, which would
 // break the ms-arithmetic in the engine and the fixture-parity round-trip.
 import { closeDatabase } from "../src/db.js";
-import { writeFileSync } from "node:fs";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { loadEnv } from "../src/env.js";
 import { parseWindowDays } from "./backtest-cli.js";
 import {
   recommendation,
+  REFERENCE_MAX_LEAD_H,
   runRevisionStudy,
   VINTAGE_DATASET_IDS,
   type ActualRecord,
   type DatasetRevisionSummary,
   type RevisionStudyInput,
-  type VintageRecord,
-} from "./vintage-revision.js";
-import { getFingridRecordsByRange } from "../src/fingrid-store.js";
+} from "./revision-magnitude.js";
+import {
+  getFingridForecastVintagesAll,
+  getFingridRecordsByRange,
+} from "../src/fingrid-store.js";
 import {
   DATASET_CONSUMPTION_ACTUAL,
   DATASET_CONSUMPTION_FORECAST,
   DATASET_WIND_ACTUAL,
   DATASET_WIND_FORECAST,
 } from "../src/fingrid.js";
+import type { ForecastVintageRecord } from "../src/types.js";
 
 const { Pool } = pg;
 
@@ -67,34 +70,69 @@ const ACTUAL_FOR_FORECAST: Readonly<Record<number, number>> = {
 const EXCLUSION_WARN = 0.25;
 
 // ---------------------------------------------------------------------------
-// Parity-critical pure assembly (no I/O)
+// Assembly + fixture round-trip (pure, parity-critical)
 // ---------------------------------------------------------------------------
 
-export interface VintageRow {
-  dataset_id: number;
-  issued_at: string;
-  start_time: string;
-  end_time: string;
-  value: number;
-}
-
-/** Map a raw `fingrid_forecasts` row to the engine's `VintageRecord`. */
-export const rowToVintage = (r: VintageRow): VintageRecord => ({
-  datasetId: r.dataset_id,
-  issuedAt: r.issued_at,
-  startTime: r.start_time,
-  value: r.value,
-});
-
-/**
- * Assemble `RevisionStudyInput` from mapped DB records, SHAPE-IDENTICAL to what
- * `loadFixture` produces from the equivalent fixture JSON — the parity-critical
- * surface, so it is pure and unit-tested against `loadFixture`.
- */
+/** Assemble a study input from vintages + actuals keyed by string dataset id. */
 export const assembleStudyInput = (
-  vintagesByDataset: Readonly<Record<string, readonly VintageRecord[]>>,
+  vintagesByDataset: Readonly<Record<string, readonly ForecastVintageRecord[]>>,
   actualsByDataset: Readonly<Record<string, readonly ActualRecord[]>>,
 ): RevisionStudyInput => ({ vintagesByDataset, actualsByDataset });
+
+interface VintageFixture {
+  readonly vintages: Readonly<Record<string, readonly ForecastVintageRecord[]>>;
+  readonly actuals?: Readonly<Record<string, readonly ActualRecord[]>>;
+}
+
+/** Serialise a study input as a `loadVintageFixture`-compatible JSON string. */
+export const toFixtureJson = (input: RevisionStudyInput): string => {
+  const vintages: Record<string, ForecastVintageRecord[]> = {};
+  for (const [dataset, records] of Object.entries(input.vintagesByDataset)) {
+    vintages[dataset] = records.map((r) => ({
+      datasetId: r.datasetId,
+      issuedAt: r.issuedAt,
+      startTime: r.startTime,
+      endTime: r.endTime,
+      value: r.value,
+    }));
+  }
+  const actuals: Record<string, ActualRecord[]> = {};
+  for (const [dataset, records] of Object.entries(
+    input.actualsByDataset ?? {},
+  )) {
+    actuals[dataset] = records.map((r) => ({
+      datasetId: r.datasetId,
+      startTime: r.startTime,
+      value: r.value,
+    }));
+  }
+  return JSON.stringify({ vintages, actuals }, null, 2);
+};
+
+/** Read a study input from a fixture FILE path (symmetric with `--export`). */
+export const loadVintageFixture = (filePath: string): RevisionStudyInput => {
+  const text = readFileSync(filePath, "utf-8");
+  const fixture = JSON.parse(text) as VintageFixture;
+  const vintagesByDataset: Record<string, ForecastVintageRecord[]> = {};
+  for (const [dataset, records] of Object.entries(fixture.vintages)) {
+    vintagesByDataset[dataset] = records.map((r) => ({
+      datasetId: r.datasetId,
+      issuedAt: r.issuedAt,
+      startTime: r.startTime,
+      endTime: r.endTime,
+      value: r.value,
+    }));
+  }
+  const actualsByDataset: Record<string, ActualRecord[]> = {};
+  for (const [dataset, records] of Object.entries(fixture.actuals ?? {})) {
+    actualsByDataset[dataset] = records.map((r) => ({
+      datasetId: r.datasetId,
+      startTime: r.startTime,
+      value: r.value,
+    }));
+  }
+  return assembleStudyInput(vintagesByDataset, actualsByDataset);
+};
 
 // ---------------------------------------------------------------------------
 // DB fetch (I/O — the only side-effecting surface besides the script entry)
@@ -102,9 +140,8 @@ export const assembleStudyInput = (
 
 /**
  * Fetch every archived vintage for the forecast datasets over
- * `[now − windowDays, now]`, plus the paired actuals for the secondary sanity
- * check. The ladder query returns ALL issuances per in-range target (no as-of
- * bound), ordered — the whole lead-time ladder the study needs.
+ * `[now − windowDays, now]` (the full lead-time ladder, via the store read),
+ * plus the paired actuals for the secondary sanity check.
  */
 export const fetchStudyInput = async (
   pool: pg.Pool,
@@ -114,16 +151,15 @@ export const fetchStudyInput = async (
   const startUtc = new Date(now.getTime() - windowDays * DAY_MS).toISOString();
   const endUtc = now.toISOString();
 
-  const vintagesByDataset: Record<string, VintageRecord[]> = {};
+  const vintagesByDataset: Record<string, ForecastVintageRecord[]> = {};
   for (const id of VINTAGE_DATASET_IDS) {
-    const { rows } = await pool.query<VintageRow>(
-      `SELECT dataset_id, issued_at, start_time, end_time, value
-       FROM fingrid_forecasts
-       WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3
-       ORDER BY start_time, issued_at`,
-      [id, startUtc, endUtc],
+    const records = await getFingridForecastVintagesAll(
+      pool,
+      id,
+      startUtc,
+      endUtc,
     );
-    vintagesByDataset[String(id)] = rows.map(rowToVintage);
+    vintagesByDataset[String(id)] = [...records];
   }
 
   const actualsByDataset: Record<string, ActualRecord[]> = {};
@@ -145,63 +181,6 @@ export const fetchStudyInput = async (
     }));
   }
 
-  return assembleStudyInput(vintagesByDataset, actualsByDataset);
-};
-
-// ---------------------------------------------------------------------------
-// Fixture round-trip (snapshot DB → replayable JSON)
-// ---------------------------------------------------------------------------
-
-interface VintageFixture {
-  readonly vintages: Readonly<Record<string, readonly VintageRecord[]>>;
-  readonly actuals?: Readonly<Record<string, readonly ActualRecord[]>>;
-}
-
-/** Serialise a study input as a `loadVintageFixture`-compatible JSON string. */
-export const toFixtureJson = (input: RevisionStudyInput): string => {
-  const vintages: Record<string, VintageRecord[]> = {};
-  for (const [dataset, records] of Object.entries(input.vintagesByDataset)) {
-    vintages[dataset] = records.map((r) => ({
-      datasetId: r.datasetId,
-      issuedAt: r.issuedAt,
-      startTime: r.startTime,
-      value: r.value,
-    }));
-  }
-  const actuals: Record<string, ActualRecord[]> = {};
-  for (const [dataset, records] of Object.entries(
-    input.actualsByDataset ?? {},
-  )) {
-    actuals[dataset] = records.map((r) => ({
-      datasetId: r.datasetId,
-      startTime: r.startTime,
-      value: r.value,
-    }));
-  }
-  return JSON.stringify({ vintages, actuals }, null, 2);
-};
-
-/** Read a study input from a fixture FILE path (symmetric with `--export`). */
-export const loadVintageFixture = (filePath: string): RevisionStudyInput => {
-  const text = readFileSync(filePath, "utf-8");
-  const fixture = JSON.parse(text) as VintageFixture;
-  const vintagesByDataset: Record<string, VintageRecord[]> = {};
-  for (const [dataset, records] of Object.entries(fixture.vintages)) {
-    vintagesByDataset[dataset] = records.map((r) => ({
-      datasetId: r.datasetId,
-      issuedAt: r.issuedAt,
-      startTime: r.startTime,
-      value: r.value,
-    }));
-  }
-  const actualsByDataset: Record<string, ActualRecord[]> = {};
-  for (const [dataset, records] of Object.entries(fixture.actuals ?? {})) {
-    actualsByDataset[dataset] = records.map((r) => ({
-      datasetId: r.datasetId,
-      startTime: r.startTime,
-      value: r.value,
-    }));
-  }
   return assembleStudyInput(vintagesByDataset, actualsByDataset);
 };
 
@@ -232,17 +211,19 @@ const printDataset = (d: DatasetRevisionSummary): void => {
   console.log(
     `  reference: post-delivery ${String(
       d.referencesPostDelivery,
-    )}  pre-delivery≤${String(2)}h ${String(d.referencesPreDeliveryWithinTol)}`,
+    )}  pre-delivery≤${String(REFERENCE_MAX_LEAD_H)}h ${String(
+      d.referencesPreDeliveryWithinTol,
+    )}`,
   );
   console.log(
     `  empirical lead: max ${fmt(d.empiricalMaxLeadH, 1)}h  p90 ${fmt(
       d.empiricalP90LeadH,
       1,
-    )}h   (served forecast has NO Fingrid feature beyond this reach)`,
+    )}h   (gate on this band — the served forecast has NO Fingrid feature beyond it)`,
   );
   console.log(
-    `  reference series: sd ${fmt(d.sdReference, 1)} MW  median|ref| ${fmt(
-      d.medianAbsReference,
+    `  reference series: sd ${fmt(d.sdReference, 1)} MW  mean|ref| ${fmt(
+      d.meanAbsReference,
       1,
     )} MW`,
   );
@@ -259,7 +240,7 @@ const printDataset = (d: DatasetRevisionSummary): void => {
     console.log(`  ref-vs-actual sanity: no overlapping actuals (skipped)`);
   }
   console.log(
-    `  production band: rms ${fmt(d.productionBandRms, 1)} MW  NSR ${fmt(
+    `  aggregate (sufficient bins): rms ${fmt(d.productionBandRms, 1)} MW  NSR ${fmt(
       d.productionBandNsr,
       3,
     )}  attenuation(illustrative) ${fmt(d.attenuationIllustration, 3)}  samples ${String(
@@ -267,20 +248,33 @@ const printDataset = (d: DatasetRevisionSummary): void => {
     )}`,
   );
   console.log(
-    `    bucket    samples  targets  medAbsΔ   p90AbsΔ  medSignedΔ    rmsΔ     NSR  relMedAbs`,
+    `    bin       samples  targets  meanAbsΔ  medAbsΔ  p90AbsΔ    rmsΔ   biasΔ    NSR   atten  relMeanAbs`,
   );
   for (const b of d.buckets) {
+    if (!b.sufficient) {
+      // Thin bin: show the count, suppress the stats (da / final design).
+      const tag = b.samples > 0 ? "insufficient" : "empty";
+      console.log(
+        `    ${b.label.padEnd(8)}  ${String(b.samples).padStart(7)}  ${String(
+          b.targets,
+        ).padStart(7)}  ${tag}`,
+      );
+      continue;
+    }
     console.log(
       `    ${b.label.padEnd(8)}  ${String(b.samples).padStart(7)}  ${String(
         b.targets,
-      ).padStart(7)}  ${fmt(b.medianAbsRevision, 1).padStart(7)}  ${fmt(
-        b.p90AbsRevision,
+      ).padStart(7)}  ${fmt(b.meanAbsRevision, 1).padStart(8)}  ${fmt(
+        b.medianAbsRevision,
         1,
-      ).padStart(7)}  ${fmt(b.medianSignedRevision, 1).padStart(9)}  ${fmt(
+      ).padStart(7)}  ${fmt(b.p90AbsRevision, 1).padStart(7)}  ${fmt(
         b.rmsRevision,
         1,
-      ).padStart(7)}  ${fmt(b.noiseToSignal, 3).padStart(6)}  ${fmt(
-        b.relMedianAbs,
+      ).padStart(6)}  ${fmt(b.signedBiasRevision, 1).padStart(6)}  ${fmt(
+        b.noiseToSignal,
+        3,
+      ).padStart(5)}  ${fmt(b.attenuation, 3).padStart(6)}  ${fmt(
+        b.relMeanAbs,
         3,
       ).padStart(8)}`,
     );
@@ -311,12 +305,12 @@ const printReport = (input: RevisionStudyInput): boolean => {
     console.log(`  window: no vintages found`);
   }
   console.log(
-    `  CAVEAT (issued_at proxy): issued_at is an hour-truncated FETCH-TIME proxy (migration 005), so bucket edges and the ${String(
-      2,
+    `  CAVEAT (lead resolution): issued_at is an hourly FETCH-TIME proxy (±~1h, migration 005), so bin edges and the ${String(
+      REFERENCE_MAX_LEAD_H,
     )}h reference cutoff inherit ±1h uncertainty.`,
   );
   console.log(
-    `  buckets are lead-time (loH, hiH] in hours; Δ = revision = value@lead − reference (freshest issuance).`,
+    `  Δ = revision = value@lead − reference (freshest issuance per target); bins are lead-time (loH, hiH] in hours.`,
   );
 
   for (const d of result.datasets) {
@@ -370,7 +364,7 @@ const main = async (): Promise<void> => {
 
   if (!hasFlag(argv, "--db")) {
     console.error(
-      "usage: pnpm vintage-revision --data <fixture.json> | --db [--window <days>] [--export <fixture.json>]",
+      "usage: pnpm revision-magnitude --data <fixture.json> | --db [--window <days>] [--export <fixture.json>]",
     );
     process.exit(2);
   }
@@ -380,7 +374,7 @@ const main = async (): Promise<void> => {
   const connectionString = env.DATABASE_PUBLIC_URL ?? env.DATABASE_URL;
   if (!connectionString) {
     throw new Error(
-      "DATABASE_PUBLIC_URL or DATABASE_URL must be set for `pnpm vintage-revision --db`.",
+      "DATABASE_PUBLIC_URL or DATABASE_URL must be set for `pnpm revision-magnitude --db`.",
     );
   }
 

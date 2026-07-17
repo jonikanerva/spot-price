@@ -22,7 +22,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tools/tsconfig.json",
     "seed": "tsx --env-file=.env src/seed.ts",
     "backtest": "tsx --env-file=.env tools/backtest-cli.ts",
-    "vintage-revision": "tsx --env-file=.env tools/vintage-revision-cli.ts",
+    "revision-magnitude": "tsx --env-file=.env tools/revision-magnitude-cli.ts",
     "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose down",
     "copy:migrations": "mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/"

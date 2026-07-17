@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { bias, mae, precisionAtN, rmse, spearman } from "./backtest-metrics.js";
+import {
+  bias,
+  mae,
+  median,
+  percentile,
+  precisionAtN,
+  rms,
+  rmse,
+  spearman,
+  standardDeviation,
+} from "./backtest-metrics.js";
 
 describe("backtest-metrics — absolute", () => {
   it("mae / rmse / bias on a known series", () => {
@@ -32,6 +42,35 @@ describe("spearman", () => {
 
   it("is null for a constant series (no rank information)", () => {
     expect(spearman([3, 3, 3], [1, 2, 3])).toBeNull();
+  });
+});
+
+describe("distribution summaries", () => {
+  it("median handles odd, even, and empty", () => {
+    expect(median([3, 1, 2])).toBe(2);
+    expect(median([4, 1, 2, 3])).toBe(2.5);
+    expect(median([])).toBeNull();
+  });
+
+  it("percentile interpolates and clamps to [0, 100]", () => {
+    expect(percentile([0, 10], 50)).toBe(5);
+    expect(percentile([0, 10, 20, 30], 90)).toBeCloseTo(27, 6);
+    expect(percentile([5], 90)).toBe(5);
+    expect(percentile([1, 2, 3], 200)).toBe(3); // clamped to 100th
+    expect(percentile([], 90)).toBeNull();
+  });
+
+  it("standardDeviation is the sample (n−1) sd, null below 2 values", () => {
+    // 2,4,6 → mean 4, var = (4+0+4)/2 = 4 → sd 2
+    expect(standardDeviation([2, 4, 6])).toBeCloseTo(2, 6);
+    expect(standardDeviation([7])).toBeNull();
+    expect(standardDeviation([])).toBeNull();
+  });
+
+  it("rms is the quadratic mean, null on empty", () => {
+    expect(rms([3, 4])).toBeCloseTo(Math.sqrt(12.5), 6);
+    expect(rms([0, 0, 0])).toBe(0);
+    expect(rms([])).toBeNull();
   });
 });
 

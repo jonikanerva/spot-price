@@ -3,7 +3,7 @@ import {
   DATASET_CONSUMPTION_FORECAST,
   DATASET_WIND_FORECAST,
 } from "./fingrid.js";
-import type { FingridRecord } from "./types.js";
+import type { FingridRecord, ForecastVintageRecord } from "./types.js";
 
 /**
  * Persistence for the public Fingrid grid series (read off the request path
@@ -220,6 +220,46 @@ export const getFingridForecastVintagesLatest = async (
     [datasetId, startUtc, endUtc],
   );
   return rows.map(rowToRecord);
+};
+
+interface ForecastVintageRow {
+  dataset_id: number;
+  issued_at: string;
+  start_time: string;
+  end_time: string;
+  value: number;
+}
+
+/**
+ * OFFLINE read: EVERY archived issuance per target in [startUtc, endUtc) for one
+ * forecast dataset, ordered by (start_time, issued_at) — the full lead-time
+ * ladder. The revision study (#79) and the vintage-correct backtest (#80) need
+ * all issuances, unlike `getFingridForecastVintagesLatest`, which collapses to
+ * the latest per target for the live route. The server never calls this; it
+ * lives here (next to the latest-per-target read) so #79 and #80 share ONE query
+ * and row mapping rather than duplicating the SQL in `tools/`. Backed by
+ * `idx_fingrid_forecasts_target_issued` (leading `dataset_id, start_time`).
+ */
+export const getFingridForecastVintagesAll = async (
+  pool: Pool,
+  datasetId: number,
+  startUtc: string,
+  endUtc: string,
+): Promise<readonly ForecastVintageRecord[]> => {
+  const { rows } = await pool.query<ForecastVintageRow>(
+    `SELECT dataset_id, issued_at, start_time, end_time, value
+     FROM fingrid_forecasts
+     WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3
+     ORDER BY start_time, issued_at`,
+    [datasetId, startUtc, endUtc],
+  );
+  return rows.map((r) => ({
+    datasetId: r.dataset_id,
+    issuedAt: r.issued_at,
+    startTime: r.start_time,
+    endTime: r.end_time,
+    value: r.value,
+  }));
 };
 
 /**

@@ -167,7 +167,7 @@ export const percentile = (xs: readonly number[], p: number): number | null => {
 };
 
 /** Sample standard deviation (n−1 denominator); null when fewer than 2 values. */
-export const sd = (xs: readonly number[]): number | null => {
+export const standardDeviation = (xs: readonly number[]): number | null => {
   if (xs.length < 2) {
     return null;
   }
