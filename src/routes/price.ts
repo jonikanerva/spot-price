@@ -1,5 +1,6 @@
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createRoute } from "@hono/zod-openapi";
+import type { Pool } from "pg";
 import {
   buildPriceWindow,
   calculateTotalPrice,
@@ -16,12 +17,13 @@ import {
   getUtcRangeForLocalDate,
   getUtcRangeForLocalDateSpan,
 } from "../time.js";
-import type { HourlyPrice, PriceWindow } from "../types.js";
+import type { HourlyPrice, PriceWindow, UserSettings } from "../types.js";
 import { getDefaultTimezone } from "../areas.js";
 import {
   CheapestQuerySchema,
   PriceWindowSchema,
   ErrorSchema,
+  PriceAllSchema,
   PriceHistoryQuerySchema,
   PriceListSchema,
   PublicSpotSchema,
@@ -63,6 +65,37 @@ const getCurrentPrice = (
 
 const toPublicSpot = (prices: readonly HourlyPrice[]) =>
   prices.map((p) => ({ ...p, spotCentsKwh: eurMwhToCentsKwh(p.priceEurMwh) }));
+
+/**
+ * Build one local day's published total-price list for the /all route: read the
+ * day's stored prices for the user's area, apply contract terms, and return a
+ * PriceList — `available: true` with the window when prices exist, otherwise an
+ * empty `available: false` list. `expectedAt` is attached only when the caller
+ * passes one (tomorrow), never spread as `undefined`, to satisfy
+ * exactOptionalPropertyTypes. Private to /all; /today and /tomorrow are
+ * intentionally left untouched. A third consumer of this day-fetch slice should
+ * trigger extracting a shared getDayTotalPrices (rule-of-three).
+ */
+const buildDayPriceList = async (
+  db: Pool,
+  localDate: string,
+  settings: UserSettings,
+  expectedAt?: string,
+): Promise<PriceWindow & { available: boolean; expectedAt?: string }> => {
+  const { startUtc, endUtc } = getUtcRangeForLocalDate(
+    localDate,
+    settings.timezone,
+  );
+  const prices = await getPricesByRange(db, startUtc, endUtc, settings.area);
+  const totals = calculateTotalPrices(prices, settings);
+  const window = buildPriceWindow(totals);
+  if (!window) {
+    return expectedAt === undefined
+      ? EMPTY_PRICE_LIST
+      : { ...EMPTY_PRICE_LIST, expectedAt };
+  }
+  return { ...window, available: true };
+};
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -194,6 +227,32 @@ const priceHistoryRoute = createRoute({
       content: { "application/json": { schema: ErrorSchema } },
       description:
         "Invalid query parameters (bad date, from after to, or span over 31 days)",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorSchema } },
+      description: "User settings not found",
+    },
+  },
+});
+
+const priceAllRoute = createRoute({
+  method: "get",
+  path: "/api/v1/price/all",
+  tags: ["Price"],
+  summary: "All currently-known hourly total prices (today + tomorrow)",
+  description:
+    "Returns today's total prices (always) plus tomorrow's (only once Nord Pool " +
+    "has published them) in a single payload, so an automation can poll once " +
+    "instead of hitting /today and /tomorrow separately. Each day carries its " +
+    "own 'available' flag: tomorrow is available:false with an empty 'prices' " +
+    "array and an 'expectedAt' hint until it publishes. 'expectedAt' appears " +
+    "only on tomorrow. Published prices only — this is not a forecast.",
+  security: [{ BearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: PriceAllSchema } },
+      description:
+        "Today's and tomorrow's prices (check each day's 'available' field)",
     },
     404: {
       content: { "application/json": { schema: ErrorSchema } },
@@ -448,5 +507,21 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     }
 
     return c.json({ ...window, available: true as const }, 200 as const);
+  });
+
+  app.openapi(priceAllRoute, async (c) => {
+    const settings = await getUserSettingsFromContext(c);
+    if (!settings) {
+      return c.json({ error: "User settings not found" }, 404 as const);
+    }
+
+    const { today, tomorrow } = getCurrentAndNextDate(settings.timezone);
+    const db = c.get("db");
+    const [todayList, tomorrowList] = await Promise.all([
+      buildDayPriceList(db, today, settings),
+      buildDayPriceList(db, tomorrow, settings, "12:00 UTC"),
+    ]);
+
+    return c.json({ today: todayList, tomorrow: tomorrowList }, 200 as const);
   });
 };

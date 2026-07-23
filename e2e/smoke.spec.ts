@@ -179,6 +179,9 @@ test.describe("API panel", () => {
     );
     await expect(page.locator("#haYamlContent")).toContainText("rest_command:");
     await expect(page.locator("#haYamlContent")).toContainText(
+      "spot_price_all:",
+    );
+    await expect(page.locator("#haYamlContent")).toContainText(
       "spot_price_history:",
     );
     await expect(page.locator("#haYamlContent")).toContainText(
