@@ -12,7 +12,6 @@ import {
   TotalPriceSchema,
   PriceWindowSchema,
   PriceListSchema,
-  PriceAllSchema,
   PublicSpotSchema,
   ErrorSchema,
   UserSettingsResponseSchema,
@@ -954,16 +953,11 @@ describe("price/all endpoint", () => {
     });
 
   interface PriceAllBody {
-    today: {
-      available: boolean;
-      prices: readonly unknown[];
-      expectedAt?: string;
-    };
-    tomorrow: {
-      available: boolean;
-      prices: readonly unknown[];
-      expectedAt?: string;
-    };
+    available: boolean;
+    prices: readonly { deliveryStart: string }[];
+    expectedAt?: string;
+    start: string;
+    end: string;
   }
 
   it("returns 401 without an API key (wildcard middleware covers /all)", async () => {
@@ -972,7 +966,7 @@ describe("price/all endpoint", () => {
     expect(res.status).toBe(401);
   });
 
-  it("both days published: today and tomorrow available:true with full days", async () => {
+  it("both days published: one flat list spanning today + tomorrow", async () => {
     const app = await setup();
     const { today, tomorrow } = getHelsinkiDates();
     await seedHourlyRange(pool, today, 0, 24, 40);
@@ -982,14 +976,28 @@ describe("price/all endpoint", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as PriceAllBody;
 
-    expect(PriceAllSchema.safeParse(body).success).toBe(true);
-    expect(body.today.available).toBe(true);
-    expect(body.tomorrow.available).toBe(true);
-    expect(body.today.prices.length).toBe(helsinkiDayHours(today));
-    expect(body.tomorrow.prices.length).toBe(helsinkiDayHours(tomorrow));
+    expect(PriceListSchema.safeParse(body).success).toBe(true);
+    expect(body.available).toBe(true);
+    // A single list carries both days' intervals, not a per-day split.
+    expect(body.prices.length).toBe(
+      helsinkiDayHours(today) + helsinkiDayHours(tomorrow),
+    );
+    // The window spans today's local midnight to the local midnight that
+    // starts the day after tomorrow (the span end under the DST-correct helper).
+    const { startUtc } = getUtcRangeForLocalDate(today, HELSINKI_TZ);
+    const dayAfterTomorrow = formatDateInTimeZone(
+      addDays(new Date(`${tomorrow}T12:00:00Z`), 1),
+      HELSINKI_TZ,
+    );
+    const { startUtc: endUtc } = getUtcRangeForLocalDate(
+      dayAfterTomorrow,
+      HELSINKI_TZ,
+    );
+    expect(new Date(body.start).getTime()).toBe(new Date(startUtc).getTime());
+    expect(new Date(body.end).getTime()).toBe(new Date(endUtc).getTime());
   });
 
-  it("tomorrow unpublished: tomorrow available:false with expectedAt, today has no expectedAt", async () => {
+  it("today only: available with today's intervals and no expectedAt hint", async () => {
     const app = await setup();
     const { today } = getHelsinkiDates();
     // Only today is seeded — tomorrow has not been published yet.
@@ -999,32 +1007,50 @@ describe("price/all endpoint", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as PriceAllBody;
 
-    expect(PriceAllSchema.safeParse(body).success).toBe(true);
-    expect(body.today.available).toBe(true);
-    expect(body.tomorrow.available).toBe(false);
-    expect(body.tomorrow.prices).toEqual([]);
-    // Tomorrow carries the publication hint; today never does.
-    expect(body.tomorrow.expectedAt).toBe("12:00 UTC");
-    expect("expectedAt" in body.today).toBe(false);
+    expect(PriceListSchema.safeParse(body).success).toBe(true);
+    expect(body.available).toBe(true);
+    expect(body.prices.length).toBe(helsinkiDayHours(today));
+    // /all never emits the publication hint — that is /tomorrow's job.
+    expect("expectedAt" in body).toBe(false);
   });
 
-  it("nothing published: both days available:false", async () => {
+  it("nothing published: available:false with an empty list and no expectedAt", async () => {
     const app = await setup();
     const res = await requestAll(app);
     expect(res.status).toBe(200);
     const body = (await res.json()) as PriceAllBody;
 
-    expect(PriceAllSchema.safeParse(body).success).toBe(true);
-    expect(body.today.available).toBe(false);
-    expect(body.tomorrow.available).toBe(false);
-    expect(body.today.prices).toEqual([]);
-    expect(body.tomorrow.prices).toEqual([]);
-    // Empty today never gets an expectedAt hint (that is tomorrow-only).
-    expect("expectedAt" in body.today).toBe(false);
-    expect(body.tomorrow.expectedAt).toBe("12:00 UTC");
+    expect(PriceListSchema.safeParse(body).success).toBe(true);
+    expect(body.available).toBe(false);
+    expect(body.prices).toEqual([]);
+    expect("expectedAt" in body).toBe(false);
   });
 
-  it("is a published-prices payload only — no forecast or flattened fields", async () => {
+  it("tomorrow only: available with tomorrow's intervals from its local midnight", async () => {
+    const app = await setup();
+    const { tomorrow } = getHelsinkiDates();
+    // Only tomorrow is seeded (today's prices have rolled off) — the list still
+    // spans the whole known range and starts at tomorrow's first interval.
+    await seedHourlyRange(pool, tomorrow, 0, 24, 30);
+
+    const res = await requestAll(app);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceAllBody;
+
+    expect(PriceListSchema.safeParse(body).success).toBe(true);
+    expect(body.available).toBe(true);
+    expect(body.prices.length).toBe(helsinkiDayHours(tomorrow));
+    const { startUtc } = getUtcRangeForLocalDate(tomorrow, HELSINKI_TZ);
+    const first = body.prices[0];
+    expect(first).toBeDefined();
+    if (first) {
+      expect(new Date(first.deliveryStart).getTime()).toBe(
+        new Date(startUtc).getTime(),
+      );
+    }
+  });
+
+  it("is a published-prices payload only — no forecast or split fields", async () => {
     const app = await setup();
     const { today } = getHelsinkiDates();
     await seedHourlyRange(pool, today, 0, 24, 45);
@@ -1033,26 +1059,27 @@ describe("price/all endpoint", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
 
-    // No forecast leaks in, and no flattened/parallel top-level shape.
+    // No forecast leaks in, and no split/parallel top-level shape.
     expect("forecast" in body).toBe(false);
     expect("entries" in body).toBe(false);
     expect("tomorrowAvailable" in body).toBe(false);
-    expect("prices" in body).toBe(false);
+    expect("today" in body).toBe(false);
+    expect("tomorrow" in body).toBe(false);
+    // The flat list exposes prices at the top level (was split under today/tomorrow).
+    expect(Array.isArray(body.prices)).toBe(true);
   });
 
-  it("today's first entry starts at Helsinki midnight (UTC below the edge)", async () => {
+  it("first entry starts at Helsinki midnight (UTC below the edge)", async () => {
     const app = await setup();
     const { today } = getHelsinkiDates();
     await seedHourlyRange(pool, today, 0, 24, 55);
 
     const res = await requestAll(app);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      today: { prices: readonly { deliveryStart: string }[] };
-    };
+    const body = (await res.json()) as PriceAllBody;
 
     const { startUtc } = getUtcRangeForLocalDate(today, HELSINKI_TZ);
-    const first = body.today.prices[0];
+    const first = body.prices[0];
     expect(first).toBeDefined();
     if (first) {
       expect(new Date(first.deliveryStart).getTime()).toBe(

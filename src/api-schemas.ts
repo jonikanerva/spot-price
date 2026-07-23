@@ -54,21 +54,6 @@ export const PriceListSchema = PriceWindowSchema.extend({
   expectedAt: z.string().optional().openapi({ example: "12:00 UTC" }),
 }).openapi("PriceList");
 
-/**
- * Today + tomorrow published total prices in one payload. Each day is a full
- * `PriceList` carrying its own `available` flag — there is deliberately no
- * top-level availability boolean (a parallel-boolean state machine). This is
- * published prices only; when Nord Pool has not published tomorrow, its
- * `available` is false with an empty `prices` array and `expectedAt`, never a
- * guess. Not a forecast.
- */
-export const PriceAllSchema = z
-  .object({
-    today: PriceListSchema,
-    tomorrow: PriceListSchema,
-  })
-  .openapi("PriceAll");
-
 const SpotPriceEntrySchema = z
   .object({
     deliveryStart: z.string().openapi({ example: "2026-02-27T10:00:00.000Z" }),

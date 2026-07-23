@@ -31,17 +31,17 @@ Supports all 21 Nord Pool delivery areas across the Nordics, Baltics, and Centra
 
 All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <key>` header.
 
-| Method | Endpoint                 | Description                                                                    |
-| ------ | ------------------------ | ------------------------------------------------------------------------------ |
-| GET    | `/api/v1/price/now`      | Current total price with breakdown                                             |
-| GET    | `/api/v1/price/today`    | All of today's prices with total cost                                          |
-| GET    | `/api/v1/price/tomorrow` | Tomorrow's prices (typically available after 12:00 UTC)                        |
-| GET    | `/api/v1/price/all`      | Today's prices plus tomorrow's when published; each day's own `available` flag |
-| GET    | `/api/v1/price/cheapest` | Cheapest contiguous window for a duration                                      |
-| GET    | `/api/v1/price/history`  | Historical total prices for an inclusive local date range                      |
-| GET    | `/api/v1/price/forecast` | FI-only price **estimate** for days Nord Pool has not published yet            |
-| GET    | `/api/public/spot`       | Public spot prices (no auth required)                                          |
-| GET    | `/health`                | Health check                                                                   |
+| Method | Endpoint                 | Description                                                                            |
+| ------ | ------------------------ | -------------------------------------------------------------------------------------- |
+| GET    | `/api/v1/price/now`      | Current total price with breakdown                                                     |
+| GET    | `/api/v1/price/today`    | All of today's prices with total cost                                                  |
+| GET    | `/api/v1/price/tomorrow` | Tomorrow's prices (typically available after 12:00 UTC)                                |
+| GET    | `/api/v1/price/all`      | All currently-known published prices in one list (today, plus tomorrow once published) |
+| GET    | `/api/v1/price/cheapest` | Cheapest contiguous window for a duration                                              |
+| GET    | `/api/v1/price/history`  | Historical total prices for an inclusive local date range                              |
+| GET    | `/api/v1/price/forecast` | FI-only price **estimate** for days Nord Pool has not published yet                    |
+| GET    | `/api/public/spot`       | Public spot prices (no auth required)                                                  |
+| GET    | `/health`                | Health check                                                                           |
 
 The web UI also uses session-protected `/api/v1/me/*` routes (settings, chart); these are part of the setup UI, not the API-key surface.
 
