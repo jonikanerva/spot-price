@@ -12,6 +12,7 @@ import {
   TotalPriceSchema,
   PriceWindowSchema,
   PriceListSchema,
+  PriceAllSchema,
   PublicSpotSchema,
   ErrorSchema,
   UserSettingsResponseSchema,
@@ -932,6 +933,152 @@ describe("price/history endpoint", () => {
   });
 });
 
+describe("price/all endpoint", () => {
+  let pool: Pool;
+
+  afterEach(async () => {
+    await closeDatabase(pool);
+  });
+
+  const setup = async (): Promise<ReturnType<typeof createTestApp>> => {
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    return createTestApp(pool);
+  };
+
+  const requestAll = async (
+    app: ReturnType<typeof createTestApp>,
+  ): Promise<Response> =>
+    app.request("/api/v1/price/all", {
+      headers: { Authorization: `Bearer ${TEST_API_KEY}` },
+    });
+
+  interface PriceAllBody {
+    today: {
+      available: boolean;
+      prices: readonly unknown[];
+      expectedAt?: string;
+    };
+    tomorrow: {
+      available: boolean;
+      prices: readonly unknown[];
+      expectedAt?: string;
+    };
+  }
+
+  it("returns 401 without an API key (wildcard middleware covers /all)", async () => {
+    const app = await setup();
+    const res = await app.request("/api/v1/price/all");
+    expect(res.status).toBe(401);
+  });
+
+  it("both days published: today and tomorrow available:true with full days", async () => {
+    const app = await setup();
+    const { today, tomorrow } = getHelsinkiDates();
+    await seedHourlyRange(pool, today, 0, 24, 40);
+    await seedHourlyRange(pool, tomorrow, 0, 24, 30);
+
+    const res = await requestAll(app);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceAllBody;
+
+    expect(PriceAllSchema.safeParse(body).success).toBe(true);
+    expect(body.today.available).toBe(true);
+    expect(body.tomorrow.available).toBe(true);
+    expect(body.today.prices.length).toBe(helsinkiDayHours(today));
+    expect(body.tomorrow.prices.length).toBe(helsinkiDayHours(tomorrow));
+  });
+
+  it("tomorrow unpublished: tomorrow available:false with expectedAt, today has no expectedAt", async () => {
+    const app = await setup();
+    const { today } = getHelsinkiDates();
+    // Only today is seeded — tomorrow has not been published yet.
+    await seedHourlyRange(pool, today, 0, 24, 50);
+
+    const res = await requestAll(app);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceAllBody;
+
+    expect(PriceAllSchema.safeParse(body).success).toBe(true);
+    expect(body.today.available).toBe(true);
+    expect(body.tomorrow.available).toBe(false);
+    expect(body.tomorrow.prices).toEqual([]);
+    // Tomorrow carries the publication hint; today never does.
+    expect(body.tomorrow.expectedAt).toBe("12:00 UTC");
+    expect("expectedAt" in body.today).toBe(false);
+  });
+
+  it("nothing published: both days available:false", async () => {
+    const app = await setup();
+    const res = await requestAll(app);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceAllBody;
+
+    expect(PriceAllSchema.safeParse(body).success).toBe(true);
+    expect(body.today.available).toBe(false);
+    expect(body.tomorrow.available).toBe(false);
+    expect(body.today.prices).toEqual([]);
+    expect(body.tomorrow.prices).toEqual([]);
+    // Empty today never gets an expectedAt hint (that is tomorrow-only).
+    expect("expectedAt" in body.today).toBe(false);
+    expect(body.tomorrow.expectedAt).toBe("12:00 UTC");
+  });
+
+  it("is a published-prices payload only — no forecast or flattened fields", async () => {
+    const app = await setup();
+    const { today } = getHelsinkiDates();
+    await seedHourlyRange(pool, today, 0, 24, 45);
+
+    const res = await requestAll(app);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // No forecast leaks in, and no flattened/parallel top-level shape.
+    expect("forecast" in body).toBe(false);
+    expect("entries" in body).toBe(false);
+    expect("tomorrowAvailable" in body).toBe(false);
+    expect("prices" in body).toBe(false);
+  });
+
+  it("today's first entry starts at Helsinki midnight (UTC below the edge)", async () => {
+    const app = await setup();
+    const { today } = getHelsinkiDates();
+    await seedHourlyRange(pool, today, 0, 24, 55);
+
+    const res = await requestAll(app);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      today: { prices: readonly { deliveryStart: string }[] };
+    };
+
+    const { startUtc } = getUtcRangeForLocalDate(today, HELSINKI_TZ);
+    const first = body.today.prices[0];
+    expect(first).toBeDefined();
+    if (first) {
+      expect(new Date(first.deliveryStart).getTime()).toBe(
+        new Date(startUtc).getTime(),
+      );
+    }
+  });
+
+  it("returns 404 when user settings are not found", async () => {
+    // Provide an API key row without a settings row so auth passes but the
+    // handler cannot resolve contract settings.
+    pool = await initTestDatabase();
+    await pool.query(
+      `INSERT INTO api_keys (id, user_id, key_plaintext) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id) DO NOTHING`,
+      ["key-1", TEST_USER_ID, TEST_API_KEY],
+    );
+    const app = createTestApp(pool);
+
+    const res = await requestAll(app);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("User settings not found");
+  });
+});
+
 describe("OpenAPI spec", () => {
   let pool: Pool;
 
@@ -956,11 +1103,12 @@ describe("OpenAPI spec", () => {
     expect(spec.info.title).toBe("Spot Price API");
     expect(spec.info.version).toBe("1.0.0");
 
-    // Verify all 8 migrated routes are present
+    // Verify all 9 migrated routes are present
     const paths = Object.keys(spec.paths);
     expect(paths).toContain("/api/v1/price/now");
     expect(paths).toContain("/api/v1/price/today");
     expect(paths).toContain("/api/v1/price/tomorrow");
+    expect(paths).toContain("/api/v1/price/all");
     expect(paths).toContain("/api/v1/price/cheapest");
     expect(paths).toContain("/api/v1/price/history");
     expect(paths).toContain("/api/public/spot");
