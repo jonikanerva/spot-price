@@ -110,14 +110,37 @@ export const getUtcRangeForLocalDate = (
 };
 
 /**
+ * Advance a YYYY-MM-DD label by one calendar day.
+ *
+ * Pure UTC calendar arithmetic on the label parts (same `Date.UTC` pattern as
+ * `getUtcRangeForLocalDate`): UTC has no DST, so adding 24h to a UTC-midnight
+ * instant always lands on the next calendar day regardless of any wall-clock
+ * transition in the target timezone. DST-immune by construction.
+ */
+const nextCalendarDay = (date: string): string =>
+  formatUtcDate(
+    new Date(
+      Date.UTC(
+        Number(date.slice(0, 4)),
+        Number(date.slice(5, 7)) - 1,
+        Number(date.slice(8, 10)),
+      ) +
+        24 * 60 * 60_000,
+    ),
+  );
+
+/**
  * Convert an inclusive local date span (fromDate..toDate, YYYY-MM-DD) + timezone
  * into a single UTC ISO range covering every delivery interval in those local days.
  *
  * The start is the UTC instant of `fromDate` midnight local; the end is the UTC
- * instant of the moment immediately after `toDate` ends local (i.e. `toDate`'s
- * `endUtc`). Each endpoint resolves its own UTC offset independently via
- * `getUtcRangeForLocalDate`, so a span crossing a DST transition stays correct
- * by construction (no shared offset is assumed across the span).
+ * instant of the *next* local midnight after `toDate` — i.e. the start of the day
+ * following `toDate`, resolved with that day's own UTC offset. Using the next
+ * day's start (rather than `toDate`'s hard +24h `endUtc`) keeps the span correct
+ * across a DST fall-back `toDate`, where the local day is 25h long: the old
+ * `endUtc` truncated the 25th hour. Each endpoint resolves its own UTC offset
+ * independently via `getUtcRangeForLocalDate`, so a span crossing any DST
+ * transition stays correct by construction (no shared offset across the span).
  */
 export const getUtcRangeForLocalDateSpan = (
   fromDate: string,
@@ -125,7 +148,7 @@ export const getUtcRangeForLocalDateSpan = (
   timeZone: string,
 ): { startUtc: string; endUtc: string } => ({
   startUtc: getUtcRangeForLocalDate(fromDate, timeZone).startUtc,
-  endUtc: getUtcRangeForLocalDate(toDate, timeZone).endUtc,
+  endUtc: getUtcRangeForLocalDate(nextCalendarDay(toDate), timeZone).startUtc,
 });
 
 // `Intl.DateTimeFormat` construction is comparatively expensive, but a given

@@ -320,7 +320,7 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
             command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/tomorrow',
           },
           {
-            title: 'All published prices (today + tomorrow)',
+            title: 'All published prices in one list',
             command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/all',
           },
           {

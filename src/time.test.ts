@@ -109,7 +109,7 @@ describe("getUtcRangeForLocalDateSpan", () => {
   it("resolves each endpoint's own offset across a spring-forward DST span", () => {
     // Span from before the 2026-03-29 spring-forward to after it.
     // from = 2026-03-20 (EET, +02:00): midnight = 2026-03-19 22:00 UTC
-    // to   = 2026-04-05 (EEST, +03:00): end     = 2026-04-05 21:00 UTC
+    // to   = 2026-04-05 (EEST, +03:00): span end = 2026-04-06 midnight = 2026-04-05 21:00 UTC
     // The +2 start offset and +3 end offset prove the span is not computed
     // from a single shared offset.
     const span = getUtcRangeForLocalDateSpan(
@@ -121,24 +121,29 @@ describe("getUtcRangeForLocalDateSpan", () => {
     expect(span.startUtc).toBe(
       getUtcRangeForLocalDate("2026-03-20", "Europe/Helsinki").startUtc,
     );
+    // End is the local midnight that STARTS the day after `to` (2026-04-06),
+    // not `to`'s hard +24h endUtc. For this normal 24h to-date they coincide.
     expect(span.endUtc).toBe(
-      getUtcRangeForLocalDate("2026-04-05", "Europe/Helsinki").endUtc,
+      getUtcRangeForLocalDate("2026-04-06", "Europe/Helsinki").startUtc,
     );
     // Explicit offsets: start at -02:00 (22:00 prev day), end at -03:00 (21:00).
     expect(span.startUtc).toBe("2026-03-19T22:00:00.000Z");
     expect(span.endUtc).toBe("2026-04-05T21:00:00.000Z");
   });
 
-  it("equals getUtcRangeForLocalDate for a single-day span (from === to)", () => {
+  it("single-day span (from === to) ends at the next day's local midnight", () => {
     const single = getUtcRangeForLocalDateSpan(
       "2026-02-25",
       "2026-02-25",
       "Europe/Helsinki",
     );
     const day = getUtcRangeForLocalDate("2026-02-25", "Europe/Helsinki");
+    const nextDay = getUtcRangeForLocalDate("2026-02-26", "Europe/Helsinki");
 
     expect(single.startUtc).toBe(day.startUtc);
-    expect(single.endUtc).toBe(day.endUtc);
+    // Span end is the next day's midnight start; for this normal 24h day that
+    // equals the single-date endUtc, but the span no longer defers to it.
+    expect(single.endUtc).toBe(nextDay.startUtc);
   });
 
   it("is not Helsinki-hard-coded — works for Europe/Oslo (UTC+1 winter)", () => {
@@ -153,5 +158,42 @@ describe("getUtcRangeForLocalDateSpan", () => {
 
     expect(startUtc).toBe("2026-01-31T23:00:00.000Z");
     expect(endUtc).toBe("2026-02-03T23:00:00.000Z");
+  });
+
+  it("keeps the 25th hour of a fall-back to-date (span crossing the transition)", () => {
+    // Helsinki fall-back is 2026-10-25 (clocks 04:00 EEST -> 03:00 EET), a 25h
+    // local day. Span 2026-10-24 .. 2026-10-25:
+    // start = 2026-10-24 00:00 (EEST, +03:00) = 2026-10-23 21:00 UTC
+    // end   = 2026-10-26 00:00 (EET,  +02:00) = 2026-10-25 22:00 UTC  (49h span)
+    // The old +24h-of-to-date endUtc was 2026-10-25 21:00 UTC, dropping the 25th hour.
+    const { startUtc, endUtc } = getUtcRangeForLocalDateSpan(
+      "2026-10-24",
+      "2026-10-25",
+      "Europe/Helsinki",
+    );
+
+    expect(startUtc).toBe("2026-10-23T21:00:00.000Z");
+    expect(endUtc).toBe("2026-10-25T22:00:00.000Z");
+    const spanHours =
+      (new Date(endUtc).getTime() - new Date(startUtc).getTime()) / 3_600_000;
+    expect(spanHours).toBe(49);
+  });
+
+  it("a single fall-back day span is 25h, not the old buggy 24h", () => {
+    // from === to === 2026-10-25 (the 25h fall-back day):
+    // start = 2026-10-25 00:00 (EEST, +03:00) = 2026-10-24 21:00 UTC
+    // end   = 2026-10-26 00:00 (EET,  +02:00) = 2026-10-25 22:00 UTC  (25h)
+    // Before Option A the end was 2026-10-25 21:00 UTC (24h) — one hour short.
+    const { startUtc, endUtc } = getUtcRangeForLocalDateSpan(
+      "2026-10-25",
+      "2026-10-25",
+      "Europe/Helsinki",
+    );
+
+    expect(startUtc).toBe("2026-10-24T21:00:00.000Z");
+    expect(endUtc).toBe("2026-10-25T22:00:00.000Z");
+    const spanHours =
+      (new Date(endUtc).getTime() - new Date(startUtc).getTime()) / 3_600_000;
+    expect(spanHours).toBe(25);
   });
 });
