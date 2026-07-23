@@ -203,6 +203,13 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
           '      Authorization: "' + auth + '"',
           '    content_type: "application/json"',
           '',
+          '  spot_price_all:',
+          '    url: "' + baseUrl + '/api/v1/price/all"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
           '  spot_price_cheapest:',
           '    url: >-',
           '      ' + baseUrl + '/api/v1/price/cheapest?duration={{ duration }}{% if start is defined %}&startTime={{ start | urlencode }}{% endif %}{% if end is defined %}&endTime={{ end | urlencode }}{% endif %}{% if max_price is defined %}&maxPrice={{ max_price }}{% endif %}',
@@ -311,6 +318,10 @@ export const renderHomePageClientScript = (areaTimezoneMap: string): string => `
           {
             title: 'Tomorrow prices',
             command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/tomorrow',
+          },
+          {
+            title: 'All published prices (today + tomorrow)',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/all',
           },
           {
             title: 'Price history for a date range',
