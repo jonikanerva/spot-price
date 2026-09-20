@@ -60,6 +60,7 @@ describe("migration system", () => {
     expect(tables).toContain("fingrid_actuals");
     expect(tables).toContain("weather_forecasts");
     expect(tables).toContain("fingrid_forecasts");
+    expect(tables).toContain("weather_daily_forecasts");
     // The old "*_series" names must be gone after the rename.
     expect(tables).not.toContain("fingrid_series");
     expect(tables).not.toContain("weather_series");
@@ -71,7 +72,7 @@ describe("migration system", () => {
       "SELECT version, name FROM _migrations ORDER BY version",
     );
 
-    expect(migrations.length).toBe(6);
+    expect(migrations.length).toBe(7);
     expect(migrations[0]?.version).toBe(1);
     expect(migrations[0]?.name).toBe("baseline");
     // 002/004 keep their original recorded names (the files are NOT renamed —
@@ -86,6 +87,8 @@ describe("migration system", () => {
     expect(migrations[4]?.name).toBe("fingrid_forecasts");
     expect(migrations[5]?.version).toBe(6);
     expect(migrations[5]?.name).toBe("normalize_table_names");
+    expect(migrations[6]?.version).toBe(7);
+    expect(migrations[6]?.name).toBe("weather_daily_forecasts");
   });
 
   it("is idempotent — running twice applies no extra migrations", async () => {
@@ -95,7 +98,7 @@ describe("migration system", () => {
     const result = await runMigrations(pool);
 
     expect(result.applied.length).toBe(0);
-    expect(result.total).toBe(6);
+    expect(result.total).toBe(7);
   });
 });
 
