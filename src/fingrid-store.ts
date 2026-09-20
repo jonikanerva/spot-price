@@ -37,10 +37,11 @@ import type { FingridRecord, ForecastVintageRecord } from "./types.js";
  * check must never read it as "when did we last see this row".
  * `STACK.md` §5 records the same.
  *
- * `price-store.ts` deliberately keeps its unguarded upsert: it carries ~4.6 % of
- * the write churn, but `fetch-job.ts` calls its writer for today's prices
- * OUTSIDE a try/catch, so a change there would put the authoritative price path
- * at risk for a small gain.
+ * `price-store.ts` deliberately keeps its unguarded upsert. It carries only
+ * ~1.4 % to 4.1 % of the write churn (21 delivery areas × 96 quarters ≈ 2 016
+ * rows per full store, against ~143 000 rows a day here), while `fetch-job.ts`
+ * calls its writer for today's prices OUTSIDE a try/catch — so a change there
+ * would put the authoritative price path at risk for a small gain.
  *
  * Returns the number of records HANDED IN, not the number of rows actually
  * written. The guard must NOT leak into this count: `stored` means "this many
