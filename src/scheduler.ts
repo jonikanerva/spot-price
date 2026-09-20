@@ -4,6 +4,7 @@ import { runFetchJob } from "./fetch-job.js";
 import { runForecastFetchJob } from "./forecast-job.js";
 import { runWeatherFetchJob } from "./weather-job.js";
 import { formatUtcDate, addDays } from "./time.js";
+import type { WeatherDailyJobSummary } from "./types.js";
 
 /**
  * Run a fetch job and return whether tomorrow's data is available.
@@ -87,6 +88,18 @@ export const runStartupForecastFetch = (
 };
 
 /**
+ * Daily-block suffix for the weather log line (issue #93). Kept visible so a
+ * daily collection that silently stops — the failure mode the issue is built
+ * around — shows up in the operational log instead of only in a return value.
+ */
+const dailyNote = (daily: WeatherDailyJobSummary): string => {
+  const degradedPoints = daily.failures.map((f) => f.pointId).join(", ");
+  const suffix =
+    daily.failures.length > 0 ? `, daily degraded: ${degradedPoints}` : "";
+  return `; daily rows ${String(daily.stored)}${suffix}`;
+};
+
+/**
  * Run the OpenWeatherMap weather data-collection fetch for the FI forecast
  * (issue #73, Phase 1).
  *
@@ -111,17 +124,17 @@ const safeWeatherFetch = async (
     const result = await runWeatherFetchJob(pool, apiKey);
     if (result.status === "ok") {
       console.log(
-        `[scheduler] ${label}: stored ${String(result.stored)} weather rows, pruned ${String(result.pruned)}`,
+        `[scheduler] ${label}: stored ${String(result.stored)} weather rows, pruned ${String(result.pruned)}${dailyNote(result.daily)}`,
       );
     } else if (result.status === "partial") {
       const failed = result.failures.map((f) => f.pointId).join(", ");
       console.warn(
-        `[scheduler] ${label}: stored ${String(result.stored)} weather rows, pruned ${String(result.pruned)}; degraded points: ${failed}`,
+        `[scheduler] ${label}: stored ${String(result.stored)} weather rows, pruned ${String(result.pruned)}${dailyNote(result.daily)}; degraded points: ${failed}`,
       );
     } else {
       const failed = result.failures.map((f) => f.pointId).join(", ");
       console.warn(
-        `[scheduler] ${label}: weather degraded — all points failed: ${failed}`,
+        `[scheduler] ${label}: weather degraded — all points failed: ${failed}${dailyNote(result.daily)}`,
       );
     }
   } catch (error) {

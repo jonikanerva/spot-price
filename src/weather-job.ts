@@ -1,7 +1,9 @@
 import type { Pool } from "pg";
 import { fetchWeather, WEATHER_POINTS } from "./weather.js";
 import {
+  pruneWeatherDailyRecordsBefore,
   pruneWeatherRecordsBefore,
+  storeWeatherDailyRecords,
   storeWeatherRecords,
 } from "./weather-store.js";
 import type { WeatherFetchJobResult, WeatherPointFailure } from "./types.js";
@@ -18,6 +20,13 @@ import type { WeatherFetchJobResult, WeatherPointFailure } from "./types.js";
  * discard the other point's irreversible issue-time data — that issuance can
  * never be re-fetched once the hour passes. So a failed point is recorded in
  * `failures` and the run reports `partial`; it does not abort the whole run.
+ *
+ * The DAILY block of the same response (issue #93) is stored on the same
+ * principle, one level deeper: it is written after the hourly rows, in its own
+ * transaction and its own try/catch, and its failures are reported in a separate
+ * `daily` summary. `status`, `stored` and `pruned` remain statements about the
+ * HOURLY collection alone. No extra upstream call is made — the daily block
+ * rides along in the response the job already fetches.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -47,21 +56,61 @@ export const runWeatherFetchJob = async (
   let stored = 0;
   let successes = 0;
   const failures: WeatherPointFailure[] = [];
+  let dailyStored = 0;
+  const dailyFailures: WeatherPointFailure[] = [];
 
   for (const point of WEATHER_POINTS) {
     const result = await fetchWeather({ apiKey, point, issuedAt: now });
-    if (!result.ok) {
+
+    // HOURLY first, and unchanged: a degraded point is recorded in `failures`
+    // and never aborts the run.
+    if (result.ok) {
+      stored += await storeWeatherRecords(pool, result.records);
+      successes += 1;
+    } else {
       failures.push({ pointId: point.id, reason: result.reason });
-      continue;
     }
-    stored += await storeWeatherRecords(pool, result.records);
-    successes += 1;
+
+    // Daily block (issue #93) — AFTER the hourly store, in its OWN try/catch and
+    // its OWN transaction. The hourly rows are already committed at this point,
+    // so nothing here can discard them. `successes` deliberately counts HOURLY
+    // successes only, so the "every point failed → do not prune" guard below
+    // keeps its meaning, and a daily failure never downgrades `status`.
+    //
+    // This runs on BOTH branches, NOT after an early `continue` on the hourly
+    // failure: the two blocks are parsed independently, so an hourly schema
+    // drift can leave a perfectly valid daily block. Skipping it would discard
+    // those rows irreversibly (see the note above about re-fetching) and,
+    // worse, invisibly — `daily.failures` would stay empty while `daily.stored`
+    // silently fell to zero. The isolation holds in both directions.
+    try {
+      if (result.daily.ok) {
+        dailyStored += await storeWeatherDailyRecords(
+          pool,
+          result.daily.records,
+        );
+      } else {
+        dailyFailures.push({ pointId: point.id, reason: result.daily.reason });
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "unknown error";
+      dailyFailures.push({ pointId: point.id, reason });
+      console.warn(
+        `[weather-job] daily store degraded for ${point.id}: ${reason}`,
+      );
+    }
   }
 
-  // Every point failed: nothing was stored, so do not prune either — report a
-  // total failure and leave the table untouched.
+  const daily = { stored: dailyStored, failures: dailyFailures };
+
+  // Every HOURLY point failed: no fresh hourly data arrived, so do not prune
+  // either — report a total failure and leave the tables untouched. The daily
+  // summary still rides along: daily rows can exist on this branch (an hourly
+  // schema drift with a valid daily block), and a run that stored them must say
+  // so. Not pruning for one hour costs nothing; pruning during an upstream
+  // outage could cost history.
   if (successes === 0) {
-    return { status: "failed", failures };
+    return { status: "failed", failures, daily };
   }
 
   // Prune issuances older than the retention window so the table stays bounded
@@ -71,8 +120,19 @@ export const runWeatherFetchJob = async (
   ).toISOString();
   const pruned = await pruneWeatherRecordsBefore(pool, pruneCutoff);
 
-  if (failures.length > 0) {
-    return { status: "partial", stored, pruned, failures };
+  // Same cutoff, same retention window, same point in the run — the daily table
+  // shares `WEATHER_RETENTION_DAYS` and gets no constant of its own. Isolated
+  // like the daily store: a prune failure must not lose the run's result, and it
+  // cannot lose data, because every row it could touch is already committed.
+  try {
+    await pruneWeatherDailyRecordsBefore(pool, pruneCutoff);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "unknown error";
+    console.warn(`[weather-job] daily retention prune degraded: ${reason}`);
   }
-  return { status: "ok", stored, pruned };
+
+  if (failures.length > 0) {
+    return { status: "partial", stored, pruned, failures, daily };
+  }
+  return { status: "ok", stored, pruned, daily };
 };

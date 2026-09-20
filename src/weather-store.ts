@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import type { WeatherRecord } from "./types.js";
+import type { WeatherDailyRecord, WeatherRecord } from "./types.js";
 
 /**
  * Persistence for the public OpenWeatherMap weather forecasts (read off the
@@ -120,6 +120,90 @@ export const pruneWeatherRecordsBefore = async (
 ): Promise<number> => {
   const result = await pool.query(
     `DELETE FROM weather_forecasts WHERE issued_at < $1`,
+    [beforeUtc],
+  );
+  return result.rowCount ?? 0;
+};
+
+// ---------------------------------------------------------------------------
+// DAILY block of the same One Call response (issue #93)
+//
+// Same append-only-per-issuance contract as the hourly table above, in its OWN
+// table and — critically — its OWN transaction. The daily write must never
+// share a `BEGIN`/`COMMIT` with the hourly write: a daily failure would then
+// roll back the hourly rows, and an issuance can never be re-fetched once its
+// hour has passed.
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert daily weather records, append-only per issuance (idempotent via
+ * `ON CONFLICT (point_id, issued_at, target_date) DO NOTHING`). Returns the
+ * number of rows actually inserted (re-running the same issuance inserts none).
+ *
+ * Never convert this to `DO UPDATE` — see the warning block in migration 007.
+ */
+export const storeWeatherDailyRecords = async (
+  pool: Pool,
+  records: readonly WeatherDailyRecord[],
+): Promise<number> => {
+  if (records.length === 0) {
+    return 0;
+  }
+
+  let inserted = 0;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const r of records) {
+      const result = await client.query(
+        `INSERT INTO weather_daily_forecasts
+           (point_id, issued_at, target_date, target_dt,
+            temp_morn, temp_day, temp_eve, temp_night, temp_min, temp_max,
+            clouds, uvi, sunrise, sunset)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         ON CONFLICT (point_id, issued_at, target_date) DO NOTHING`,
+        [
+          r.pointId,
+          r.issuedAt,
+          r.targetDate,
+          r.targetDt,
+          r.tempMorn,
+          r.tempDay,
+          r.tempEve,
+          r.tempNight,
+          r.tempMin,
+          r.tempMax,
+          r.clouds,
+          r.uvi,
+          r.sunrise,
+          r.sunset,
+        ],
+      );
+      inserted += result.rowCount ?? 0;
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return inserted;
+};
+
+/**
+ * Delete daily rows whose issuance is older than `beforeUtc`. Same retention
+ * window and same `issued_at` unit as `pruneWeatherRecordsBefore` — the daily
+ * table shares `WEATHER_RETENTION_DAYS` and gets no constant of its own.
+ * Returns the number of rows pruned.
+ */
+export const pruneWeatherDailyRecordsBefore = async (
+  pool: Pool,
+  beforeUtc: string,
+): Promise<number> => {
+  const result = await pool.query(
+    `DELETE FROM weather_daily_forecasts WHERE issued_at < $1`,
     [beforeUtc],
   );
   return result.rowCount ?? 0;

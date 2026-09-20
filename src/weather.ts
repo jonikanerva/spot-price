@@ -1,5 +1,10 @@
 import { z } from "zod";
-import type { WeatherFetchResult, WeatherRecord } from "./types.js";
+import type {
+  WeatherDailyRecord,
+  WeatherDailyResult,
+  WeatherFetchResult,
+  WeatherRecord,
+} from "./types.js";
 
 /**
  * OpenWeatherMap One Call API 3.0 fetch boundary for the FI weather collection
@@ -19,6 +24,11 @@ import type { WeatherFetchResult, WeatherRecord } from "./types.js";
  * malformed body yields an empty `records` array plus a `reason` — it NEVER
  * throws, so a weather problem can never break the authoritative Nord Pool
  * price path.
+ *
+ * Since issue #93 the SAME response also carries the DAILY block, parsed
+ * INDEPENDENTLY of the hourly one so a daily schema drift can never discard the
+ * hourly rows. The call count is unchanged at 48/day: the subscription is
+ * billed per call, and `exclude` only shapes the response.
  *
  * The API key is passed in as a parameter so this module does not touch
  * `process.env` / `env.ts` — the boundary stays a pure function of (key, point,
@@ -68,12 +78,77 @@ const HourlyEntrySchema = z.object({
   wind_deg: z.number(),
 });
 
-/** Boundary schema for the One Call 3.0 response envelope. */
-const OneCallResponseSchema = z.object({
+/** Boundary schema for the One Call 3.0 response envelope (HOURLY block). */
+const OneCallHourlySchema = z.object({
   hourly: z.array(HourlyEntrySchema),
 });
 
-type ParsedOneCall = z.infer<typeof OneCallResponseSchema>;
+type ParsedOneCallHourly = z.infer<typeof OneCallHourlySchema>;
+
+/**
+ * Largest absolute UNIX epoch SECONDS value that `new Date(...)` can represent:
+ * the ECMA-262 time range is ±8.64e15 ms, so ±8.64e12 s.
+ *
+ * `z.number()` alone rejects `NaN` and `Infinity` but accepts any other finite
+ * number, so a value like `1e13` would pass the schema and then make
+ * `toISOString()` throw `RangeError: Invalid time value` in the MAPPING — inside
+ * the shared `try` of `fetchWeather`, which would degrade the HOURLY result and
+ * discard rows that parsed perfectly. Bounding the epoch fields here keeps that
+ * anomaly inside the daily-only degrade path, where it belongs.
+ */
+const MAX_EPOCH_SECONDS = 8.64e12;
+
+const EpochSecondsSchema = z
+  .number()
+  .min(-MAX_EPOCH_SECONDS)
+  .max(MAX_EPOCH_SECONDS);
+
+/**
+ * Boundary schema for a single One Call 3.0 DAILY entry (issue #93).
+ *
+ * Collected: all six `temp` sub-fields, `clouds`, `uvi`, and the solar bounds
+ * `sunrise` / `sunset`. The solar bounds are what make the daily scalars usable
+ * at all: `clouds` and `uvi` are ONE value for the whole day, and PR #72
+ * established that a per-day constant is rank-neutral for the within-day rank
+ * metrics the product is judged on. Bounded by `sunrise`/`sunset` they become a
+ * within-day shape instead — a closed-form diurnal curve, which is what
+ * `VISION.md → The forecast` allows.
+ *
+ * Deliberately NOT collected: `wind_speed` / `wind_deg` (Fingrid dataset 245
+ * already forecasts wind power at 15-minute resolution over ~72 h for the whole
+ * national fleet), `feels_like` (a transform of other fields — a model output,
+ * not an observation), and `pop` / `rain` / `snow` / `wind_gust` / `pressure` /
+ * `humidity` / `dew_point` / `summary` / the moon fields.
+ *
+ * `sunrise` / `sunset` are OPTIONAL because One Call omits them at polar
+ * latitudes during midnight sun and polar night. Helsinki and Vaasa never hit
+ * that, but `WEATHER_POINTS` is documented as extensible, and a schema that
+ * assumed the fields would break on the first northern point. Like the hourly
+ * schema this is NOT `.strict()`: unknown fields and a changed array length
+ * must never fail the parse.
+ */
+const DailyEntrySchema = z.object({
+  dt: EpochSecondsSchema,
+  sunrise: EpochSecondsSchema.optional(),
+  sunset: EpochSecondsSchema.optional(),
+  temp: z.object({
+    morn: z.number(),
+    day: z.number(),
+    eve: z.number(),
+    night: z.number(),
+    min: z.number(),
+    max: z.number(),
+  }),
+  clouds: z.number(),
+  uvi: z.number(),
+});
+
+/** Boundary schema for the One Call 3.0 response envelope (DAILY block). */
+const OneCallDailySchema = z.object({
+  daily: z.array(DailyEntrySchema),
+});
+
+type ParsedOneCallDaily = z.infer<typeof OneCallDailySchema>;
 
 export interface WeatherFetchParams {
   readonly apiKey: string;
@@ -91,7 +166,10 @@ const buildUrl = (apiKey: string, point: WeatherPoint): string => {
   url.searchParams.set("lon", String(point.lon));
   url.searchParams.set("appid", apiKey);
   url.searchParams.set("units", "metric");
-  url.searchParams.set("exclude", "current,minutely,daily,alerts");
+  // `daily` is NOT excluded since issue #93: the daily block rides along in the
+  // SAME response. The subscription is "One Call by Call" — billed per CALL, not
+  // per block — so collecting it adds ZERO requests and keeps the rate at 48/day.
+  url.searchParams.set("exclude", "current,minutely,alerts");
   return url.toString();
 };
 
@@ -110,7 +188,7 @@ const issuanceHourIso = (issuedAt: Date): string => {
 export const hourlyToRecords = (
   point: WeatherPoint,
   issuedAt: Date,
-  parsed: ParsedOneCall,
+  parsed: ParsedOneCallHourly,
 ): readonly WeatherRecord[] => {
   const issuedAtIso = issuanceHourIso(issuedAt);
   return parsed.hourly.map((h) => ({
@@ -125,16 +203,104 @@ export const hourlyToRecords = (
   }));
 };
 
-const degraded = (reason: string): WeatherFetchResult => ({
+/** UNIX epoch seconds to a UTC ISO instant; `undefined` stays absent as null. */
+const epochSecondsToIso = (seconds: number | undefined): string | null =>
+  seconds === undefined ? null : new Date(seconds * 1000).toISOString();
+
+/**
+ * Pure mapping from a parsed One Call DAILY block to daily records (issue #93).
+ * Network-free and unit-testable.
+ *
+ * `targetDate` is the UTC CALENDAR DATE of `dt` — the first ten characters of
+ * the UTC ISO instant. No `Intl`, no timezone lookup, no local-time arithmetic:
+ * `STACK.md §7` forbids that below the response boundary, and `daily[].dt` is
+ * local noon at the point, so a "day" defined by local reasoning would drag a
+ * timezone (and the DST fall-back) into storage. Deriving in UTC is exact for
+ * every point between UTC−11 and UTC+11, which covers all of FI with a wide
+ * margin. The raw `dt` is stored alongside as `targetDt`, so the derivation
+ * stays recomputable without re-collecting.
+ */
+export const dailyToRecords = (
+  point: WeatherPoint,
+  issuedAt: Date,
+  parsed: ParsedOneCallDaily,
+): readonly WeatherDailyRecord[] => {
+  const issuedAtIso = issuanceHourIso(issuedAt);
+  return parsed.daily.map((d) => {
+    const targetDt = new Date(d.dt * 1000).toISOString();
+    return {
+      pointId: point.id,
+      issuedAt: issuedAtIso,
+      targetDate: targetDt.slice(0, 10),
+      targetDt,
+      tempMorn: d.temp.morn,
+      tempDay: d.temp.day,
+      tempEve: d.temp.eve,
+      tempNight: d.temp.night,
+      tempMin: d.temp.min,
+      tempMax: d.temp.max,
+      clouds: d.clouds,
+      uvi: d.uvi,
+      sunrise: epochSecondsToIso(d.sunrise),
+      sunset: epochSecondsToIso(d.sunset),
+    };
+  });
+};
+
+const dailyDegraded = (reason: string): WeatherDailyResult => ({
   ok: false,
   records: [],
   reason,
 });
 
 /**
- * Fetch the One Call 3.0 hourly forecast for a single point. Always resolves;
+ * Parse the DAILY block of an already-fetched body, INDEPENDENTLY of the hourly
+ * parse (issue #93). Two separate `safeParse` calls over the same body is the
+ * load-bearing shape: folding `daily` into the hourly schema would mean one
+ * deviating daily entry fails the whole parse, so the point's HOURLY rows are
+ * discarded — and `weather-job.ts` records that an issuance can never be
+ * re-fetched once its hour has passed. The failure would also look like ordinary
+ * per-point degradation rather than a regression.
+ *
+ * No `.catch()` default and no coercion: a schema drift must surface as a
+ * degraded daily result with a reason, never be silently papered over. The
+ * try/catch around the MAPPING is not such a default — it reports the error
+ * message as the degrade reason. It is a structural guarantee that NOTHING on
+ * the daily path can throw inside the shared `try` of `fetchWeather`, where a
+ * throw would degrade the hourly result and discard rows that parsed fine.
+ * `EpochSecondsSchema` already removes the one known way to get there
+ * (`RangeError` from an out-of-range epoch); this keeps the guarantee true for
+ * any future mapping change instead of resting on an argument.
+ */
+const parseDaily = (
+  point: WeatherPoint,
+  issuedAt: Date,
+  body: unknown,
+): WeatherDailyResult => {
+  const parsed = OneCallDailySchema.safeParse(body);
+  if (!parsed.success) {
+    return dailyDegraded("OpenWeatherMap daily block failed schema validation");
+  }
+  try {
+    return { ok: true, records: dailyToRecords(point, issuedAt, parsed.data) };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "unknown error";
+    return dailyDegraded(`OpenWeatherMap daily block failed mapping: ${msg}`);
+  }
+};
+
+const degraded = (reason: string): WeatherFetchResult => ({
+  ok: false,
+  records: [],
+  reason,
+  daily: dailyDegraded(reason),
+});
+
+/**
+ * Fetch the One Call 3.0 forecast for a single point — the hourly block and,
+ * since issue #93, the daily block from the same response. Always resolves;
  * failures are reported via the degraded branch of the tagged union and never
- * thrown.
+ * thrown. The two blocks degrade independently.
  */
 export const fetchWeather = async (
   params: WeatherFetchParams,
@@ -162,15 +328,22 @@ export const fetchWeather = async (
       );
     }
 
+    // ONE body, TWO independent parses (issue #93) — see `parseDaily`.
     const body: unknown = await response.json();
-    const parsed = OneCallResponseSchema.safeParse(body);
+    const daily = parseDaily(params.point, params.issuedAt, body);
+
+    const parsed = OneCallHourlySchema.safeParse(body);
     if (!parsed.success) {
-      return degraded("OpenWeatherMap response failed schema validation");
+      return {
+        ...degraded("OpenWeatherMap response failed schema validation"),
+        daily,
+      };
     }
 
     return {
       ok: true,
       records: hourlyToRecords(params.point, params.issuedAt, parsed.data),
+      daily,
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {

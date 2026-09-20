@@ -111,40 +111,120 @@ export interface WeatherRecord {
 }
 
 /**
+ * One issued OpenWeatherMap DAILY weather forecast, normalised to our domain
+ * (issue #93). `issuedAt` is the issuance hour, as for `WeatherRecord`.
+ *
+ * `targetDate` is the UTC CALENDAR DATE (`YYYY-MM-DD`) of `targetDt`, and
+ * `targetDt` is the raw upstream `dt` kept as provenance so the date derivation
+ * stays recomputable without re-collecting. The date is derived in UTC only —
+ * `STACK.md §7` forbids local-time arithmetic below the response boundary — so
+ * for a collection point east of UTC+11 or west of UTC−11 the derived date could
+ * differ from the point's local calendar day. Every point in `WEATHER_POINTS`
+ * is FI, far inside that range.
+ *
+ * `sunrise` / `sunset` are nullable on purpose: One Call omits them at polar
+ * latitudes during midnight sun and polar night. Public weather data, not user
+ * data (`VISION.md → Persistence and Privacy Posture`).
+ */
+export interface WeatherDailyRecord {
+  readonly pointId: string;
+  readonly issuedAt: string;
+  readonly targetDate: string;
+  readonly targetDt: string;
+  readonly tempMorn: number;
+  readonly tempDay: number;
+  readonly tempEve: number;
+  readonly tempNight: number;
+  readonly tempMin: number;
+  readonly tempMax: number;
+  readonly clouds: number;
+  readonly uvi: number;
+  readonly sunrise: string | null;
+  readonly sunset: string | null;
+}
+
+/**
+ * Outcome of parsing the DAILY block of one One Call response (issue #93).
+ * Tagged separately from the hourly outcome, and nested inside
+ * `WeatherFetchResult` rather than flattened into parallel booleans, because
+ * the two blocks are parsed INDEPENDENTLY: a daily-schema drift must degrade
+ * only itself and leave the hourly records untouched, since an issuance can
+ * never be re-fetched once its hour has passed.
+ */
+export type WeatherDailyResult =
+  | { readonly ok: true; readonly records: readonly WeatherDailyRecord[] }
+  | {
+      readonly ok: false;
+      readonly records: readonly WeatherDailyRecord[];
+      readonly reason: string;
+    };
+
+/**
  * Result of a weather fetch for a single point. Tagged union over
  * success/degraded so the caller never inspects parallel booleans: a failure
  * (timeout, auth, parse) yields an empty `records` plus a `reason`, and never
  * throws — a weather problem can never reach the authoritative price path.
+ *
+ * `daily` carries the independently-parsed daily block (issue #93) on BOTH
+ * branches: a transport failure degrades both, while a schema failure in one
+ * block leaves the other intact.
  */
 export type WeatherFetchResult =
-  | { readonly ok: true; readonly records: readonly WeatherRecord[] }
+  | {
+      readonly ok: true;
+      readonly records: readonly WeatherRecord[];
+      readonly daily: WeatherDailyResult;
+    }
   | {
       readonly ok: false;
       readonly records: readonly WeatherRecord[];
       readonly reason: string;
+      readonly daily: WeatherDailyResult;
     };
+
+/**
+ * Daily-block summary of one weather job run (issue #93). Kept OUTSIDE the
+ * `status` tag on purpose: `status` stays a statement about the HOURLY
+ * collection, so the "every point failed → do not prune" guard keeps its
+ * meaning. A daily failure never downgrades an hourly success.
+ */
+export interface WeatherDailyJobSummary {
+  /** Daily rows inserted this run (append-only per issuance). */
+  readonly stored: number;
+  /** Points whose daily block degraded, and why. */
+  readonly failures: readonly WeatherPointFailure[];
+}
 
 /**
  * Outcome of the hourly weather fetch job across all configured points. Tagged
  * by completeness so the caller distinguishes full success / partial (some
  * points degraded) / total failure without throwing. `failures` names the
- * points that degraded and why; `stored`/`pruned` are aggregate row counts.
+ * points that degraded and why; `stored`/`pruned` are aggregate row counts of
+ * the HOURLY collection, and `daily` reports the daily block separately.
  */
 export type WeatherFetchJobResult =
   | {
       readonly status: "ok";
       readonly stored: number;
       readonly pruned: number;
+      readonly daily: WeatherDailyJobSummary;
     }
   | {
       readonly status: "partial";
       readonly stored: number;
       readonly pruned: number;
       readonly failures: readonly WeatherPointFailure[];
+      readonly daily: WeatherDailyJobSummary;
     }
   | {
       readonly status: "failed";
       readonly failures: readonly WeatherPointFailure[];
+      /**
+       * Present on this branch too: the daily block is parsed independently, so
+       * an hourly schema drift can leave valid daily rows even when EVERY point
+       * fails on the hourly side.
+       */
+      readonly daily: WeatherDailyJobSummary;
     };
 
 /** A single point's degraded outcome within a weather fetch job run. */
