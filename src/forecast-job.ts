@@ -64,10 +64,17 @@ export const RETENTION_DAYS = 730;
  * table has named consumers with shorter horizons: #79's lead-time ladder needs
  * only days of vintages, and the #80/#81 vintage-correct backtest fits over the
  * ~30-day window and validates across a single seasonal cycle. 180 days covers
- * that with margin while keeping the footprint small (2 forecast datasets ×
- * 96 quarters/day × 24 issuances/day × 180 days is bounded and trivial on
- * Railway, VISION data-footprint principle). Reusing 730 here would be
+ * that with margin while keeping the footprint small. Reusing 730 here would be
  * cargo-culting the sibling's number, so it is set independently.
+ *
+ * SIZE (corrected in issue #90). The earlier estimate here — "2 datasets ×
+ * 96 quarters/day × 24 issuances/day × 180 days" — assumed an issuance archives
+ * ONE day of targets. It archived the whole 34-day fetch window, so the estimate
+ * was ~34× too small: 6 528 rows/issuance, ~28.2 M rows over 180 days, ~4.2–5.6
+ * GB against a 5 GB volume. `VINTAGE_BACKFILL_HOURS` (`fingrid-store.ts`) now
+ * bounds an issuance to its future targets plus 6 h of backfill, so the rate is
+ * ~624 rows/issuance ≈ 15 k rows/day ≈ 2.7 M rows over 180 days (VISION
+ * data-footprint principle).
  */
 export const VINTAGE_RETENTION_DAYS = 180;
 
@@ -129,8 +136,10 @@ export const runForecastFetchJob = async (
   // in its OWN try/catch and its OWN transaction. Per STACK §9 the forecast path
   // must never affect the authoritative actuals upsert above: a vintage failure
   // here degrades (logged + reported) and can never roll back or abort step 1.
-  // `storeFingridForecastVintages` filters to 245/165 internally, so passing the
-  // full result is safe. `issuedAt` is the job's `now`, hour-truncated to UTC (a
+  // `storeFingridForecastVintages` filters internally — to 245/165, and (issue
+  // #90) to targets no older than `VINTAGE_BACKFILL_HOURS` before the issuance —
+  // so passing the full 34-day fetch result is safe and archives only the
+  // forecast part of it. `issuedAt` is the job's `now`, hour-truncated to UTC (a
   // fetch-time proxy for true issuance, ±1h of jitter) so re-runs within the
   // same hour stay idempotent against the (dataset_id, issued_at, start_time) PK.
   const issuedAt = new Date(

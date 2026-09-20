@@ -52,7 +52,21 @@ export const VINTAGE_DATASET_IDS: readonly number[] = [
  * mid-horizon forecast. Inherits the ±1h `issued_at` fetch-time-proxy
  * uncertainty (migration 005), so 2h ≈ "the last issuance or two before/after
  * delivery". A negative lead (issuance postdates delivery) is also admissible —
- * that is the settled value, the best possible reference.
+ * that issuance is the closest thing to a settled value, so it is the best
+ * available reference.
+ *
+ * Since issue #90 the archive bounds how negative that lead can get: a target is
+ * archived only while it stays within `VINTAGE_BACKFILL_HOURS` (6 h) of the
+ * issuance, so post-delivery references now run 0…−6 h instead of arbitrarily
+ * far past delivery. Under the normal hourly cadence that still leaves every
+ * target a reference well inside this 2 h gate. The exception is an outage
+ * longer than `VINTAGE_BACKFILL_HOURS` that spans delivery: the target is then
+ * archived only by issuances from BEFORE delivery, whose lead can exceed 2 h, so
+ * `classifyTarget` excludes it as a stale reference. That is the outage
+ * trade-off `VINTAGE_BACKFILL_HOURS` documents (`fingrid-store.ts`). Rows
+ * archived BEFORE the #90 deploy carry an issuance from every later hour, so a
+ * study that spans the cutover mixes two archive regimes — split the window on
+ * the deploy date.
  */
 export const REFERENCE_MAX_LEAD_H = 2;
 

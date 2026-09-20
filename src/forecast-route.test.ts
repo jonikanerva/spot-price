@@ -86,15 +86,25 @@ const seedPriceHistory = async (
 /**
  * Seed Fingrid datasets across the whole [history, forecast] window, to their
  * single homes: ACTUALS (75/124) -> `fingrid_actuals` (upsert-latest);
- * FORECASTS (245/165) -> `fingrid_forecasts` (one issuance, as the
- * hourly job would write). The forecast issuance is anchored at `anchorMs` so
- * the live latest-per-target read picks it up.
+ * FORECASTS (245/165) -> `fingrid_forecasts` (per-issuance archive, as the
+ * hourly job writes it).
+ *
+ * The forecasts are archived ONE SEEDED DAY PER ISSUANCE, not the whole window
+ * under a single issuance. Since issue #90 the store keeps only targets within
+ * `VINTAGE_BACKFILL_HOURS` of the issuance, so a single all-window issuance
+ * would persist ~6 h of rows and leave the fitting window empty. Day-by-day is
+ * also what the archive really looks like: a target is archived while it is
+ * still ahead of the issuance. No issuance is dated after `anchorMs` ("now"),
+ * so the forecast targets beyond the anchor carry the current issuance, exactly
+ * as the live job would write them.
  */
 const seedFingrid = async (pool: Pool, anchorMs: number): Promise<void> => {
   const startMs = anchorMs - 21 * DAY_MS;
+  const QUARTERS_PER_DAY = 96;
+  const SEEDED_DAYS = 24;
   const actuals: FingridRecord[] = [];
-  const forecasts: FingridRecord[] = [];
-  for (let q = 0; q < 24 * 96; q++) {
+  const forecastsByDay: FingridRecord[][] = [];
+  for (let q = 0; q < SEEDED_DAYS * QUARTERS_PER_DAY; q++) {
     const ms = startMs + q * QUARTER_MS;
     const startTime = new Date(ms).toISOString();
     const endTime = new Date(ms + QUARTER_MS).toISOString();
@@ -110,7 +120,9 @@ const seedFingrid = async (pool: Pool, anchorMs: number): Promise<void> => {
         value: consumption,
       },
     );
-    forecasts.push(
+    const day = Math.floor(q / QUARTERS_PER_DAY);
+    const dayRecords = (forecastsByDay[day] ??= []);
+    dayRecords.push(
       { datasetId: DATASET_WIND_FORECAST, startTime, endTime, value: wind },
       {
         datasetId: DATASET_CONSUMPTION_FORECAST,
@@ -121,11 +133,14 @@ const seedFingrid = async (pool: Pool, anchorMs: number): Promise<void> => {
     );
   }
   await storeFingridRecords(pool, actuals);
-  await storeFingridForecastVintages(
-    pool,
-    new Date(anchorMs).toISOString(),
-    forecasts,
-  );
+  for (const [day, dayRecords] of forecastsByDay.entries()) {
+    const issuedAtMs = Math.min(startMs + day * DAY_MS, anchorMs);
+    await storeFingridForecastVintages(
+      pool,
+      new Date(issuedAtMs).toISOString(),
+      dayRecords,
+    );
+  }
 };
 
 describe("forecast endpoint", () => {
@@ -292,13 +307,15 @@ describe("forecast endpoint", () => {
     // Seed actuals + a baseline forecast issuance.
     await seedFingrid(pool, anchorMs);
 
-    // Add a STALE earlier issuance with a wildly different wind value for every
-    // forecast quarter. The live read must ignore it in favour of the newest
-    // issuance (the baseline from seedFingrid at `anchorMs`).
-    const startMs = anchorMs - 21 * DAY_MS;
+    // Add a STALE earlier issuance with a wildly different wind value for the
+    // quarters it could see: issued two days before the anchor, it forecasts
+    // the targets from one day before the anchor onwards. Every one of those
+    // targets also carries a NEWER issuance from `seedFingrid` (its own seeded
+    // day, at most the anchor), so the live read must ignore the stale value.
+    const startMs = anchorMs - 1 * DAY_MS;
     const staleIssuedAt = new Date(anchorMs - 2 * DAY_MS).toISOString();
     const stale: FingridRecord[] = [];
-    for (let q = 0; q < 24 * 96; q++) {
+    for (let q = 0; q < 4 * 96; q++) {
       const ms = startMs + q * QUARTER_MS;
       stale.push({
         datasetId: DATASET_WIND_FORECAST,
@@ -323,9 +340,10 @@ describe("forecast endpoint", () => {
       pool,
       DATASET_WIND_FORECAST,
       new Date(startMs).toISOString(),
-      new Date(anchorMs + DAY_MS).toISOString(),
+      new Date(anchorMs + 3 * DAY_MS).toISOString(),
     );
-    expect(latest.length).toBeGreaterThan(0);
+    // Cover every stale target, not a prefix of them.
+    expect(latest.length).toBe(stale.length);
     expect(latest.every((r) => r.value !== 999_999)).toBe(true);
   });
 });
