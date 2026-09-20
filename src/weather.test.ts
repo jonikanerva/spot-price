@@ -312,6 +312,15 @@ describe("fetchWeather", () => {
     expect(result.records).toHaveLength(1);
     expect(result.daily.ok).toBe(false);
     expect(result.daily.records).toHaveLength(0);
+    if (!result.daily.ok) {
+      // The SCHEMA bound is what rejected it, not the mapping try/catch. Pinning
+      // the reason keeps the two mechanisms separable: without this assertion a
+      // later cleanup could delete the epoch bound as dead code and the suite
+      // would stay green, because the try/catch alone also keeps the hourly rows
+      // (it would report "failed mapping: Invalid time value" instead).
+      expect(result.daily.reason).toContain("schema validation");
+      expect(result.daily.reason).not.toContain("mapping");
+    }
   });
 
   it("ISOLATION: an out-of-range sunrise in the daily block still yields every hourly record", async () => {

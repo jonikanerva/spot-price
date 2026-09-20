@@ -37,10 +37,12 @@
 --
 -- All six `temp` sub-fields are collected although a first feature would use
 -- three. Collection is irreversible, while re-deciding later costs a season of
--- history. The marginal cost of the three extra columns is about 3.4 MB a year:
--- 2 points x 8 days x 24 issuances x 365 days is about 140k rows, and three
--- DOUBLE PRECISION columns add 24 bytes to each. That is the same row count the
--- steady-state figure in STACK.md section 5 uses. THE DISCIPLINE
+-- history. The marginal cost of the three extra columns is about 3.4 MB PER
+-- YEAR OF COLLECTION: 2 points x 8 days x 24 issuances x 365 days is about
+-- 140k rows a year, and three DOUBLE PRECISION columns add 24 bytes to each.
+-- The steady-state figure in STACK.md section 5 states the same rate over the
+-- FULL 400-day retention window instead, which is about 154k rows and about
+-- 31 MB for the whole table. Same rate, different window. THE DISCIPLINE
 -- BELONGS IN THE FEATURE LAYER: issue #77 may promote only `day`, `min` and
 -- `max` into `FEATURE_NAMES`; `night`, `eve` and `morn` stay in reserve until
 -- there is a measured reason.

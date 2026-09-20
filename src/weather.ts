@@ -86,6 +86,24 @@ const OneCallHourlySchema = z.object({
 type ParsedOneCallHourly = z.infer<typeof OneCallHourlySchema>;
 
 /**
+ * Largest absolute UNIX epoch SECONDS value that `new Date(...)` can represent:
+ * the ECMA-262 time range is ±8.64e15 ms, so ±8.64e12 s.
+ *
+ * `z.number()` alone rejects `NaN` and `Infinity` but accepts any other finite
+ * number, so a value like `1e13` would pass the schema and then make
+ * `toISOString()` throw `RangeError: Invalid time value` in the MAPPING — inside
+ * the shared `try` of `fetchWeather`, which would degrade the HOURLY result and
+ * discard rows that parsed perfectly. Bounding the epoch fields here keeps that
+ * anomaly inside the daily-only degrade path, where it belongs.
+ */
+const MAX_EPOCH_SECONDS = 8.64e12;
+
+const EpochSecondsSchema = z
+  .number()
+  .min(-MAX_EPOCH_SECONDS)
+  .max(MAX_EPOCH_SECONDS);
+
+/**
  * Boundary schema for a single One Call 3.0 DAILY entry (issue #93).
  *
  * Collected: all six `temp` sub-fields, `clouds`, `uvi`, and the solar bounds
@@ -109,24 +127,6 @@ type ParsedOneCallHourly = z.infer<typeof OneCallHourlySchema>;
  * schema this is NOT `.strict()`: unknown fields and a changed array length
  * must never fail the parse.
  */
-/**
- * Largest absolute UNIX epoch SECONDS value that `new Date(...)` can represent:
- * the ECMA-262 time range is ±8.64e15 ms, so ±8.64e12 s.
- *
- * `z.number()` alone rejects `NaN` and `Infinity` but accepts any other finite
- * number, so a value like `1e13` would pass the schema and then make
- * `toISOString()` throw `RangeError: Invalid time value` in the MAPPING — inside
- * the shared `try` of `fetchWeather`, which would degrade the HOURLY result and
- * discard rows that parsed perfectly. Bounding the epoch fields here keeps that
- * anomaly inside the daily-only degrade path, where it belongs.
- */
-const MAX_EPOCH_SECONDS = 8.64e12;
-
-const EpochSecondsSchema = z
-  .number()
-  .min(-MAX_EPOCH_SECONDS)
-  .max(MAX_EPOCH_SECONDS);
-
 const DailyEntrySchema = z.object({
   dt: EpochSecondsSchema,
   sunrise: EpochSecondsSchema.optional(),
