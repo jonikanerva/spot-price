@@ -294,6 +294,40 @@ describe("fetchWeather", () => {
     expect(result.daily.records).toHaveLength(1);
   });
 
+  it("ISOLATION: an out-of-range epoch in the daily block still yields every hourly record", async () => {
+    // `z.number()` rejects NaN and Infinity but accepts 1e13, and 1e13 seconds
+    // is past the Date range, so the mapping would throw `RangeError` inside the
+    // SHARED try of `fetchWeather` — degrading the hourly result and discarding
+    // rows that parsed fine. The bound in the schema keeps it a daily-only
+    // degrade.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        hourly: [VALID_HOURLY],
+        daily: [{ ...VALID_DAILY, dt: 1e13 }],
+      }),
+    );
+
+    const result = await fetchWeather(fetchParams);
+    expect(result.ok).toBe(true);
+    expect(result.records).toHaveLength(1);
+    expect(result.daily.ok).toBe(false);
+    expect(result.daily.records).toHaveLength(0);
+  });
+
+  it("ISOLATION: an out-of-range sunrise in the daily block still yields every hourly record", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        hourly: [VALID_HOURLY],
+        daily: [{ ...VALID_DAILY, sunrise: -1e13 }],
+      }),
+    );
+
+    const result = await fetchWeather(fetchParams);
+    expect(result.ok).toBe(true);
+    expect(result.records).toHaveLength(1);
+    expect(result.daily.ok).toBe(false);
+  });
+
   it("tolerates unknown daily fields and any array length (not .strict())", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({

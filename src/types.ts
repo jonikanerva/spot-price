@@ -219,6 +219,12 @@ export type WeatherFetchJobResult =
   | {
       readonly status: "failed";
       readonly failures: readonly WeatherPointFailure[];
+      /**
+       * Present on this branch too: the daily block is parsed independently, so
+       * an hourly schema drift can leave valid daily rows even when EVERY point
+       * fails on the hourly side.
+       */
+      readonly daily: WeatherDailyJobSummary;
     };
 
 /** A single point's degraded outcome within a weather fetch job run. */

@@ -399,6 +399,95 @@ describe("runWeatherFetchJob", () => {
     expect(await readDailyRows(pool, POINT_B)).toHaveLength(1);
   });
 
+  it("ISOLATION: a point whose HOURLY parse fails still gets its valid daily rows stored", async () => {
+    const target = NOW.getTime() + DAY_MS;
+
+    const weather = await import("./weather.js");
+    vi.spyOn(weather, "fetchWeather").mockImplementation(
+      ({ point, issuedAt }) => {
+        if (point.id === POINT_A) {
+          // Exactly what the boundary returns when the HOURLY schema drifts but
+          // the daily block parses: an hourly degrade carrying valid daily rows.
+          return Promise.resolve<WeatherFetchResult>({
+            ok: false,
+            records: [],
+            reason: "OpenWeatherMap response failed schema validation",
+            daily: {
+              ok: true,
+              records: [
+                dailyRecord(point.id, issuedAt.getTime(), "2026-06-15", 21),
+              ],
+            },
+          });
+        }
+        return Promise.resolve(
+          okResult(
+            [record(point.id, issuedAt.getTime(), target, 7)],
+            [dailyRecord(point.id, issuedAt.getTime(), "2026-06-15", 17)],
+          ),
+        );
+      },
+    );
+
+    const { runWeatherFetchJob } = await import("./weather-job.js");
+    const result = await runWeatherFetchJob(pool, "test-key", NOW);
+
+    // The hourly verdict is unchanged: point A degraded, point B stored.
+    expect(result.status).toBe("partial");
+    if (result.status === "partial") {
+      expect(result.stored).toBe(1);
+      expect(result.failures.map((f) => f.pointId)).toEqual([POINT_A]);
+      // …and the daily rows of BOTH points survived. Dropping point A's daily
+      // block here would lose it irreversibly and invisibly: `daily.failures`
+      // would stay empty while `daily.stored` silently fell.
+      expect(result.daily.stored).toBe(2);
+      expect(result.daily.failures).toHaveLength(0);
+    }
+
+    const dailyA = await readDailyRows(pool, POINT_A);
+    expect(dailyA).toHaveLength(1);
+    expect(dailyA[0]?.temp_day).toBe(21);
+    expect(await readDailyRows(pool, POINT_B)).toHaveLength(1);
+  });
+
+  it("stores daily rows even when EVERY hourly point degrades, and still does not prune", async () => {
+    // The retention guard stays hourly: an upstream outage must not delete
+    // history. But a daily block that parsed must still be reported and stored.
+    const expiredIssuance =
+      NOW.getTime() - (WEATHER_RETENTION_DAYS + 10) * DAY_MS;
+    await storeWeatherDailyRecords(pool, [
+      dailyRecord(POINT_A, expiredIssuance, "2026-06-15", 1),
+    ]);
+
+    const weather = await import("./weather.js");
+    vi.spyOn(weather, "fetchWeather").mockImplementation(
+      ({ point, issuedAt }) =>
+        Promise.resolve<WeatherFetchResult>({
+          ok: false,
+          records: [],
+          reason: "OpenWeatherMap response failed schema validation",
+          daily: {
+            ok: true,
+            records: [
+              dailyRecord(point.id, issuedAt.getTime(), "2026-06-15", 21),
+            ],
+          },
+        }),
+    );
+
+    const { runWeatherFetchJob } = await import("./weather-job.js");
+    const result = await runWeatherFetchJob(pool, "test-key", NOW);
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.failures).toHaveLength(WEATHER_POINTS.length);
+      expect(result.daily.stored).toBe(WEATHER_POINTS.length);
+    }
+
+    // Stored, and the expired issuance is still there — no prune on this branch.
+    expect(await readDailyRows(pool, POINT_A)).toHaveLength(2);
+  });
+
   it("reports total failure without throwing when every point degrades", async () => {
     const weather = await import("./weather.js");
     vi.spyOn(weather, "fetchWeather").mockResolvedValue({

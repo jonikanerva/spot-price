@@ -109,10 +109,28 @@ type ParsedOneCallHourly = z.infer<typeof OneCallHourlySchema>;
  * schema this is NOT `.strict()`: unknown fields and a changed array length
  * must never fail the parse.
  */
+/**
+ * Largest absolute UNIX epoch SECONDS value that `new Date(...)` can represent:
+ * the ECMA-262 time range is ±8.64e15 ms, so ±8.64e12 s.
+ *
+ * `z.number()` alone rejects `NaN` and `Infinity` but accepts any other finite
+ * number, so a value like `1e13` would pass the schema and then make
+ * `toISOString()` throw `RangeError: Invalid time value` in the MAPPING — inside
+ * the shared `try` of `fetchWeather`, which would degrade the HOURLY result and
+ * discard rows that parsed perfectly. Bounding the epoch fields here keeps that
+ * anomaly inside the daily-only degrade path, where it belongs.
+ */
+const MAX_EPOCH_SECONDS = 8.64e12;
+
+const EpochSecondsSchema = z
+  .number()
+  .min(-MAX_EPOCH_SECONDS)
+  .max(MAX_EPOCH_SECONDS);
+
 const DailyEntrySchema = z.object({
-  dt: z.number(),
-  sunrise: z.number().optional(),
-  sunset: z.number().optional(),
+  dt: EpochSecondsSchema,
+  sunrise: EpochSecondsSchema.optional(),
+  sunset: EpochSecondsSchema.optional(),
   temp: z.object({
     morn: z.number(),
     day: z.number(),
@@ -245,7 +263,14 @@ const dailyDegraded = (reason: string): WeatherDailyResult => ({
  * per-point degradation rather than a regression.
  *
  * No `.catch()` default and no coercion: a schema drift must surface as a
- * degraded daily result with a reason, never be silently papered over.
+ * degraded daily result with a reason, never be silently papered over. The
+ * try/catch around the MAPPING is not such a default — it reports the error
+ * message as the degrade reason. It is a structural guarantee that NOTHING on
+ * the daily path can throw inside the shared `try` of `fetchWeather`, where a
+ * throw would degrade the hourly result and discard rows that parsed fine.
+ * `EpochSecondsSchema` already removes the one known way to get there
+ * (`RangeError` from an out-of-range epoch); this keeps the guarantee true for
+ * any future mapping change instead of resting on an argument.
  */
 const parseDaily = (
   point: WeatherPoint,
@@ -256,7 +281,12 @@ const parseDaily = (
   if (!parsed.success) {
     return dailyDegraded("OpenWeatherMap daily block failed schema validation");
   }
-  return { ok: true, records: dailyToRecords(point, issuedAt, parsed.data) };
+  try {
+    return { ok: true, records: dailyToRecords(point, issuedAt, parsed.data) };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "unknown error";
+    return dailyDegraded(`OpenWeatherMap daily block failed mapping: ${msg}`);
+  }
 };
 
 const degraded = (reason: string): WeatherFetchResult => ({

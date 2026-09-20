@@ -88,6 +88,18 @@ export const runStartupForecastFetch = (
 };
 
 /**
+ * Daily-block suffix for the weather log line (issue #93). Kept visible so a
+ * daily collection that silently stops — the failure mode the issue is built
+ * around — shows up in the operational log instead of only in a return value.
+ */
+const dailyNote = (daily: WeatherDailyJobSummary): string => {
+  const degradedPoints = daily.failures.map((f) => f.pointId).join(", ");
+  const suffix =
+    daily.failures.length > 0 ? `, daily degraded: ${degradedPoints}` : "";
+  return `; daily rows ${String(daily.stored)}${suffix}`;
+};
+
+/**
  * Run the OpenWeatherMap weather data-collection fetch for the FI forecast
  * (issue #73, Phase 1).
  *
@@ -100,18 +112,6 @@ export const runStartupForecastFetch = (
  * whitelist does not pass the key), no live OWM call is ever made in tests/E2E,
  * which keeps the One Call 3.0 billing surface at zero outside production.
  */
-/**
- * Daily-block suffix for the weather log line (issue #93). Kept visible so a
- * daily collection that silently stops — the failure mode the issue is built
- * around — shows up in the operational log instead of only in a return value.
- */
-const dailyNote = (daily: WeatherDailyJobSummary): string => {
-  const degradedPoints = daily.failures.map((f) => f.pointId).join(", ");
-  const suffix =
-    daily.failures.length > 0 ? `, daily degraded: ${degradedPoints}` : "";
-  return `; daily rows ${String(daily.stored)}${suffix}`;
-};
-
 const safeWeatherFetch = async (
   pool: Pool,
   apiKey: string | undefined,
@@ -134,7 +134,7 @@ const safeWeatherFetch = async (
     } else {
       const failed = result.failures.map((f) => f.pointId).join(", ");
       console.warn(
-        `[scheduler] ${label}: weather degraded — all points failed: ${failed}`,
+        `[scheduler] ${label}: weather degraded — all points failed: ${failed}${dailyNote(result.daily)}`,
       );
     }
   } catch (error) {
