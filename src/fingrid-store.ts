@@ -119,23 +119,74 @@ const VINTAGE_DATASETS: ReadonlySet<number> = new Set([
   DATASET_CONSUMPTION_FORECAST,
 ]);
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * How far BEFORE the issuance a target may lie and still be archived (issue
+ * #90). This is an OUTAGE-TOLERANCE window, not a "keep one post-delivery
+ * reference" knob.
+ *
+ * Before the window guard the job archived its whole 34-day fetch window on
+ * every issuance. That silently backfilled any target missed during a deploy or
+ * a Fingrid outage. A strict future-only filter would remove that self-repair:
+ * an outage longer than the publication horizon would leave a permanent hole in
+ * the 30-day fitting window that `routes/forecast.ts` reads, and `CLAUDE.md →
+ * Definition of done` requires the service to stay responsive under degraded
+ * data. Six hours covers a deploy plus a Fingrid outage at the hourly cron
+ * cadence, and costs ~48 rows per issuance on top of ~576.
+ *
+ * Side benefit for the offline revision study (#79): genuine post-delivery
+ * issuances survive, at leads of 0…−6 h. `tools/revision-magnitude.ts` keeps a
+ * near-settled reference per target instead of the last pre-delivery forecast.
+ *
+ * It lives here, beside `VINTAGE_DATASETS`, because the store owns the archive
+ * write policy and both guards belong together. `forecast-job.ts` already
+ * imports this module, so the reverse placement would create an import cycle.
+ */
+export const VINTAGE_BACKFILL_HOURS = 6;
+
 /**
  * Archive forecast-dataset records under one issuance, append-only per issuance
  * (idempotent via `ON CONFLICT (dataset_id, issued_at, start_time) DO NOTHING`).
  *
- * Records are filtered to the forecast datasets (245/165) INTERNALLY against
- * `VINTAGE_DATASETS`, so an actual (75/124) handed in by the caller can never be
- * archived here — the vintage table holds forecast vintages only. `issuedAt` is
- * the hour-truncated fetch-time proxy supplied by the job. Returns the number of
- * rows actually inserted (re-running the same issuance inserts none).
+ * TWO guards run in the SAME filter pass, both INTERNAL, so no caller can widen
+ * either one:
+ *
+ *  1. DATASET — only the forecast datasets (245/165) in `VINTAGE_DATASETS` pass.
+ *     An actual (75/124) handed in by the caller can never be archived here; the
+ *     vintage table holds forecast vintages only.
+ *  2. TARGET WINDOW (issue #90) — only targets with
+ *     `start_time >= issuedAt − VINTAGE_BACKFILL_HOURS` pass. The job fetches a
+ *     34-day window every hour, so without this guard each issuance re-archived
+ *     a month of PAST targets: 6 528 rows per hour instead of ~624, which is
+ *     ~28 M rows at the 180-day retention and filled the 5 GB volume. A past
+ *     target is not a forecast. The window keeps just enough of the past to
+ *     backfill an outage — see `VINTAGE_BACKFILL_HOURS`.
+ *
+ * The window threshold is computed ONCE, outside the filter, and compared on
+ * parsed epoch milliseconds. `startTime` is an unnormalised upstream string
+ * (`fingrid.ts` passes it through as `z.string()`) while `issuedAt` is a
+ * canonical `toISOString()`, so a lexicographic comparison would be wrong. The
+ * bound is INCLUSIVE: `issuedAt` is hour-truncated, so the quarters of the
+ * current hour are still a fresh forecast. A `start_time` that does not parse
+ * yields `NaN`, and `NaN >= x` is false, so such a record drops here BY DESIGN —
+ * the `timestamptz` column would reject it anyway.
+ *
+ * `issuedAt` is the hour-truncated fetch-time proxy supplied by the job. Returns
+ * the number of rows actually inserted (re-running the same issuance inserts
+ * none).
  */
 export const storeFingridForecastVintages = async (
   pool: Pool,
   issuedAt: string,
   records: readonly FingridRecord[],
 ): Promise<number> => {
-  const forecastRecords = records.filter((r) =>
-    VINTAGE_DATASETS.has(r.datasetId),
+  const oldestArchivedMs =
+    Date.parse(issuedAt) - VINTAGE_BACKFILL_HOURS * HOUR_MS;
+  const forecastRecords = records.filter(
+    (r) =>
+      VINTAGE_DATASETS.has(r.datasetId) &&
+      Date.parse(r.startTime) >= oldestArchivedMs,
   );
   if (forecastRecords.length === 0) {
     return 0;
@@ -194,6 +245,13 @@ export const storeFingridForecastVintages = async (
  * NOTE: this takes the newest issuance unconditionally; the as-of selection
  * (`AND f.issued_at <= $asOf` inside the LATERAL, for the vintage-correct
  * backtest) is deferred to #80 — it composes cleanly into this shape.
+ *
+ * NOTE (issue #90): the route reads this over the whole 30-day history window,
+ * so it also hits PAST targets. For a target archived since #90 the newest
+ * issuance is now at most `VINTAGE_BACKFILL_HOURS` after delivery, not the
+ * near-settled value an all-window archive used to keep. The fit therefore sees
+ * a value much closer to what serving sees, which SHRINKS the train/serve skew
+ * of #78 but does not remove it; the as-of bound of #80 is the actual fix.
  */
 export const getFingridForecastVintagesLatest = async (
   pool: Pool,

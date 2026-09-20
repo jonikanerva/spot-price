@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { closeDatabase, initTestDatabase } from "./db.js";
 import {
+  VINTAGE_BACKFILL_HOURS,
   getFingridForecastVintagesLatest,
   getFingridRecordsByRange,
   storeFingridForecastVintages,
@@ -9,6 +10,7 @@ import {
 } from "./fingrid-store.js";
 import {
   DATASET_CONSUMPTION_ACTUAL,
+  DATASET_CONSUMPTION_FORECAST,
   DATASET_WIND_ACTUAL,
   DATASET_WIND_FORECAST,
 } from "./fingrid.js";
@@ -17,9 +19,11 @@ import {
   RETENTION_DAYS,
   VINTAGE_RETENTION_DAYS,
 } from "./forecast-job.js";
+import { FORECAST_DAYS } from "./forecast.js";
 import type { FingridRecord } from "./types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 const NOW = new Date("2026-04-15T12:00:00.000Z");
 
 const record = (ms: number, value: number): FingridRecord => ({
@@ -175,6 +179,118 @@ describe("fingrid forecast vintages", () => {
     expect(await countVintageRows(pool, DATASET_WIND_ACTUAL)).toBe(0);
     expect(await countVintageRows(pool, DATASET_CONSUMPTION_ACTUAL)).toBe(0);
     expect(await countVintageRows(pool, DATASET_WIND_FORECAST)).toBe(1);
+  });
+
+  it("drops a target older than the backfill window and keeps a future target", async () => {
+    const issuance = NOW.toISOString();
+    // One target well outside the 6h backfill window, one still ahead of the
+    // issuance. Before issue #90 BOTH were archived, every hour, for the whole
+    // 34-day fetch window.
+    const staleTarget = NOW.getTime() - (VINTAGE_BACKFILL_HOURS + 1) * HOUR_MS;
+    const futureTarget = NOW.getTime() + 12 * HOUR_MS;
+
+    const inserted = await storeFingridForecastVintages(pool, issuance, [
+      record(staleTarget, 100),
+      record(futureTarget, 200),
+    ]);
+    expect(inserted).toBe(1);
+    expect(await countVintageRows(pool, DATASET_WIND_FORECAST)).toBe(1);
+
+    // The surviving row is the future target.
+    const latest = await getFingridForecastVintagesLatest(
+      pool,
+      DATASET_WIND_FORECAST,
+      new Date(staleTarget - DAY_MS).toISOString(),
+      new Date(futureTarget + DAY_MS).toISOString(),
+    );
+    expect(latest).toHaveLength(1);
+    expect(latest[0]?.value).toBe(200);
+  });
+
+  it("keeps a target exactly at the issuance (the bound is inclusive, not future-only)", async () => {
+    // `issued_at` is hour-truncated, so the quarters of the current hour are
+    // still a fresh forecast. A `>` instead of `>=` would drop them.
+    const issuance = NOW.toISOString();
+    const inserted = await storeFingridForecastVintages(pool, issuance, [
+      record(NOW.getTime(), 42),
+    ]);
+    expect(inserted).toBe(1);
+    expect(await countVintageRows(pool, DATASET_WIND_FORECAST)).toBe(1);
+  });
+
+  it("keeps a target exactly at the window edge and drops the millisecond before it", async () => {
+    const issuance = NOW.toISOString();
+    const edge = NOW.getTime() - VINTAGE_BACKFILL_HOURS * HOUR_MS;
+
+    const inserted = await storeFingridForecastVintages(pool, issuance, [
+      record(edge, 10),
+      record(edge - 1, 20),
+    ]);
+    expect(inserted).toBe(1);
+
+    const latest = await getFingridForecastVintagesLatest(
+      pool,
+      DATASET_WIND_FORECAST,
+      new Date(edge - DAY_MS).toISOString(),
+      new Date(edge + DAY_MS).toISOString(),
+    );
+    expect(latest).toHaveLength(1);
+    expect(latest[0]?.value).toBe(10);
+  });
+
+  it("applies BOTH guards in one pass: a mixed batch archives only in-window forecasts", async () => {
+    const issuance = NOW.toISOString();
+    const staleTarget = NOW.getTime() - 2 * DAY_MS;
+    const futureTarget = NOW.getTime() + 3 * HOUR_MS;
+
+    const inserted = await storeFingridForecastVintages(pool, issuance, [
+      record(staleTarget, 100), // 245 forecast, outside the window — dropped
+      record(futureTarget, 200), // 245 forecast, in window — archived
+      recordOf(DATASET_CONSUMPTION_FORECAST, futureTarget, 300), // 165 in window — archived
+      recordOf(DATASET_WIND_ACTUAL, futureTarget, 700), // 75 actual — never archived
+      recordOf(DATASET_CONSUMPTION_ACTUAL, staleTarget, 8000), // 124 actual — never archived
+    ]);
+    expect(inserted).toBe(2);
+
+    expect(await countVintageRows(pool, DATASET_WIND_FORECAST)).toBe(1);
+    expect(await countVintageRows(pool, DATASET_CONSUMPTION_FORECAST)).toBe(1);
+    expect(await countVintageRows(pool, DATASET_WIND_ACTUAL)).toBe(0);
+    expect(await countVintageRows(pool, DATASET_CONSUMPTION_ACTUAL)).toBe(0);
+  });
+
+  it("still reads a vintage archived before the window guard — the change is write-side only", async () => {
+    // A row from the pre-#90 regime: issued FIVE DAYS after its target, which
+    // the guard now rejects on write. Insert it the way the old job did.
+    const pastTarget = NOW.getTime() - 5 * DAY_MS;
+    const lateIssuance = NOW.toISOString();
+    await pool.query(
+      `INSERT INTO fingrid_forecasts
+         (dataset_id, issued_at, start_time, end_time, value)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        DATASET_WIND_FORECAST,
+        lateIssuance,
+        new Date(pastTarget).toISOString(),
+        new Date(pastTarget + 15 * 60 * 1000).toISOString(),
+        123,
+      ],
+    );
+
+    // The store refuses to write such a row now…
+    const inserted = await storeFingridForecastVintages(pool, lateIssuance, [
+      record(pastTarget, 456),
+    ]);
+    expect(inserted).toBe(0);
+
+    // …but the live read returns the already-archived one unchanged.
+    const latest = await getFingridForecastVintagesLatest(
+      pool,
+      DATASET_WIND_FORECAST,
+      new Date(pastTarget - DAY_MS).toISOString(),
+      new Date(pastTarget + DAY_MS).toISOString(),
+    );
+    expect(latest).toHaveLength(1);
+    expect(latest[0]?.value).toBe(123);
   });
 
   it("leaves the fingrid_actuals upsert for actuals unchanged", async () => {
@@ -335,6 +451,53 @@ describe("runForecastFetchJob", () => {
 
     // The actual never reached the vintage table.
     expect(await countVintageRows(pool, DATASET_WIND_ACTUAL)).toBe(0);
+  });
+
+  it("archives only the in-window share of a realistic 34-day fetch window (issue #90)", async () => {
+    // The job fetches [now − HISTORY_DAYS, now + FORECAST_DAYS] every hour. Up
+    // to issue #90 it archived that whole window on every issuance. Sample the
+    // window every 6h (the exact spacing does not matter — the ratio does) for
+    // both forecast datasets, plus one actual.
+    const step = 6 * HOUR_MS;
+    const windowStart = NOW.getTime() - HISTORY_DAYS * DAY_MS;
+    const windowEnd = NOW.getTime() + FORECAST_DAYS * DAY_MS;
+    const forecastRecords: FingridRecord[] = [];
+    for (let t = windowStart; t < windowEnd; t += step) {
+      forecastRecords.push(recordOf(DATASET_WIND_FORECAST, t, 1));
+      forecastRecords.push(recordOf(DATASET_CONSUMPTION_FORECAST, t, 2));
+    }
+    const actual = recordOf(DATASET_WIND_ACTUAL, NOW.getTime(), 700);
+
+    const fingrid = await import("./fingrid.js");
+    vi.spyOn(fingrid, "fetchFingridSeries").mockResolvedValue({
+      ok: true,
+      records: [...forecastRecords, actual],
+    });
+
+    const { runForecastFetchJob } = await import("./forecast-job.js");
+    const result = await runForecastFetchJob(pool, "test-key", NOW);
+
+    // NOW sits on the hour, so the job's hour-truncated issuance equals NOW.
+    const cutoffMs = NOW.getTime() - VINTAGE_BACKFILL_HOURS * HOUR_MS;
+    const inWindow = forecastRecords.filter(
+      (r) => Date.parse(r.startTime) >= cutoffMs,
+    ).length;
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.vintageStored).toBe(inWindow);
+      // The saving is the point of the issue: the old behaviour archived every
+      // forecast record in the window, an order of magnitude more.
+      expect(forecastRecords.length / result.vintageStored).toBeGreaterThan(9);
+    }
+
+    // Nothing older than the backfill cutoff reached the table.
+    const { rows } = await pool.query<{ oldest: string | null }>(
+      `SELECT MIN(start_time) AS oldest FROM fingrid_forecasts`,
+    );
+    const oldest = rows[0]?.oldest;
+    expect(oldest).not.toBeNull();
+    expect(Date.parse(oldest ?? "")).toBeGreaterThanOrEqual(cutoffMs);
   });
 
   it("vintage failure is isolated: actuals still commit, ok:true, vintageDegradedReason set", async () => {
