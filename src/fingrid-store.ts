@@ -20,7 +20,36 @@ import type { FingridRecord, ForecastVintageRecord } from "./types.js";
  * a vintage-write failure.
  */
 
-/** Upsert Fingrid records (idempotent via ON CONFLICT). Returns rows written. */
+/**
+ * Upsert Fingrid ACTUAL records (idempotent via ON CONFLICT).
+ *
+ * The `DO UPDATE` carries a CHANGE GUARD (issue #88): a row is rewritten only
+ * when its `(end_time, value)` pair differs from the incoming one. The hourly
+ * job re-upserts its whole ~31-day window, so without the guard all ~6 000 rows
+ * per hour became a new row version plus index updates plus WAL — purely because
+ * `fetched_at = NOW()` always changed. `IS DISTINCT FROM` rather than `<>`
+ * treats NULL as a value, so it never mistakes a NULL pair for a change. The
+ * stored row is addressed by TABLE NAME in the guard, not by `EXCLUDED` (which
+ * names the incoming row); the syntax requires that.
+ *
+ * `fetched_at` therefore means LAST CHANGED, not last seen. Nothing reads the
+ * column today, so no behaviour depends on the old meaning — but a freshness
+ * check must never read it as "when did we last see this row".
+ * `STACK.md` §5 records the same.
+ *
+ * `price-store.ts` deliberately keeps its unguarded upsert: it carries ~4.6 % of
+ * the write churn, but `fetch-job.ts` calls its writer for today's prices
+ * OUTSIDE a try/catch, so a change there would put the authoritative price path
+ * at risk for a small gain.
+ *
+ * Returns the number of records HANDED IN, not the number of rows actually
+ * written. The guard must NOT leak into this count: `stored` means "this many
+ * observations were accepted". The sibling price store's count drives
+ * `tomorrowAvailable` in `fetch-job.ts`, where a 0 for unchanged data would
+ * teach the scheduler that tomorrow's prices are missing and ADD upstream
+ * calls; both stores keep the same contract so that trap cannot appear here
+ * either.
+ */
 export const storeFingridRecords = async (
   pool: Pool,
   records: readonly FingridRecord[],
@@ -39,7 +68,9 @@ export const storeFingridRecords = async (
          ON CONFLICT (dataset_id, start_time)
          DO UPDATE SET end_time = EXCLUDED.end_time,
                        value = EXCLUDED.value,
-                       fetched_at = NOW()`,
+                       fetched_at = NOW()
+         WHERE (fingrid_actuals.end_time, fingrid_actuals.value)
+               IS DISTINCT FROM (EXCLUDED.end_time, EXCLUDED.value)`,
         [r.datasetId, r.startTime, r.endTime, r.value],
       );
     }

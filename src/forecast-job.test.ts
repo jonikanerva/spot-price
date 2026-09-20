@@ -44,6 +44,47 @@ const recordOf = (
   value,
 });
 
+/**
+ * A fixed instant in the past, written over `fetched_at` between two stores so
+ * that a no-op rewrite is detectable. Reading the live stamp and comparing it
+ * after a second store would be unreliable: two writes within the same clock
+ * tick would look identical whether or not the row was rewritten.
+ */
+const ANCHOR_FETCHED_AT = "2020-01-01T00:00:00.000Z";
+
+const anchorFetchedAt = async (pool: Pool): Promise<void> => {
+  await pool.query(`UPDATE fingrid_actuals SET fetched_at = $1`, [
+    ANCHOR_FETCHED_AT,
+  ]);
+};
+
+interface ActualRowState {
+  readonly fetchedAt: string;
+  readonly endTime: string;
+  readonly value: number;
+}
+
+/** Read one stored actual row, including the columns the change guard reads. */
+const readActualRow = async (
+  pool: Pool,
+  datasetId: number,
+  startTimeMs: number,
+): Promise<ActualRowState | undefined> => {
+  const { rows } = await pool.query<{
+    fetched_at: string;
+    end_time: string;
+    value: number;
+  }>(
+    `SELECT fetched_at, end_time, value FROM fingrid_actuals
+     WHERE dataset_id = $1 AND start_time = $2`,
+    [datasetId, new Date(startTimeMs).toISOString()],
+  );
+  const row = rows[0];
+  return row === undefined
+    ? undefined
+    : { fetchedAt: row.fetched_at, endTime: row.end_time, value: row.value };
+};
+
 /** Raw row count in the vintage table for a dataset, regardless of issuance. */
 const countVintageRows = async (
   pool: Pool,
@@ -79,6 +120,116 @@ describe("fingrid-store", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]?.value).toBe(200);
+  });
+
+  it("does not rewrite an unchanged row — fetched_at stays pinned (change guard, issue #88)", async () => {
+    const ms = NOW.getTime();
+    await storeFingridRecords(pool, [recordOf(DATASET_WIND_ACTUAL, ms, 100)]);
+    await anchorFetchedAt(pool);
+
+    // The same observation again: the hourly job does this for its whole
+    // ~31-day window every hour.
+    await storeFingridRecords(pool, [recordOf(DATASET_WIND_ACTUAL, ms, 100)]);
+
+    const row = await readActualRow(pool, DATASET_WIND_ACTUAL, ms);
+    expect(row?.value).toBe(100);
+    expect(row?.fetchedAt).toBe(ANCHOR_FETCHED_AT);
+  });
+
+  it("rewrites a row whose value changed, and bumps fetched_at", async () => {
+    const ms = NOW.getTime();
+    await storeFingridRecords(pool, [recordOf(DATASET_WIND_ACTUAL, ms, 100)]);
+    await anchorFetchedAt(pool);
+
+    await storeFingridRecords(pool, [recordOf(DATASET_WIND_ACTUAL, ms, 200)]);
+
+    const row = await readActualRow(pool, DATASET_WIND_ACTUAL, ms);
+    expect(row?.value).toBe(200);
+    expect(Date.parse(row?.fetchedAt ?? "")).toBeGreaterThan(
+      Date.parse(ANCHOR_FETCHED_AT),
+    );
+  });
+
+  it("rewrites a row whose end_time alone changed — end_time is part of the guard", async () => {
+    const ms = NOW.getTime();
+    await storeFingridRecords(pool, [recordOf(DATASET_WIND_ACTUAL, ms, 100)]);
+    await anchorFetchedAt(pool);
+
+    // Same key, same value, longer resolution: 15 min -> 1 h.
+    const stretched: FingridRecord = {
+      datasetId: DATASET_WIND_ACTUAL,
+      startTime: new Date(ms).toISOString(),
+      endTime: new Date(ms + HOUR_MS).toISOString(),
+      value: 100,
+    };
+    await storeFingridRecords(pool, [stretched]);
+
+    const row = await readActualRow(pool, DATASET_WIND_ACTUAL, ms);
+    expect(row?.endTime).toBe(stretched.endTime);
+    expect(row?.value).toBe(100);
+    expect(Date.parse(row?.fetchedAt ?? "")).toBeGreaterThan(
+      Date.parse(ANCHOR_FETCHED_AT),
+    );
+  });
+
+  it("applies the guard PER ROW inside one batch, not per statement", async () => {
+    const quarter = 15 * 60 * 1000;
+    const t0 = NOW.getTime();
+    const t1 = t0 + quarter;
+    const t2 = t0 + 2 * quarter;
+    const t3 = t0 + 3 * quarter;
+    await storeFingridRecords(pool, [
+      recordOf(DATASET_WIND_ACTUAL, t0, 100),
+      recordOf(DATASET_WIND_ACTUAL, t1, 101),
+      recordOf(DATASET_WIND_ACTUAL, t2, 102),
+      recordOf(DATASET_WIND_ACTUAL, t3, 103),
+    ]);
+    await anchorFetchedAt(pool);
+
+    // One batch: t0 and t2 unchanged, t1 and t3 revised — the realistic shape
+    // of an hourly re-fetch, where only the newest quarters move.
+    await storeFingridRecords(pool, [
+      recordOf(DATASET_WIND_ACTUAL, t0, 100),
+      recordOf(DATASET_WIND_ACTUAL, t1, 999),
+      recordOf(DATASET_WIND_ACTUAL, t2, 102),
+      recordOf(DATASET_WIND_ACTUAL, t3, 888),
+    ]);
+
+    const anchorMs = Date.parse(ANCHOR_FETCHED_AT);
+    const unchanged0 = await readActualRow(pool, DATASET_WIND_ACTUAL, t0);
+    const changed1 = await readActualRow(pool, DATASET_WIND_ACTUAL, t1);
+    const unchanged2 = await readActualRow(pool, DATASET_WIND_ACTUAL, t2);
+    const changed3 = await readActualRow(pool, DATASET_WIND_ACTUAL, t3);
+
+    expect(unchanged0?.value).toBe(100);
+    expect(unchanged0?.fetchedAt).toBe(ANCHOR_FETCHED_AT);
+    expect(unchanged2?.value).toBe(102);
+    expect(unchanged2?.fetchedAt).toBe(ANCHOR_FETCHED_AT);
+
+    expect(changed1?.value).toBe(999);
+    expect(Date.parse(changed1?.fetchedAt ?? "")).toBeGreaterThan(anchorMs);
+    expect(changed3?.value).toBe(888);
+    expect(Date.parse(changed3?.fetchedAt ?? "")).toBeGreaterThan(anchorMs);
+  });
+
+  it("returns the number of records handed in even when the guard writes nothing", async () => {
+    const ms = NOW.getTime();
+    const batch = [
+      recordOf(DATASET_WIND_ACTUAL, ms, 100),
+      recordOf(DATASET_CONSUMPTION_ACTUAL, ms, 8000),
+    ];
+    expect(await storeFingridRecords(pool, batch)).toBe(2);
+    await anchorFetchedAt(pool);
+
+    // Identical batch: no row is rewritten, but `stored` still counts the
+    // observations accepted. The count must NOT become a written-rows count:
+    // `fetch-job.ts` derives `tomorrowAvailable` from the sibling price store's
+    // count, and a 0 for unchanged data would make the scheduler treat the data
+    // as missing and ADD upstream calls.
+    expect(await storeFingridRecords(pool, batch)).toBe(2);
+
+    const row = await readActualRow(pool, DATASET_WIND_ACTUAL, ms);
+    expect(row?.fetchedAt).toBe(ANCHOR_FETCHED_AT);
   });
 });
 
