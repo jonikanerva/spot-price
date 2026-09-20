@@ -6,6 +6,7 @@ import {
   formatDateInTimeZone,
   formatDateTimeInTimeZone,
   addDays,
+  getCurrentAndNextDate,
   getUtcRangeForLocalDate,
 } from "./time.js";
 import {
@@ -382,14 +383,17 @@ const seedHourlyRange = async (
   }
 };
 
-/** Get Helsinki today/tomorrow date strings */
-const getHelsinkiDates = (): { today: string; tomorrow: string } => {
-  const now = new Date();
-  return {
-    today: formatDateInTimeZone(now, HELSINKI_TZ),
-    tomorrow: formatDateInTimeZone(addDays(now, 1), HELSINKI_TZ),
-  };
-};
+/**
+ * Get Helsinki today/tomorrow date strings.
+ *
+ * Defers to `getCurrentAndNextDate`, the one owner of a local calendar day.
+ * A local date label is never derived from `addDays`: a 24-hour shift of the
+ * instant lands on the wrong date on both DST transition days, so a helper
+ * that did its own arithmetic would turn the suite red against correct
+ * production code twice a year.
+ */
+const getHelsinkiDates = (): { today: string; tomorrow: string } =>
+  getCurrentAndNextDate(HELSINKI_TZ);
 
 describe("cheapest endpoint — startTime / endTime filtering", () => {
   let pool: Pool;
