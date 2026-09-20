@@ -10,7 +10,6 @@ import { getPricesByRange } from "../price-store.js";
 import { eurMwhToCentsKwh } from "../nordpool.js";
 import { getUserSettingsFromContext } from "./settings-context.js";
 import {
-  addDays,
   formatDateInTimeZone,
   getCurrentAndNextDate,
   getUtcRangeForLocalDate,
@@ -343,7 +342,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     }
 
     const tz = settings.timezone;
-    const tomorrow = formatDateInTimeZone(addDays(new Date(), 1), tz);
+    const { tomorrow } = getCurrentAndNextDate(tz);
     const tomorrowUtc = getUtcRangeForLocalDate(tomorrow, tz);
     const prices = await getPricesByRange(
       c.get("db"),

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { closeDatabase, initTestDatabase } from "./db.js";
 import { createTestApp } from "./test-utils.js";
@@ -1333,5 +1333,195 @@ describe("response schema conformance", () => {
     });
     expect(r2.status).toBe(400);
     expect(ErrorSchema.safeParse(await r2.json()).success).toBe(true);
+  });
+});
+
+// --- DST transition days ----------------------------------------------------
+
+/**
+ * Seed quarter-hour prices over a half-open UTC range and report the count.
+ *
+ * Keyed on UTC instants, not local hours: these tests pin the exact instants
+ * Nord Pool publishes for a transition day, so a window that is shifted by an
+ * hour returns different instants instead of a different-but-plausible list.
+ */
+const seedQuarterHours = async (
+  pool: Pool,
+  startUtc: string,
+  endUtc: string,
+  eurMwh: number,
+): Promise<number> => {
+  const endMs = new Date(endUtc).getTime();
+  let seeded = 0;
+  for (let ms = new Date(startUtc).getTime(); ms < endMs; ms += 900_000) {
+    await seedPriceEntry(
+      pool,
+      new Date(ms).toISOString(),
+      new Date(ms + 900_000).toISOString(),
+      eurMwh,
+    );
+    seeded += 1;
+  }
+  return seeded;
+};
+
+interface PriceListBody {
+  available: boolean;
+  prices: readonly { deliveryStart: string }[];
+}
+
+/** The UTC instant of an interval, normalised for comparison. */
+const instantOf = (entry: { deliveryStart: string } | undefined): string => {
+  if (!entry) {
+    throw new Error("expected a price interval, got none");
+  }
+  return new Date(entry.deliveryStart).toISOString();
+};
+
+describe("DST transition days — single-day price endpoints", () => {
+  let pool: Pool;
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await closeDatabase(pool);
+  });
+
+  // The UTC edges of the Helsinki local days around both 2026 transitions.
+  // Nord Pool publishes 100 quarter-hours for the 25-hour fall-back day and 92
+  // for the 23-hour spring-forward day (their own DST operational messages).
+  const AUTUMN_PREV_START = "2026-10-23T21:00:00.000Z"; // local 2026-10-24 00:00
+  const AUTUMN_START = "2026-10-24T21:00:00.000Z"; // local 2026-10-25 00:00
+  const AUTUMN_LAST_HOUR = "2026-10-25T21:00:00.000Z"; // local 2026-10-25 23:00
+  const AUTUMN_LAST = "2026-10-25T21:45:00.000Z"; // local 2026-10-25 23:45
+  const AUTUMN_END = "2026-10-25T22:00:00.000Z"; // local 2026-10-26 00:00
+  const AUTUMN_NEXT_LAST = "2026-10-26T21:45:00.000Z"; // local 2026-10-26 23:45
+  const AUTUMN_NEXT_END = "2026-10-26T22:00:00.000Z"; // local 2026-10-27 00:00
+
+  const SPRING_PREV_START = "2026-03-27T22:00:00.000Z"; // local 2026-03-28 00:00
+  const SPRING_START = "2026-03-28T22:00:00.000Z"; // local 2026-03-29 00:00
+  const SPRING_LAST = "2026-03-29T20:45:00.000Z"; // local 2026-03-29 23:45
+  const SPRING_END = "2026-03-29T21:00:00.000Z"; // local 2026-03-30 00:00
+  const SPRING_NEXT_END = "2026-03-30T21:00:00.000Z"; // local 2026-03-31 00:00
+
+  const setup = async (): Promise<ReturnType<typeof createTestApp>> => {
+    pool = await initTestDatabase();
+    await seedUser(pool);
+    return createTestApp(pool);
+  };
+
+  /**
+   * Pin the clock to a UTC instant. Only `Date` is faked, so the pg pool keeps
+   * its real timers and the request completes normally.
+   */
+  const pinClock = (nowUtc: string): void => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(nowUtc));
+  };
+
+  const requestPath = async (
+    app: ReturnType<typeof createTestApp>,
+    path: string,
+  ): Promise<Response> =>
+    app.request(path, { headers: { Authorization: `Bearer ${TEST_API_KEY}` } });
+
+  it("price/today returns all 100 quarter-hours of the 25-hour fall-back day", async () => {
+    const app = await setup();
+    // Neighbouring days are seeded too, so the row count alone cannot prove the
+    // window is right — only the edges can.
+    await seedQuarterHours(pool, AUTUMN_PREV_START, AUTUMN_START, 90);
+    expect(await seedQuarterHours(pool, AUTUMN_START, AUTUMN_END, 40)).toBe(
+      100,
+    );
+    await seedQuarterHours(pool, AUTUMN_END, AUTUMN_NEXT_END, 80);
+    // Local 2026-10-25 12:00, after the 04:00 -> 03:00 switch.
+    pinClock("2026-10-25T10:00:00Z");
+
+    const res = await requestPath(app, "/api/v1/price/today");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceListBody;
+
+    expect(body.available).toBe(true);
+    expect(body.prices).toHaveLength(100);
+    expect(instantOf(body.prices[0])).toBe(AUTUMN_START);
+    // The 25th hour: a fixed +24h day window stops at 21:00Z and drops it.
+    expect(instantOf(body.prices.at(-1))).toBe(AUTUMN_LAST);
+  });
+
+  it("price/today returns all 92 quarter-hours of the 23-hour spring-forward day", async () => {
+    const app = await setup();
+    await seedQuarterHours(pool, SPRING_PREV_START, SPRING_START, 90);
+    expect(await seedQuarterHours(pool, SPRING_START, SPRING_END, 40)).toBe(92);
+    await seedQuarterHours(pool, SPRING_END, SPRING_NEXT_END, 80);
+    // Local 2026-03-29 12:00, after the 03:00 -> 04:00 switch.
+    pinClock("2026-03-29T09:00:00Z");
+
+    const res = await requestPath(app, "/api/v1/price/today");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceListBody;
+
+    expect(body.available).toBe(true);
+    expect(body.prices).toHaveLength(92);
+    expect(instantOf(body.prices[0])).toBe(SPRING_START);
+    // A fixed +24h day window runs to 22:00Z and pulls in 2026-03-30's first
+    // interval, which belongs to the next local day.
+    expect(instantOf(body.prices.at(-1))).toBe(SPRING_LAST);
+  });
+
+  it("price/tomorrow does not return today during the fall-back collision hour", async () => {
+    const app = await setup();
+    await seedQuarterHours(pool, AUTUMN_START, AUTUMN_END, 40);
+    await seedQuarterHours(pool, AUTUMN_END, AUTUMN_NEXT_END, 80);
+    // Local 2026-10-25 00:30. A 24h shift of this instant stays inside the
+    // 25-hour local day, so tomorrow's label collides with today's and the
+    // endpoint answers with today's prices under tomorrow's name.
+    pinClock("2026-10-24T21:30:00Z");
+
+    const res = await requestPath(app, "/api/v1/price/tomorrow");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceListBody;
+
+    expect(body.available).toBe(true);
+    expect(body.prices).toHaveLength(96);
+    expect(instantOf(body.prices[0])).toBe(AUTUMN_END);
+    expect(instantOf(body.prices.at(-1))).toBe(AUTUMN_NEXT_LAST);
+  });
+
+  it("price/tomorrow does not skip the spring-forward day", async () => {
+    const app = await setup();
+    await seedQuarterHours(pool, SPRING_PREV_START, SPRING_START, 90);
+    await seedQuarterHours(pool, SPRING_START, SPRING_END, 40);
+    await seedQuarterHours(pool, SPRING_END, SPRING_NEXT_END, 80);
+    // Local 2026-03-28 23:30. A 24h shift of this instant jumps over the
+    // 23-hour local day 2026-03-29, so the endpoint answers with 2026-03-30.
+    pinClock("2026-03-28T21:30:00Z");
+
+    const res = await requestPath(app, "/api/v1/price/tomorrow");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as PriceListBody;
+
+    expect(body.available).toBe(true);
+    expect(body.prices).toHaveLength(92);
+    expect(instantOf(body.prices[0])).toBe(SPRING_START);
+    expect(instantOf(body.prices.at(-1))).toBe(SPRING_LAST);
+  });
+
+  it("price/cheapest can pick the 25th hour of the following fall-back day", async () => {
+    const app = await setup();
+    // Requested on 2026-10-24, whose search window runs to the end of
+    // 2026-10-25 — a 25-hour day. The cheapest hour is its last one.
+    await seedQuarterHours(pool, AUTUMN_PREV_START, AUTUMN_START, 90);
+    await seedQuarterHours(pool, AUTUMN_START, AUTUMN_LAST_HOUR, 60);
+    await seedQuarterHours(pool, AUTUMN_LAST_HOUR, AUTUMN_END, 1);
+    // Local 2026-10-24 12:00 (EEST, +03:00).
+    pinClock("2026-10-24T09:00:00Z");
+
+    const res = await requestPath(app, "/api/v1/price/cheapest?duration=60");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { start: string; end: string };
+
+    // A fixed +24h end for 2026-10-25 stops the search at 21:00Z, so the
+    // cheapest hour would be invisible and a 60-cent window would win instead.
+    expect(new Date(body.start).toISOString()).toBe(AUTUMN_LAST_HOUR);
+    expect(new Date(body.end).toISOString()).toBe(AUTUMN_END);
   });
 });

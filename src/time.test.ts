@@ -1,8 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
+  getCurrentAndNextDate,
   getUtcRangeForLocalDate,
   getUtcRangeForLocalDateSpan,
 } from "./time.js";
+
+/** Length of a UTC range in hours — 23, 24 or 25 for one local calendar day. */
+const rangeHours = (startUtc: string, endUtc: string): number =>
+  (new Date(endUtc).getTime() - new Date(startUtc).getTime()) / 3_600_000;
 
 describe("getUtcRangeForLocalDate", () => {
   it("converts Helsinki date to correct UTC range (UTC+2 winter)", () => {
@@ -52,42 +57,75 @@ describe("getUtcRangeForLocalDate", () => {
   });
 
   it("handles DST spring forward (Helsinki 2026-03-29, clocks +1h at 03:00)", () => {
-    // On DST transition day, midnight Helsinki is still EET (UTC+2)
-    // 2026-03-29 00:00 Helsinki = 2026-03-28 22:00 UTC (EET, before switch)
-    // The local day is 23 hours long, but the UTC range is still 24h
-    // because the offset at midnight is +02:00
+    // The local day 2026-03-29 is 23 hours long, and the UTC range is 23 hours
+    // to match. Each edge resolves its own offset:
+    //   start = 2026-03-29 00:00 Helsinki (EET, +02:00) = 2026-03-28 22:00 UTC
+    //   end   = 2026-03-30 00:00 Helsinki (EEST, +03:00) = 2026-03-29 21:00 UTC
+    // A fixed +24h end would run to 2026-03-29 22:00 UTC and overshoot the day
+    // by one hour, pulling in the first interval of 2026-03-30.
     const { startUtc, endUtc } = getUtcRangeForLocalDate(
       "2026-03-29",
       "Europe/Helsinki",
     );
 
     expect(startUtc).toBe("2026-03-28T22:00:00.000Z");
-    expect(endUtc).toBe("2026-03-29T22:00:00.000Z");
+    expect(endUtc).toBe("2026-03-29T21:00:00.000Z");
+    expect(rangeHours(startUtc, endUtc)).toBe(23);
   });
 
   it("handles DST fall back (Helsinki 2026-10-25, clocks -1h at 04:00)", () => {
-    // On fall back day, midnight Helsinki is EEST (UTC+3)
-    // 2026-10-25 00:00 Helsinki = 2026-10-24 21:00 UTC (EEST, before switch)
-    // The local day is 25 hours long, but the UTC range is still 24h
+    // The local day 2026-10-25 is 25 hours long, and the UTC range is 25 hours
+    // to match. Each edge resolves its own offset:
+    //   start = 2026-10-25 00:00 Helsinki (EEST, +03:00) = 2026-10-24 21:00 UTC
+    //   end   = 2026-10-26 00:00 Helsinki (EET,  +02:00) = 2026-10-25 22:00 UTC
+    // A fixed +24h end would stop at 2026-10-25 21:00 UTC and drop the 25th
+    // hour — the four quarter-hours Nord Pool publishes as local 23:00–24:00.
     const { startUtc, endUtc } = getUtcRangeForLocalDate(
       "2026-10-25",
       "Europe/Helsinki",
     );
 
     expect(startUtc).toBe("2026-10-24T21:00:00.000Z");
-    expect(endUtc).toBe("2026-10-25T21:00:00.000Z");
+    expect(endUtc).toBe("2026-10-25T22:00:00.000Z");
+    expect(rangeHours(startUtc, endUtc)).toBe(25);
   });
 
   it("handles DST spring forward for Berlin (2026-03-29)", () => {
-    // Berlin midnight on spring forward day is CET (UTC+1)
-    // 2026-03-29 00:00 Berlin = 2026-03-28 23:00 UTC
+    // Not Helsinki-hard-coded: Berlin runs CET (+01:00) into the transition and
+    // CEST (+02:00) out of it, so the same 23-hour local day shows up shifted.
+    //   start = 2026-03-29 00:00 Berlin (CET,  +01:00) = 2026-03-28 23:00 UTC
+    //   end   = 2026-03-30 00:00 Berlin (CEST, +02:00) = 2026-03-29 22:00 UTC
     const { startUtc, endUtc } = getUtcRangeForLocalDate(
       "2026-03-29",
       "Europe/Berlin",
     );
 
     expect(startUtc).toBe("2026-03-28T23:00:00.000Z");
-    expect(endUtc).toBe("2026-03-29T23:00:00.000Z");
+    expect(endUtc).toBe("2026-03-29T22:00:00.000Z");
+    expect(rangeHours(startUtc, endUtc)).toBe(23);
+  });
+
+  it("handles DST fall back for Berlin (2026-10-25)", () => {
+    //   start = 2026-10-25 00:00 Berlin (CEST, +02:00) = 2026-10-24 22:00 UTC
+    //   end   = 2026-10-26 00:00 Berlin (CET,  +01:00) = 2026-10-25 23:00 UTC
+    const { startUtc, endUtc } = getUtcRangeForLocalDate(
+      "2026-10-25",
+      "Europe/Berlin",
+    );
+
+    expect(startUtc).toBe("2026-10-24T22:00:00.000Z");
+    expect(endUtc).toBe("2026-10-25T23:00:00.000Z");
+    expect(rangeHours(startUtc, endUtc)).toBe(25);
+  });
+
+  it("keeps a normal day at 24 hours in every supported timezone", () => {
+    for (const timeZone of ["Europe/Helsinki", "Europe/Berlin", "UTC"]) {
+      const { startUtc, endUtc } = getUtcRangeForLocalDate(
+        "2026-07-15",
+        timeZone,
+      );
+      expect(rangeHours(startUtc, endUtc)).toBe(24);
+    }
   });
 });
 
@@ -121,8 +159,7 @@ describe("getUtcRangeForLocalDateSpan", () => {
     expect(span.startUtc).toBe(
       getUtcRangeForLocalDate("2026-03-20", "Europe/Helsinki").startUtc,
     );
-    // End is the local midnight that STARTS the day after `to` (2026-04-06),
-    // not `to`'s hard +24h endUtc. For this normal 24h to-date they coincide.
+    // End is the local midnight that STARTS the day after `to` (2026-04-06).
     expect(span.endUtc).toBe(
       getUtcRangeForLocalDate("2026-04-06", "Europe/Helsinki").startUtc,
     );
@@ -141,9 +178,10 @@ describe("getUtcRangeForLocalDateSpan", () => {
     const nextDay = getUtcRangeForLocalDate("2026-02-26", "Europe/Helsinki");
 
     expect(single.startUtc).toBe(day.startUtc);
-    // Span end is the next day's midnight start; for this normal 24h day that
-    // equals the single-date endUtc, but the span no longer defers to it.
+    // A one-day span and the single-day range are the same range, because both
+    // are built from `startOfLocalDayUtc` at both edges.
     expect(single.endUtc).toBe(nextDay.startUtc);
+    expect(single.endUtc).toBe(day.endUtc);
   });
 
   it("is not Helsinki-hard-coded — works for Europe/Oslo (UTC+1 winter)", () => {
@@ -165,7 +203,7 @@ describe("getUtcRangeForLocalDateSpan", () => {
     // local day. Span 2026-10-24 .. 2026-10-25:
     // start = 2026-10-24 00:00 (EEST, +03:00) = 2026-10-23 21:00 UTC
     // end   = 2026-10-26 00:00 (EET,  +02:00) = 2026-10-25 22:00 UTC  (49h span)
-    // The old +24h-of-to-date endUtc was 2026-10-25 21:00 UTC, dropping the 25th hour.
+    // A 24h+24h span would end at 2026-10-25 21:00 UTC and drop the 25th hour.
     const { startUtc, endUtc } = getUtcRangeForLocalDateSpan(
       "2026-10-24",
       "2026-10-25",
@@ -183,7 +221,7 @@ describe("getUtcRangeForLocalDateSpan", () => {
     // from === to === 2026-10-25 (the 25h fall-back day):
     // start = 2026-10-25 00:00 (EEST, +03:00) = 2026-10-24 21:00 UTC
     // end   = 2026-10-26 00:00 (EET,  +02:00) = 2026-10-25 22:00 UTC  (25h)
-    // Before Option A the end was 2026-10-25 21:00 UTC (24h) — one hour short.
+    // A fixed 24h span would end at 2026-10-25 21:00 UTC — one hour short.
     const { startUtc, endUtc } = getUtcRangeForLocalDateSpan(
       "2026-10-25",
       "2026-10-25",
@@ -195,5 +233,89 @@ describe("getUtcRangeForLocalDateSpan", () => {
     const spanHours =
       (new Date(endUtc).getTime() - new Date(startUtc).getTime()) / 3_600_000;
     expect(spanHours).toBe(25);
+  });
+});
+
+describe("getCurrentAndNextDate", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Pin the clock to a UTC instant. Only `Date` is faked — no timers run here. */
+  const atUtc = (isoInstant: string): void => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(isoInstant));
+  };
+
+  it("returns consecutive labels on a normal day", () => {
+    atUtc("2026-02-25T12:00:00Z");
+
+    expect(getCurrentAndNextDate("Europe/Helsinki")).toEqual({
+      today: "2026-02-25",
+      tomorrow: "2026-02-26",
+    });
+  });
+
+  it("rolls over month and year boundaries", () => {
+    // Helsinki is EET (+02:00) in winter, so this instant is local 2027-01-01.
+    atUtc("2026-12-31T22:30:00Z");
+
+    expect(getCurrentAndNextDate("Europe/Helsinki")).toEqual({
+      today: "2027-01-01",
+      tomorrow: "2027-01-02",
+    });
+  });
+
+  it("does not collide on the fall-back day (Helsinki 2026-10-25, 25h local)", () => {
+    // Local 2026-10-25 00:30, still EEST (+03:00). The local date lasts 25
+    // hours, so a 24h shift of this instant stays inside it and yields
+    // tomorrow === today. Calendar arithmetic on the label cannot.
+    atUtc("2026-10-24T21:30:00Z");
+
+    const { today, tomorrow } = getCurrentAndNextDate("Europe/Helsinki");
+    expect(today).toBe("2026-10-25");
+    expect(tomorrow).toBe("2026-10-26");
+    expect(tomorrow).not.toBe(today);
+  });
+
+  it("stays correct after the fall-back transition (Helsinki 2026-10-25)", () => {
+    // Local 2026-10-25 12:00, now EET (+02:00) — the other side of the switch.
+    atUtc("2026-10-25T10:00:00Z");
+
+    expect(getCurrentAndNextDate("Europe/Helsinki")).toEqual({
+      today: "2026-10-25",
+      tomorrow: "2026-10-26",
+    });
+  });
+
+  it("does not skip the spring-forward day (Helsinki 2026-03-29, 23h local)", () => {
+    // Local 2026-03-28 23:30, EET (+02:00). The next local date lasts only 23
+    // hours, so a 24h shift of this instant jumps clean over it and yields
+    // 2026-03-30 — the whole date 2026-03-29 disappears.
+    atUtc("2026-03-28T21:30:00Z");
+
+    const { today, tomorrow } = getCurrentAndNextDate("Europe/Helsinki");
+    expect(today).toBe("2026-03-28");
+    expect(tomorrow).toBe("2026-03-29");
+  });
+
+  it("stays correct inside the spring-forward day (Helsinki 2026-03-29)", () => {
+    // Local 2026-03-29 00:30, before the 03:00 switch.
+    atUtc("2026-03-28T22:30:00Z");
+
+    expect(getCurrentAndNextDate("Europe/Helsinki")).toEqual({
+      today: "2026-03-29",
+      tomorrow: "2026-03-30",
+    });
+  });
+
+  it("is not Helsinki-hard-coded — Berlin fall-back day (2026-10-25)", () => {
+    // Local 2026-10-25 00:30 in Berlin, still CEST (+02:00).
+    atUtc("2026-10-24T22:30:00Z");
+
+    expect(getCurrentAndNextDate("Europe/Berlin")).toEqual({
+      today: "2026-10-25",
+      tomorrow: "2026-10-26",
+    });
   });
 });
