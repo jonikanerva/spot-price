@@ -31,9 +31,6 @@ export const storePrices = async (
     client.release();
   }
 
-  // `fetch-job.ts` derives `tomorrowAvailable` from this count, so it must stay
-  // the number of records HANDED IN. A rows-written count would read unchanged
-  // data as missing prices and add upstream calls.
   return prices.length;
 };
 

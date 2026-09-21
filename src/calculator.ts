@@ -227,8 +227,8 @@ export const buildPriceWindow = (prices: TotalPrice[]): PriceWindow | null => {
  * exact multiple of the interval, the window rounds UP to the next interval
  * boundary (e.g. 280 min with 15-min data gives a 285-min window).
  *
- * Scans contiguous windows in O(n^2). That is acceptable only because n is
- * bounded at <= 96 per day; do not call it with an unbounded series.
+ * Contiguous-window scan, O(n^2). Pass at most a day or two of prices
+ * (n <= 96/day); a history-sized input breaches the `STACK.md §4` budget.
  */
 export const findCheapestWindow = (
   prices: readonly TotalPrice[],
