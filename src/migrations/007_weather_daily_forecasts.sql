@@ -54,6 +54,6 @@ CREATE TABLE IF NOT EXISTS weather_daily_forecasts (
 
 -- NO further indexes on purpose. The only queries today are the PK-keyed insert
 -- and the retention prune (DELETE WHERE issued_at < $1), which at ~154k rows in
--- steady state is a cheap scan on a small table. The read path is designed in
--- a later change; adding a speculative index now would cost write amplification on
--- every hourly run for a query that does not exist yet.
+-- steady state is a cheap scan on a small table. The read path is designed in a
+-- later change; adding a speculative index now would cost write amplification
+-- on every hourly run for a query that does not exist yet.

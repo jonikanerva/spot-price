@@ -916,8 +916,8 @@ const ladderDiagnosticFor = (
 /**
  * Measure the vintage-leak optimism: the same backtest run twice over the SAME
  * scored origins, differing ONLY in forecast-vintage selection — honest
- * (issue-time) vs leaked (the latest vintage regardless of issue time). The delta is
- * how much better the leaked scoreboard looks. Pure.
+ * (issue-time) vs leaked (the latest vintage regardless of issue time). The
+ * delta is how much better the leaked scoreboard looks. Pure.
  *
  * The covered-origin set is taken from the honest run (it skips pre-vintage
  * origins); the leaked run is restricted to exactly that set, so both score the

@@ -66,8 +66,8 @@ export const runWeatherFetchJob = async (
     }
 
     // Daily block — AFTER the hourly store, in its OWN try/catch and its OWN
-    // transaction. The hourly rows are already committed at this point,
-    // so nothing here can discard them. `successes` deliberately counts HOURLY
+    // transaction. The hourly rows are already committed at this point, so
+    // nothing here can discard them. `successes` deliberately counts HOURLY
     // successes only, so the "every point failed → do not prune" guard below
     // keeps its meaning, and a daily failure never downgrades `status`.
     //

@@ -351,10 +351,11 @@ export const applyWithinDayShape = (
  * pushed `SANITY_MARGIN_K` price-spreads beyond the real-data range, it sits
  * provably outside anything the cheapest/most-expensive quarters can take, so
  * it never re-ties cheap or genuinely-negative quarters: the within-day
- * ordering down to and below zero is preserved. The lower bound is `min(0, …)` so a flat-but-positive history can
- * never clamp a genuine near-zero/negative prediction up to a positive value;
- * the `−50 c/kWh` term is a backstop for an essentially flat history. The bound
- * auto-widens as FI deep-negative prices deepen the observed spread.
+ * ordering down to and below zero is preserved. The lower bound is `min(0, …)`
+ * so a flat-but-positive history can never clamp a genuine near-zero/negative
+ * prediction up to a positive value; the `−50 c/kWh` term is a backstop for an
+ * essentially flat history. The bound auto-widens as FI deep-negative prices
+ * deepen the observed spread.
  *
  * Pure — the caller passes the trailing ~FLOOR_HISTORY_DAYS of stored spot
  * prices as `(quarterKey, spotCentsKwh)` pairs. Returns null when there is no
