@@ -605,9 +605,8 @@ describe("runForecastFetchJob", () => {
 
   it("archives only the in-window share of a realistic 34-day fetch window (issue #90)", async () => {
     // The job fetches [now − HISTORY_DAYS, now + FORECAST_DAYS] every hour.
-    // Sample the
-    // window every 6h (the exact spacing does not matter — the ratio does) for
-    // both forecast datasets, plus one actual.
+    // Sample the window every 6h (the exact spacing does not matter — the ratio
+    // does) for both forecast datasets, plus one actual.
     const step = 6 * HOUR_MS;
     const windowStart = NOW.getTime() - HISTORY_DAYS * DAY_MS;
     const windowEnd = NOW.getTime() + FORECAST_DAYS * DAY_MS;
@@ -636,8 +635,8 @@ describe("runForecastFetchJob", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.vintageStored).toBe(inWindow);
-      // The saving is the point of the issue: the old behaviour archived every
-      // forecast record in the window, an order of magnitude more.
+      // Archiving every forecast record in the window would store an order of
+      // magnitude more rows than the guard admits.
       expect(forecastRecords.length / result.vintageStored).toBeGreaterThan(9);
     }
 

@@ -89,8 +89,8 @@ describe("calculateTotalPrice", () => {
   });
 
   it("floors a negative spot at 0 for the total but keeps the displayed spot raw", () => {
-    // A negative spot does not flow into the total: effectiveSpot =
-    // max(0, -1.0) = 0, so the -1.0 is removed from the base and re-VAT'd.
+    // A negative spot does not flow into the total: effectiveSpot = max(0, -1.0)
+    // = 0, so the -1.0 is removed from the base and re-VAT'd.
     const price = makePrice(14, -10.0); // -1.0 c/kWh spot
     const result = calculateTotalPrice(price, defaultSettings);
 

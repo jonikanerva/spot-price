@@ -11,8 +11,8 @@
  *
  * It reconstructs, per forecast dataset and lead-time bin, how much the archived
  * vintages (`fingrid_forecasts`) were revised between early issuance and
- * delivery, and prints a GO / MARGINAL / DEFER recommendation. All
- * DB I/O lives here; `revision-magnitude.ts` stays pure. This is NOT a scheduled
+ * delivery, and prints a GO / MARGINAL / DEFER recommendation. All DB I/O lives
+ * here; `revision-magnitude.ts` stays pure. This is NOT a scheduled
  * job and adds no endpoint (`STACK §9`). It never logs the connection string or
  * any secret (`STACK §8`).
  *

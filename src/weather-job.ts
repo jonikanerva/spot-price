@@ -9,19 +9,19 @@ import {
 import type { WeatherFetchJobResult, WeatherPointFailure } from "./types.js";
 
 /**
- * OpenWeatherMap weather data-collection job for the FI forecast.
- * Mirrors `forecast-job.ts`: fetch the public upstream, store idempotently,
+ * OpenWeatherMap weather data-collection job for the FI forecast. Mirrors
+ * `forecast-job.ts`: fetch the public upstream, store idempotently,
  * then prune beyond the retention window. The OWM boundary degrades rather than
  * throwing, so this job can never break the authoritative price path.
  *
- * Per-point degrade: the configured points are
- * fetched and stored INDEPENDENTLY. One point's transient failure must not
- * discard the other point's irreversible issue-time data — that issuance can
- * never be re-fetched once the hour passes. So a failed point is recorded in
- * `failures` and the run reports `partial`; it does not abort the whole run.
+ * Per-point degrade: the configured points are fetched and stored
+ * INDEPENDENTLY. One point's transient failure must not discard the other
+ * point's irreversible issue-time data — that issuance can never be re-fetched
+ * once the hour passes. So a failed point is recorded in `failures` and the run
+ * reports `partial`; it does not abort the whole run.
  *
- * The DAILY block of the same response is stored on the same
- * principle, one level deeper: it is written after the hourly rows, in its own
+ * The DAILY block of the same response is stored on the same principle, one
+ * level deeper: it is written after the hourly rows, in its own
  * transaction and its own try/catch, and its failures are reported in a separate
  * `daily` summary. `status`, `stored` and `pruned` remain statements about the
  * HOURLY collection alone. No extra upstream call is made — the daily block
@@ -65,8 +65,8 @@ export const runWeatherFetchJob = async (
       failures.push({ pointId: point.id, reason: result.reason });
     }
 
-    // Daily block — AFTER the hourly store, in its OWN try/catch and
-    // its OWN transaction. The hourly rows are already committed at this point,
+    // Daily block — AFTER the hourly store, in its OWN try/catch and its OWN
+    // transaction. The hourly rows are already committed at this point,
     // so nothing here can discard them. `successes` deliberately counts HOURLY
     // successes only, so the "every point failed → do not prune" guard below
     // keeps its meaning, and a daily failure never downgrades `status`.

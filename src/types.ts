@@ -144,8 +144,8 @@ export interface WeatherDailyRecord {
 }
 
 /**
- * Outcome of parsing the DAILY block of one One Call response.
- * Tagged separately from the hourly outcome, and nested inside
+ * Outcome of parsing the DAILY block of one One Call response. Tagged
+ * separately from the hourly outcome, and nested inside
  * `WeatherFetchResult` rather than flattened into parallel booleans, because
  * the two blocks are parsed INDEPENDENTLY: a daily-schema drift must degrade
  * only itself and leave the hourly records untouched, since an issuance can
@@ -165,9 +165,9 @@ export type WeatherDailyResult =
  * (timeout, auth, parse) yields an empty `records` plus a `reason`, and never
  * throws — a weather problem can never reach the authoritative price path.
  *
- * `daily` carries the independently-parsed daily block on BOTH
- * branches: a transport failure degrades both, while a schema failure in one
- * block leaves the other intact.
+ * `daily` carries the independently-parsed daily block on BOTH branches: a
+ * transport failure degrades both, while a schema failure in one block leaves
+ * the other intact.
  */
 export type WeatherFetchResult =
   | {
@@ -183,10 +183,10 @@ export type WeatherFetchResult =
     };
 
 /**
- * Daily-block summary of one weather job run. Kept OUTSIDE the
- * `status` tag on purpose: `status` stays a statement about the HOURLY
- * collection, so the "every point failed → do not prune" guard keeps its
- * meaning. A daily failure never downgrades an hourly success.
+ * Daily-block summary of one weather job run. Kept OUTSIDE the `status` tag on
+ * purpose: `status` stays a statement about the HOURLY collection, so the
+ * "every point failed → do not prune" guard keeps its meaning. A daily failure
+ * never downgrades an hourly success.
  */
 export interface WeatherDailyJobSummary {
   /** Daily rows inserted this run (append-only per issuance). */

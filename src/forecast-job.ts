@@ -103,14 +103,14 @@ export const runForecastFetchJob = async (
   const pruneCutoff = new Date(nowMs - RETENTION_DAYS * DAY_MS).toISOString();
   const pruned = await pruneFingridRecordsBefore(pool, pruneCutoff);
 
-  // Step 2 — per-issuance vintage archival of the FORECAST datasets,
-  // in its OWN try/catch and its OWN transaction. Per STACK §9 the forecast path
-  // must never affect the authoritative actuals upsert above: a vintage failure
-  // here degrades (logged + reported) and can never roll back or abort step 1.
+  // Step 2 — per-issuance vintage archival of the FORECAST datasets, in its OWN
+  // try/catch and its OWN transaction. Per STACK §9 the forecast path must never
+  // affect the authoritative actuals upsert above: a vintage failure here
+  // degrades (logged + reported) and can never roll back or abort step 1.
   // `storeFingridForecastVintages` filters internally — to 245/165, and to
-  // targets no older than `VINTAGE_BACKFILL_HOURS` before the issuance —
-  // so passing the full 34-day fetch result is safe and archives only the
-  // forecast part of it. `issuedAt` is the job's `now`, hour-truncated to UTC (a
+  // targets no older than `VINTAGE_BACKFILL_HOURS` before the issuance — so
+  // passing the full 34-day fetch result is safe and archives only the forecast
+  // part of it. `issuedAt` is the job's `now`, hour-truncated to UTC (a
   // fetch-time proxy for true issuance, ±1h of jitter) so re-runs within the
   // same hour stay idempotent against the (dataset_id, issued_at, start_time) PK.
   const issuedAt = new Date(

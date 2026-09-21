@@ -14,13 +14,13 @@
 -- !!! APPEND-ONLY PER ISSUANCE — NOT upsert-latest like `fingrid_actuals` !!!
 -- storeFingridForecastVintages inserts with ON CONFLICT DO NOTHING (it does NOT
 -- DO UPDATE), mirroring `weather_forecasts`. Keeping every issuance is what
--- makes a later vintage-correct backtest and calibrated fit
--- leakage-free: they must train/evaluate on the forecast that was actually
--- available before the target, never on a hindsight-overwritten value. Never
--- "align" this table to a latest-only upsert — collapsing to one row per target
--- on STORE would destroy that property. (The LIVE route reads latest-per-target
--- at QUERY time via a LATERAL skip-scan — see the index comment below — which
--- preserves all stored issuances.)
+-- makes a later vintage-correct backtest and calibrated fit leakage-free: they
+-- must train/evaluate on the forecast that was actually available before the
+-- target, never on a hindsight-overwritten value. Never "align" this table to a
+-- latest-only upsert — collapsing to one row per target on STORE would destroy
+-- that property. (The LIVE route reads latest-per-target at QUERY time via a
+-- LATERAL skip-scan — see the index comment below — which preserves all stored
+-- issuances.)
 --
 -- `issued_at` is an HOUR-TRUNCATED FETCH-TIME PROXY for issuance, not a
 -- Fingrid-provided stamp: the hourly job records its own run instant truncated

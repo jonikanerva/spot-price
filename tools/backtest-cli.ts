@@ -488,8 +488,8 @@ const main = async (): Promise<void> => {
       );
     }
 
-    // --compare measures the vintage-leak optimism: honest
-    // issue-time vs leaked latest-vintage over the same origins.
+    // --compare measures the vintage-leak optimism: honest issue-time vs
+    // leaked latest-vintage over the same origins.
     const ok = hasFlag(argv, "--compare")
       ? printCompare(data)
       : printReport(data);

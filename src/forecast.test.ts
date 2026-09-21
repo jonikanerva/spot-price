@@ -647,12 +647,12 @@ describe("buildForecast (integration of the pure pipeline)", () => {
   });
 
   it("ranks within a day in PHASE with the lag shape (inversion gone)", () => {
-    // A month of history whose price has a strong within-day
-    // SHAPE (a clean daily/weekly-repeating sinusoid) sitting on a level driven
-    // by the grid residual. The ridge model has real LEVEL skill but is rank-blind
-    // to that within-day shape; `applyWithinDayShape` stamps the persistence
-    // (1d/7d lag) shape back on, so the forecast's within-day ranking must be in
-    // phase with the lag — positive Spearman, not the old inverted negative.
+    // A month of history whose price has a strong within-day SHAPE (a clean
+    // daily/weekly-repeating sinusoid) sitting on a level driven by the grid
+    // residual. The ridge model has real LEVEL skill but is rank-blind to that
+    // within-day shape; `applyWithinDayShape` stamps the persistence (1d/7d lag)
+    // shape back on, so the forecast's within-day ranking must be in phase with
+    // the lag — a positive Spearman, never a negative one.
     const shape = (q: number): number =>
       // peaks late-day, troughs at night — the realistic FI rhythm.
       4 * Math.sin((2 * Math.PI * (q - 24)) / 96);
@@ -815,8 +815,8 @@ describe("buildForecast — prediction bands", () => {
       expect(point.estimatedSpotHighCentsKwh).toBeDefined();
       const low = point.estimatedSpotLowCentsKwh ?? 0;
       const high = point.estimatedSpotHighCentsKwh ?? 0;
-      // No floor any more: the only invariant is the ordering. `low` is free to
-      // go negative for a genuinely cheap/negative quarter.
+      // The only invariant is the ordering. `low` is free to go negative for a
+      // genuinely cheap/negative quarter.
       expect(low).toBeLessThanOrEqual(point.estimatedSpotCentsKwh);
       expect(high).toBeGreaterThanOrEqual(point.estimatedSpotCentsKwh);
     }

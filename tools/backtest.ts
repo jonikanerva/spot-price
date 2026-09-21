@@ -3,8 +3,8 @@
  *
  * Offline only. `STACK.md §0` forbids `src/` runtime from importing `tools/`.
  * The runnable entry points are `tools/backtest-cli.ts` and
- * `tools/regenerate-bands.ts`. This module is PURE: no `main`, no
- * `process.env`, no network, no DB.
+ * `tools/regenerate-bands.ts`. This module is PURE: no `main`, no `process.env`,
+ * no network, no DB.
  *
  * Why issue-time keyed (CORRECTNESS-CRITICAL): the forecast is only honestly
  * evaluable against the information the route ACTUALLY had when it issued the
@@ -81,7 +81,7 @@ const FORECAST_DATASET_IDS = ["245", "165"] as const;
 /**
  * Everything the backtest reads. Public grid + price data only — no user data.
  *
- * The Fingrid inputs are split by revision behaviour: ACTUALS
+ * The Fingrid inputs are split by revision behaviour. ACTUALS
  * (75/124) are single-valued per quarter (`FingridRecord`), while FORECASTS
  * (245/165) are kept as per-issuance VINTAGES (`ForecastVintageRecord`, carrying
  * `issuedAt`) so the backtest can reconstruct the forecast value actually
@@ -321,9 +321,9 @@ export const collectInputTimestamps = (
         forwardLookingAllowed: true,
       });
       // The ISSUANCE, however, must not postdate the issue time. A forecast
-      // issued at/after `tMs` was not
-      // knowable at issue time even though its target is (correctly) in the
-      // future. This entry makes "latest" mode fail the guard by design.
+      // issued at/after `tMs` was not knowable at issue time even though its
+      // target is (correctly) in the future. This entry makes "latest" mode fail
+      // the guard by design.
       out.push({
         source: `fingrid_forecast_vintage_${dataset}`,
         ms: msOf(r.issuedAt),

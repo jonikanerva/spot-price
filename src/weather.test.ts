@@ -246,9 +246,8 @@ describe("fetchWeather", () => {
   });
 
   it("ISOLATION: a malformed daily block still yields every hourly record", async () => {
-    // One shared schema would fail the
-    // whole parse here and DISCARD the hourly rows — and that issuance can never
-    // be re-fetched once its hour has passed.
+    // One shared schema would fail the whole parse here and DISCARD the hourly
+    // rows — and that issuance can never be re-fetched once its hour has passed.
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
         hourly: [VALID_HOURLY],

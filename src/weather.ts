@@ -101,9 +101,8 @@ const EpochSecondsSchema = z
  * Collected: all six `temp` sub-fields, `clouds`, `uvi`, and the solar bounds
  * `sunrise` / `sunset`. The solar bounds are what make the daily scalars usable
  * at all: `clouds` and `uvi` are ONE value for the whole day. Bounded by
- * `sunrise`/`sunset` they become a
- * within-day shape instead — a closed-form diurnal curve, which is what
- * `VISION.md → The forecast` allows.
+ * `sunrise`/`sunset` they become a within-day shape instead — a closed-form
+ * diurnal curve, which is what `VISION.md → The forecast` allows.
  *
  * Deliberately NOT collected: `wind_speed` / `wind_deg` (Fingrid dataset 245
  * already forecasts wind power at 15-minute resolution over ~72 h for the whole
@@ -245,8 +244,8 @@ const dailyDegraded = (reason: string): WeatherDailyResult => ({
 
 /**
  * Parse the DAILY block of an already-fetched body, INDEPENDENTLY of the hourly
- * parse. Two separate `safeParse` calls over the same body is the
- * load-bearing shape: folding `daily` into the hourly schema would mean one
+ * parse. Two separate `safeParse` calls over the same body is the load-bearing
+ * shape: folding `daily` into the hourly schema would mean one
  * deviating daily entry fails the whole parse, so the point's HOURLY rows are
  * discarded — and `weather-job.ts` records that an issuance can never be
  * re-fetched once its hour has passed. The failure would also look like ordinary
@@ -288,9 +287,9 @@ const degraded = (reason: string): WeatherFetchResult => ({
 
 /**
  * Fetch the One Call 3.0 forecast for a single point — the hourly block and the
- * daily block from the same response. Always resolves;
- * failures are reported via the degraded branch of the tagged union and never
- * thrown. The two blocks degrade independently.
+ * daily block from the same response. Always resolves; failures are reported
+ * via the degraded branch of the tagged union and never thrown. The two blocks
+ * degrade independently.
  */
 export const fetchWeather = async (
   params: WeatherFetchParams,

@@ -238,8 +238,8 @@ export const registerForecastRoutes = (app: OpenAPIHono<AppEnv>): void => {
     }
 
     // Forecasts (245/165) live ONLY in the vintage table: read the latest
-    // issuance per target (single-home design). Actuals (75/124)
-    // stay upsert-latest in `fingrid_actuals`.
+    // issuance per target (single-home design). Actuals (75/124) stay
+    // upsert-latest in `fingrid_actuals`.
     const [windForecast, windActual, consumptionForecast, consumptionActual] =
       await Promise.all([
         getFingridForecastVintagesLatest(
