@@ -82,7 +82,7 @@ Every visible surface handles the states `VISION.md` and `STACK.md` declare — 
 
 ## Time
 
-Treat time like any other external input: work in one absolute reference (UTC) everywhere internally — logic, domain values, persistence, caches, and logs — and convert to or from a zoned/local representation only at the boundary (normalise inbound values on parse; convert outbound values when rendering a user-facing value). Nothing between the edges holds local time. Never hand-roll timezone-offset arithmetic; use the platform time APIs named in `STACK.md`. Instants crossing a persistence or wire boundary are serialised in UTC. `STACK.md` pins the concrete types and calls.
+Treat time like any other external input: work in one absolute reference (UTC) everywhere internally — logic, domain values, persistence, caches, and logs — and convert to or from a zoned/local representation only at the boundary (normalise inbound values on parse; convert outbound values when rendering a user-facing value). Nothing between the edges holds local time. Never hand-roll timezone-offset arithmetic; use the platform time APIs. Instants crossing a persistence or wire boundary are serialised in UTC. Where `STACK.md` names a concrete time type or call, that file is the authority; it names none today.
 
 ## Side effects
 
@@ -156,6 +156,6 @@ Agents and skills come from the user-level `~/.claude` directory, which the user
 
 ## Decision rights
 
-- **Auto-allow**: read-only commands, the `STACK.md` build/test/lint commands, feature-branch ops (create, commit, push and force-push origin `<branch>`), PR creation, `gh pr view`/`comment`/`diff`/`review`, `gh issue view`/`list`/`comment`, `STACK.md` edits.
+- **Auto-allow**: read-only commands, the `STACK.md` build/test/lint commands, feature-branch ops (create, commit, push and force-push origin `<branch>` with `--force-with-lease`), PR creation, `gh pr view`/`comment`/`diff`/`review`, `gh issue view`/`list`/`comment`, `STACK.md` edits.
 - **Ask first**: edits to `VISION.md` or `CLAUDE.md`, creating/restructuring issues, `gh api` calls changing repo settings. `gh pr merge` only when explicitly asked.
-- **Never**: push to `main` (normal or force), bypass hooks (`--no-verify`), `rm -rf` in the project, or persist/transmit data forbidden by `VISION.md → Persistence and Privacy Posture`.
+- **Never**: push to `main` (normal or force), bare `git push --force` on any branch, bypass hooks (`--no-verify`), `rm -rf` in the project, or persist/transmit data forbidden by `VISION.md → Persistence and Privacy Posture`.
