@@ -1,4 +1,4 @@
--- PostgreSQL baseline: all tables from the SQLite era, with proper types.
+-- PostgreSQL baseline.
 
 -- Spot electricity prices from Nord Pool
 CREATE TABLE IF NOT EXISTS prices (

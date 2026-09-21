@@ -27,7 +27,6 @@ const rowToSettings = (row: UserSettingsRow): UserSettings => ({
   area: row.area,
 });
 
-/** Get settings for a user, or null if not configured */
 export const getUserSettings = async (
   pool: Pool,
   userId: string,

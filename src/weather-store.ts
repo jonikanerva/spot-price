@@ -9,12 +9,7 @@ import type { WeatherDailyRecord, WeatherRecord } from "./types.js";
  * issuance (`ON CONFLICT DO NOTHING`), NOT the upsert-latest that
  * `fingrid-store.ts` uses.
  *
- * Why append-only: each hourly run carries a fresh `issued_at`, so the same
- * `target_time` accumulates one row per issuance, preserving what the forecast
- * SAID at each issue time. A later weather-feature backtest (issue #73 Phase 3)
- * must evaluate on the pre-target forecast, never a hindsight-overwritten
- * value. Overwriting to the latest issuance would silently destroy that
- * leakage-free property — never convert this to a DO UPDATE.
+ * Never convert this insert to a `DO UPDATE` — see `STACK.md §5`.
  */
 
 /**

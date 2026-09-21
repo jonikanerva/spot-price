@@ -305,7 +305,7 @@ const printReport = (data: BacktestData): boolean => {
 };
 
 // ---------------------------------------------------------------------------
-// Optimism comparison report (--compare) — the #80 deliverable
+// Optimism comparison report (--compare)
 // ---------------------------------------------------------------------------
 
 /** Sparse-ladder fraction above which the delta is likely understated. */
@@ -341,7 +341,7 @@ const printCompare = (data: BacktestData): boolean => {
     )}  (leaked is FALSE BY DESIGN — the vintage postdates issue time)`,
   );
 
-  // FIXED caveat block (da cut 2) — printed verbatim every run.
+  // FIXED caveat block. Printed verbatim every run.
   console.log(`\n  CAVEATS (read before quoting any number):`);
   console.log(
     `   - SIGN: delta = leaked − honest (positive ⇒ leaked was optimistic).`,

@@ -43,38 +43,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const HISTORY_DAYS = Math.max(FLOOR_HISTORY_DAYS, 4 * 7) + 1; // 31 days
 
 /**
- * Retention window for the `fingrid_actuals` ACTUAL rows (~2 years). Forward-
- * looking accumulation for future forecast phases (Phase 2 conformal, Phase 3
- * trees): the table grows from deploy date as the hourly job appends fresh
- * actual quarters, building up the seasonal history those phases backtest
- * against.
- *
- * Bounded to cap storage per the VISION data-footprint principle: now only the
- * 2 ACTUAL datasets (75/124) live here (forecasts moved to the vintage table),
- * so 2 × 96 quarters/day × 730 days ≈ 140k rows ≈ ~7 MB plus index — trivial on
- * Railway. This is well clear of the 31-day fetch + 30-day floor windows, so
- * the live forecast path never under-fills.
+ * Retention window for the `fingrid_actuals` ACTUAL rows (~2 years). Keep it
+ * well clear of the 31-day fetch window and the 30-day floor window, so the
+ * live forecast path never under-fills. Row math and accumulation policy: see
+ * `STACK.md §9`.
  */
 export const RETENTION_DAYS = 730;
 
 /**
- * Retention for the per-issuance forecast vintages (issue #78). 180 days — NOT
- * the 730 of `RETENTION_DAYS`. The 730 figure on the sibling is forward-looking
- * accumulation for seasonal backtests of the upsert-latest series; the vintage
- * table has named consumers with shorter horizons: #79's lead-time ladder needs
- * only days of vintages, and the #80/#81 vintage-correct backtest fits over the
- * ~30-day window and validates across a single seasonal cycle. 180 days covers
- * that with margin while keeping the footprint small. Reusing 730 here would be
- * cargo-culting the sibling's number, so it is set independently.
- *
- * SIZE (corrected in issue #90). The earlier estimate here — "2 datasets ×
- * 96 quarters/day × 24 issuances/day × 180 days" — assumed an issuance archives
- * ONE day of targets. It archived the whole 34-day fetch window, so the estimate
- * was ~34× too small: 6 528 rows/issuance, ~28.2 M rows over 180 days, ~4.2–5.6
- * GB against a 5 GB volume. `VINTAGE_BACKFILL_HOURS` (`fingrid-store.ts`) now
- * bounds an issuance to its future targets plus 6 h of backfill, so the rate is
- * ~624 rows/issuance ≈ 15 k rows/day ≈ 2.7 M rows over 180 days (VISION
- * data-footprint principle).
+ * Retention for the per-issuance forecast vintages. Set independently of
+ * `RETENTION_DAYS` — see `STACK.md §5`.
  */
 export const VINTAGE_RETENTION_DAYS = 180;
 
@@ -113,8 +91,7 @@ export const runForecastFetchJob = async (
   // Partition the fetch result by dataset class. Each class has ONE home:
   // actuals (75/124) -> upsert-latest in `fingrid_actuals`; forecasts (245/165)
   // -> append-only per issuance in `fingrid_forecasts`. Forecasts are
-  // deliberately NOT written to `fingrid_actuals` (single-home design — the
-  // product owner rejected mirroring them as legacy-driven redundancy).
+  // deliberately NOT written to `fingrid_actuals`.
   const isForecastDataset = (datasetId: number): boolean =>
     datasetId === DATASET_WIND_FORECAST ||
     datasetId === DATASET_CONSUMPTION_FORECAST;

@@ -1,30 +1,15 @@
 /**
- * OFFLINE / DEV-ONLY analysis ENGINE for issue #79 — quantify how much the
- * Fingrid FORECAST datasets (wind 245, consumption 165) get revised between
- * early issuance and delivery, and translate that into a GO / MARGINAL / DEFER
- * recommendation for the vintage-correct model training in #81.
+ * OFFLINE / DEV-ONLY analysis ENGINE: quantify how much the Fingrid FORECAST
+ * datasets (wind 245, consumption 165) are revised between early issuance and
+ * delivery, and turn that into a GO / MARGINAL / DEFER recommendation.
  *
- * This is a PURE LIBRARY: no `main`, no I/O (no `process.env`, no network, no
- * DB, no clock). It lives in `tools/` so it can never reach the production
- * bundle (tsup's only entry is `src/index.ts`; the ESLint guard forbids `src/`
- * runtime from importing `tools/`). The single runnable entry point is
- * `tools/revision-magnitude-cli.ts`, which loads the vintages off the DB (via
- * `getFingridForecastVintagesAll`) and feeds them here. It adds NO background
- * job (`STACK §9`) and NO endpoint.
+ * Offline only. `STACK.md §0` forbids `src/` runtime from importing `tools/`.
+ * The runnable entry point is `tools/revision-magnitude-cli.ts`. This module is
+ * PURE: no `process.env`, no network, no DB, no clock.
  *
- * The idea (errors-in-variables): the leaky training/backtest fed the model the
- * FINAL (≈near-delivery) forecast value for every past quarter — that is what
- * the pre-#78 upsert-latest storage kept. At serve time the model instead sees
- * a rough +12…+44h forecast. If those two differ a lot, the fit is calibrated
- * on cleaner data than it is applied to and over-trusts wind/consumption at long
- * horizons; if they barely differ, the whole #78→#81 chain is not worth it. This
- * engine measures that difference (the "revision") as a function of lead time.
- *
- * Reference = the FRESHEST vintage per target (max `issued_at`), i.e. exactly
- * the value upsert-latest would have kept and fed the leaky pipeline. A revision
- * at lead L is `value@L − reference`. Metrics are reported per dataset and per
- * lead-time bin. All arithmetic is on UTC epoch ms parsed from ISO strings
- * (`VISION.md → UTC internally`).
+ * Reference = the FRESHEST vintage per target (max `issued_at`). A revision at
+ * lead L is `value@L − reference`. All arithmetic is on UTC epoch ms parsed from
+ * ISO strings (`VISION.md → UTC internally`).
  */
 import {
   median,
@@ -54,19 +39,6 @@ export const VINTAGE_DATASET_IDS: readonly number[] = [
  * delivery". A negative lead (issuance postdates delivery) is also admissible —
  * that issuance is the closest thing to a settled value, so it is the best
  * available reference.
- *
- * Since issue #90 the archive bounds how negative that lead can get: a target is
- * archived only while it stays within `VINTAGE_BACKFILL_HOURS` (6 h) of the
- * issuance, so post-delivery references now run 0…−6 h instead of arbitrarily
- * far past delivery. Under the normal hourly cadence that still leaves every
- * target a reference well inside this 2 h gate. The exception is an outage
- * longer than `VINTAGE_BACKFILL_HOURS` that spans delivery: the target is then
- * archived only by issuances from BEFORE delivery, whose lead can exceed 2 h, so
- * `classifyTarget` excludes it as a stale reference. That is the outage
- * trade-off `VINTAGE_BACKFILL_HOURS` documents (`fingrid-store.ts`). Rows
- * archived BEFORE the #90 deploy carry an issuance from every later hour, so a
- * study that spans the cutover mixes two archive regimes — split the window on
- * the deploy date.
  */
 export const REFERENCE_MAX_LEAD_H = 2;
 
@@ -116,8 +88,8 @@ export const MARGINAL_ATTENUATION = 0.95;
 
 /**
  * One actual (settled) value for a target quarter, used ONLY as a secondary
- * sanity check that the freshest-forecast reference really is near-actual
- * (da amendment 4). Optional — the study runs without it.
+ * sanity check that the freshest-forecast reference really is near-actual.
+ * Optional — the study runs without it.
  */
 export interface ActualRecord {
   readonly datasetId: number;
@@ -171,7 +143,7 @@ export interface BucketMetrics {
   readonly relMeanAbs: number | null;
 }
 
-/** Reference-vs-actual sanity result (da amendment 4). */
+/** Reference-vs-actual sanity result. */
 export interface ActualCheck {
   readonly targetsCompared: number;
   readonly medianAbsRefMinusActual: number | null;
@@ -208,8 +180,7 @@ export interface DatasetRevisionSummary {
    * Aggregate `1 / (1 + NSR²)` over the sufficient bins — the classic OLS
    * attenuation factor for one noisy regressor. Deliberately a derived,
    * explicitly-labelled illustration, NOT the multivariate factor the real ridge
-   * fit applies (da amendment 3). Lower ⇒ the leaky fit over-trusts the feature
-   * more ⇒ more to gain from #81.
+   * fit applies. Lower ⇒ the leaky fit over-trusts the feature more.
    */
   readonly attenuationIllustration: number | null;
   /** Total revision observations in the sufficient bins. */
@@ -642,7 +613,7 @@ const actualIdFor = (forecastId: number): number => {
 };
 
 // ---------------------------------------------------------------------------
-// Recommendation (da amendments 1, 2, 6 + architect final design)
+// Recommendation
 // ---------------------------------------------------------------------------
 
 export type Recommendation = "GO" | "MARGINAL" | "DEFER";
@@ -656,19 +627,18 @@ const fmt = (v: number | null, dec = 3): string =>
   v !== null ? v.toFixed(dec) : "n/a";
 
 /**
- * GO / MARGINAL / DEFER only — NEVER a terminal "close #81" (da amendment 1). A
- * close can only be recorded later, after #80's measured backtest delta or a
- * winter re-measure, since this data is summer-only.
+ * Returns GO / MARGINAL / DEFER only. This study never emits a terminal verdict.
+ * The data is summer-only, so a terminal verdict needs a later measured backtest
+ * delta or a winter re-measure.
  *
  *   - DEFER  — no dataset has enough sufficient-bin samples to judge; re-measure
  *              once more vintages (ideally a winter regime) have accrued.
  *   - GO     — attenuation ≤ GO_ATTENUATION on either dataset: the leaky fit
  *              over-trusts the feature enough that lead-time-matched training
- *              (#81) should pay off.
+ *              should pay off.
  *   - MARGINAL — otherwise. At/above MARGINAL_ATTENUATION the effect "barely
- *              moves" and the verdict is provisional (summer); either way,
- *              confirm the real gain via #80's honest backtest before investing
- *              in #81 rather than closing it.
+ *              moves" and the verdict is provisional (summer). Confirm the real
+ *              gain with an honest backtest before investing further.
  */
 export const recommendation = (
   result: RevisionStudyResult,

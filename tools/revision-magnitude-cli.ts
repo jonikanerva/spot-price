@@ -1,11 +1,8 @@
 /**
  * OFFLINE / DEV-ONLY CLI for the Fingrid forecast-revision study (issue #79).
  *
- * IMPORTANT: this module lives in `tools/` (offline-only). It must NOT be
- * imported by any `src/` runtime module — the production bundle's only tsup
- * entry is `src/index.ts`, and an ESLint guard forbids `src/` runtime from
- * importing `tools/`, so this file never reaches `dist/`. It runs only as a tsx
- * script:
+ * Offline only. `STACK.md §0` forbids `src/` runtime from importing `tools/`.
+ * It runs only as a tsx script:
  *
  *     pnpm revision-magnitude --data tools/backtest-data/vintages.json  # replay
  *     pnpm revision-magnitude --db                          # study the live DB
@@ -20,11 +17,7 @@
  * any secret (`STACK §8`).
  *
  * The all-vintages ladder read lives in `src/fingrid-store.ts`
- * (`getFingridForecastVintagesAll`), NOT inline here: #80's vintage-correct
- * backtest needs the same read, `backtest-cli.ts` already imports store reads
- * from `src/`, and one home avoids duplicating the SQL + row mapping (architect
- * final design — reversing the earlier CLI-local plan). A pure read the server
- * never calls is not a server behaviour change.
+ * (`getFingridForecastVintagesAll`), NOT inline here.
  */
 // Import db.js FIRST for its TIMESTAMPTZ→ISO type-parser side-effect (db.ts):
 // without it `pg` returns TIMESTAMPTZ columns as `Date` objects, which would
@@ -252,7 +245,7 @@ const printDataset = (d: DatasetRevisionSummary): void => {
   );
   for (const b of d.buckets) {
     if (!b.sufficient) {
-      // Thin bin: show the count, suppress the stats (da / final design).
+      // Thin bin: show the count, suppress the stats.
       const tag = b.samples > 0 ? "insufficient" : "empty";
       console.log(
         `    ${b.label.padEnd(8)}  ${String(b.samples).padStart(7)}  ${String(

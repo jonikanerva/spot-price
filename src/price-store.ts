@@ -1,7 +1,6 @@
 import type { Pool } from "pg";
 import type { HourlyPrice } from "./types.js";
 
-/** Upsert hourly prices into the database (idempotent via ON CONFLICT) */
 export const storePrices = async (
   pool: Pool,
   prices: readonly HourlyPrice[],
@@ -14,6 +13,8 @@ export const storePrices = async (
   try {
     await client.query("BEGIN");
     for (const p of prices) {
+      // Keep this upsert unguarded: `fetch-job.ts` calls this writer OUTSIDE a
+      // try/catch, so a change here risks the authoritative price path.
       await client.query(
         `INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
          VALUES ($1, $2, $3, $4)

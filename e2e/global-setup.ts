@@ -21,21 +21,17 @@ const E2E_DATABASE_NAME = "spot_price_e2e";
 /**
  * Reset the dedicated e2e database before the suite runs. Imports NOTHING from
  * `src/` — a bare `pg.Client` against the literal above — so the dev
- * `DATABASE_URL` is never in scope and the wipe path that the SQLite version
- * left open is closed on both surfaces (here, and the app via webServer.env).
+ * `DATABASE_URL` is never in scope.
  *
  * Steps: create the e2e DB if absent (CREATE only — never DROP a database),
  * connect to it, GUARD on `current_database()`, then drop+recreate the `public`
  * schema, leaving an empty schema.
  *
- * This runs as a `test:e2e` PRE-STEP (`tsx e2e/global-setup.ts`) rather than
- * Playwright's `globalSetup` hook: Playwright does not guarantee `globalSetup`
- * finishes before the `webServer` boots, and the server migrates on startup —
- * so a hook-ordered reset could drop the schema the server just created, racing
- * to an empty DB. Running the reset before Playwright launches makes the order
- * deterministic: reset → empty schema → Playwright starts the server → the
- * server's startup migration (`initDatabase` → `runMigrations`) populates the
- * clean schema. `smoke.spec.ts`'s fresh-user-per-run logic relies on this slate.
+ * This runs as a `test:e2e` PRE-STEP (`tsx e2e/global-setup.ts`), not a
+ * Playwright `globalSetup` hook — see the note in `playwright.config.ts`. The
+ * order is: reset → empty schema → Playwright starts the server → the server's
+ * startup migration (`initDatabase` → `runMigrations`) populates the clean
+ * schema. `smoke.spec.ts`'s fresh-user-per-run logic relies on this slate.
  */
 export default async function globalSetup(): Promise<void> {
   await ensureE2eDatabaseExists();

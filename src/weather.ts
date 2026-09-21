@@ -8,8 +8,7 @@ import type {
 
 /**
  * OpenWeatherMap One Call API 3.0 fetch boundary for the FI weather collection
- * job (issue #73, Phase 1: forward-only collection; no change to any
- * price/forecast response).
+ * job.
  *
  * Weather data attribution: forecasts are sourced from OpenWeatherMap
  * (https://openweathermap.org) under the Open Data Commons Open Database
@@ -17,23 +16,18 @@ import type {
  * weather data — it stores forecasts only to drive its own derived FI price
  * forecast — so this credit is the required attribution.
  *
- * Calls One Call 3.0 for a single point, validates the response with zod
- * (STACK.md forbids raw `fetch` without zod-validated parsing — only the fields
- * the forecast uses are validated; the schema is NOT `.strict()` because OWM
- * adds fields), and degrades gracefully: a timeout, auth error, HTTP error, or
- * malformed body yields an empty `records` array plus a `reason` — it NEVER
- * throws, so a weather problem can never break the authoritative Nord Pool
- * price path.
+ * Validates the response with zod (`STACK.md §7` forbids raw `fetch` without
+ * zod-validated parsing). Only the fields the forecast uses are validated, and
+ * the schema is NOT `.strict()` because OWM adds fields. Degrades gracefully: a
+ * timeout, auth error, HTTP error, or malformed body yields an empty `records`
+ * array plus a `reason`. It NEVER throws, so a weather problem can never break
+ * the authoritative Nord Pool price path.
  *
- * Since issue #93 the SAME response also carries the DAILY block, parsed
- * INDEPENDENTLY of the hourly one so a daily schema drift can never discard the
- * hourly rows. The call count is unchanged at 48/day: the subscription is
- * billed per call, and `exclude` only shapes the response.
+ * The hourly and daily blocks are parsed INDEPENDENTLY, so a daily schema drift
+ * can never discard the hourly rows.
  *
- * The API key is passed in as a parameter so this module does not touch
- * `process.env` / `env.ts` — the boundary stays a pure function of (key, point,
- * issuedAt), which also keeps it trivial to leave un-exercised in tests that
- * have no key.
+ * The API key is a parameter, not a `process.env` read, so this boundary stays a
+ * pure function of (key, point, issuedAt).
  */
 
 const BASE_URL = "https://api.openweathermap.org/data/3.0/onecall";
@@ -48,12 +42,10 @@ export interface WeatherPoint {
 }
 
 /**
- * The fixed set of FI points the forecast collects weather for. Deliberately
- * SMALL (devils-advocate scope cut): southern demand/solar centre (Helsinki)
- * plus the west-coast wind region (Vaasa). Two points × 24 hourly runs ≈ 48
- * One Call requests/day — well inside the 1000/day free tier. Adding points is
- * a later, explicit decision (the leakage-free history only accumulates for the
- * points collected from deploy onward).
+ * The fixed set of FI points the forecast collects weather for: the southern
+ * demand/solar centre (Helsinki) plus the west-coast wind region (Vaasa).
+ * Adding points is a later, explicit decision (the leakage-free history only
+ * accumulates for the points collected from deploy onward).
  */
 export const HELSINKI: WeatherPoint = {
   id: "helsinki",
@@ -108,9 +100,8 @@ const EpochSecondsSchema = z
  *
  * Collected: all six `temp` sub-fields, `clouds`, `uvi`, and the solar bounds
  * `sunrise` / `sunset`. The solar bounds are what make the daily scalars usable
- * at all: `clouds` and `uvi` are ONE value for the whole day, and PR #72
- * established that a per-day constant is rank-neutral for the within-day rank
- * metrics the product is judged on. Bounded by `sunrise`/`sunset` they become a
+ * at all: `clouds` and `uvi` are ONE value for the whole day. Bounded by
+ * `sunrise`/`sunset` they become a
  * within-day shape instead — a closed-form diurnal curve, which is what
  * `VISION.md → The forecast` allows.
  *

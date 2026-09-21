@@ -14,7 +14,6 @@ test.describe("Landing page", () => {
 
   test("public chart SVG renders", async ({ page }) => {
     await page.goto("/");
-    // Wait for chart to attempt rendering (even if no data, SVG should exist)
     const svg = page.locator("#publicChart");
     await expect(svg).toBeVisible();
   });
@@ -30,7 +29,6 @@ test.describe("Auth flow", () => {
     await page.fill("#password", TEST_PASS);
     await page.click("#loginBtn");
 
-    // Wait for dashboard to appear
     await expect(page.locator("#dashboard")).toBeVisible({ timeout: 10_000 });
     await expect(page.locator("#usernameLabel")).toContainText(TEST_USER);
   });
@@ -38,13 +36,11 @@ test.describe("Auth flow", () => {
   test("logout returns to landing", async ({ page }) => {
     await page.goto("/");
 
-    // Login first
     await page.fill("#username", `e2e_logout_${Date.now()}`);
     await page.fill("#password", TEST_PASS);
     await page.click("#loginBtn");
     await expect(page.locator("#dashboard")).toBeVisible({ timeout: 10_000 });
 
-    // Logout
     await page.click("#logoutBtn");
     await expect(page.locator("#landing")).toBeVisible({ timeout: 5_000 });
   });
@@ -94,7 +90,6 @@ test.describe("API panel", () => {
 
     const keyDisplay = page.locator("#apiKeyDisplay");
     await expect(keyDisplay).toBeVisible();
-    // Wait for key to load (starts with sp_)
     await expect(keyDisplay).toContainText("sp_", { timeout: 5_000 });
 
     await page
@@ -126,7 +121,6 @@ test.describe("API panel", () => {
     const oldKey = await page.locator("#apiKeyDisplay").textContent();
 
     await page.click("#regenBtn");
-    // Wait for status message confirming regeneration
     await expect(page.locator("#apiStatus")).toContainText("New API key", {
       timeout: 5_000,
     });

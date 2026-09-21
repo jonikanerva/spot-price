@@ -649,7 +649,7 @@ describe("buildForecast (integration of the pure pipeline)", () => {
   });
 
   it("ranks within a day in PHASE with the lag shape (inversion gone)", () => {
-    // Regression for #69: a month of history whose price has a strong within-day
+    // A month of history whose price has a strong within-day
     // SHAPE (a clean daily/weekly-repeating sinusoid) sitting on a level driven
     // by the grid residual. The ridge model has real LEVEL skill but is rank-blind
     // to that within-day shape; `applyWithinDayShape` stamps the persistence

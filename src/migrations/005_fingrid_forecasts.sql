@@ -10,9 +10,6 @@
 --     issuance per target;
 --   * actuals (75/124) are not meaningfully revised, so they stay upsert-latest
 --     (one near-actual row per quarter) in `fingrid_actuals`.
--- The dual-write that briefly mirrored forecasts into the actuals table was
--- rejected by the product owner as legacy-driven redundancy: keep-all vs
--- keep-latest gives each dataset class exactly one home.
 --
 -- !!! APPEND-ONLY PER ISSUANCE — NOT upsert-latest like `fingrid_actuals` !!!
 -- storeFingridForecastVintages inserts with ON CONFLICT DO NOTHING (it does NOT
@@ -49,14 +46,7 @@ CREATE TABLE IF NOT EXISTS fingrid_forecasts (
 --   2. the per-target LATERAL `... WHERE dataset_id=$1 AND start_time=target
 --      ORDER BY issued_at DESC LIMIT 1` — the trailing `issued_at DESC` makes
 --      the newest issuance a single index seek (no sort) per target.
--- `DISTINCT ON (start_time) ... ORDER BY start_time, issued_at DESC` was tried
--- and REJECTED: Postgres has no loose/skip index scan for DISTINCT ON, so at
--- 180-day depth (~72 issuances/target for 245) it read every in-range row and
--- sorted them to disk (external-merge Sort, ~116 ms cold > the STACK §4 100 ms
--- p99). The LATERAL stays ~48 ms warm / ~67 ms cold (EXPLAIN in PR #82). Do NOT
--- "simplify" the live read back to DISTINCT ON — it reintroduces that
--- regression. (#80 adds an as-of bound `AND issued_at <= $asOf` inside leg 2;
--- it composes cleanly and keeps using this index.)
+-- Do NOT simplify the live read to `DISTINCT ON` — see STACK.md section 5.
 CREATE INDEX IF NOT EXISTS idx_fingrid_forecasts_target_issued
   ON fingrid_forecasts (dataset_id, start_time, issued_at DESC);
 -- Backs the retention prune DELETE WHERE issued_at < $1.

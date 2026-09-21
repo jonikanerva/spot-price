@@ -238,8 +238,7 @@ export interface WeatherPointFailure {
  * named `estimated*` so they share NO field name with the real-price schemas
  * (`TotalPrice`) — a misrouted consumer cannot blind-read an estimate as a
  * published price. The response's top-level `forecast: true` flags the whole
- * payload as an estimate (the old per-entry constant-true `estimated` field was
- * redundant — removed in issue #70).
+ * payload as an estimate.
  */
 export interface ForecastEntry {
   readonly start: string;

@@ -150,9 +150,7 @@ export interface IssueTimeInputs {
  *     than production would — so the harness is a mild PESSIMIST, never a
  *     hidden optimist. Report this as "conservative", never "leak-free".
  *   - `"latest"` (LEAKY, for the optimism comparison only): per target, the
- *     freshest vintage regardless of `issuedAt` — reproducing the pre-#78
- *     upsert-latest value (≈ the final, near-actual revision; #79 confirmed
- *     ref≈actual). This is the train/serve leak #80 measures.
+ *     freshest vintage regardless of `issuedAt`.
  * Only the forecast-vintage selection differs between the modes; price and
  * actual censoring is identical, so the metric delta isolates the vintage leak.
  */
@@ -811,10 +809,10 @@ export const deriveBandsFromBacktest = (
   readonly bands: CalibratedBands;
   /**
    * The MEASURED out-of-sample coverage, surfaced separately so it can be
-   * recorded in the artifact's PROVENANCE COMMENT (da cut 1 transparency)
-   * WITHOUT violating the `CalibratedBands.observedCoverage` contract ("null
-   * when uncalibrated") or changing the live API value (UX condition 2). It is
-   * NOT written into the shipped `observedCoverage` field when dark.
+   * recorded in the artifact's PROVENANCE COMMENT WITHOUT violating the
+   * `CalibratedBands.observedCoverage` contract ("null when uncalibrated") or
+   * changing the live API value. It is NOT written into the shipped
+   * `observedCoverage` field when dark.
    */
   readonly observedCoverage: number | null;
 } => {
@@ -848,7 +846,7 @@ export const deriveBandsFromBacktest = (
 };
 
 // ---------------------------------------------------------------------------
-// Vintage-leak optimism comparison (issue #80) — the deliverable
+// Vintage-leak optimism comparison
 // ---------------------------------------------------------------------------
 
 /** Per-horizon deltas between the leaked and honest runs. */
