@@ -82,7 +82,7 @@ Every visible surface handles the states `VISION.md` and `STACK.md` declare — 
 
 ## Time
 
-Treat time like any other external input: work in one absolute reference (UTC) everywhere internally — logic, domain values, persistence, caches, and logs — and convert to or from a zoned/local representation only at the boundary (normalise inbound values on parse; convert outbound values when rendering a user-facing value). Nothing between the edges holds local time. Never hand-roll timezone-offset arithmetic; use the platform time APIs. Instants crossing a persistence or wire boundary are serialised in UTC. Where `STACK.md` names a concrete time type or call, that file is the authority; it names none today.
+Treat time like any other external input: work in one absolute reference (UTC) everywhere internally — logic, domain values, persistence, caches, and logs — and convert to or from a zoned/local representation only at the boundary (normalise inbound values on parse; convert outbound values when rendering a user-facing value). Nothing between the edges holds local time. Never hand-roll timezone-offset arithmetic; use the platform time APIs. Instants crossing a persistence or wire boundary are serialised in UTC. Where `STACK.md` names a concrete time type or call, that file is the authority.
 
 ## Side effects
 
