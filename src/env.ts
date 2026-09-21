@@ -4,18 +4,7 @@ import { z } from "zod";
  * Centralised environment-variable parsing and validation.
  *
  * All non-test source modules read environment variables through `loadEnv()`
- * rather than touching `process.env` directly. Test files (`*.test.ts`,
- * `src/test-utils.ts`) are exempt because they mutate `process.env` per test
- * to exercise different branches; everywhere else, `process.env` is off
- * limits — this is the rule declared in `STACK.md §7`.
- *
- * `loadEnv()` is intentionally a *function*, not a module-level constant:
- * tests need to mutate `process.env` between calls (e.g. flipping
- * `NODE_ENV=production` to assert that startup requires
- * `BETTER_AUTH_SECRET`), and a frozen constant would capture the value at
- * import time and make those tests impossible. The cost is a tiny extra
- * Zod parse on each call; the benefit is that the rule stays a single
- * code path with no escape hatches.
+ * rather than touching `process.env` directly — see `STACK.md §7`.
  *
  * Production fail-fast is handled by `index.ts` calling `loadEnv()` once
  * at the top of `main()` before any service is constructed — if validation

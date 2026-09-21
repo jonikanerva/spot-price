@@ -335,8 +335,7 @@ describe("fingrid forecast vintages", () => {
   it("drops a target older than the backfill window and keeps a future target", async () => {
     const issuance = NOW.toISOString();
     // One target well outside the 6h backfill window, one still ahead of the
-    // issuance. Before issue #90 BOTH were archived, every hour, for the whole
-    // 34-day fetch window.
+    // issuance.
     const staleTarget = NOW.getTime() - (VINTAGE_BACKFILL_HOURS + 1) * HOUR_MS;
     const futureTarget = NOW.getTime() + 12 * HOUR_MS;
 
@@ -410,8 +409,8 @@ describe("fingrid forecast vintages", () => {
   });
 
   it("still reads a vintage archived before the window guard — the change is write-side only", async () => {
-    // A row from the pre-#90 regime: issued FIVE DAYS after its target, which
-    // the guard now rejects on write. Insert it the way the old job did.
+    // A row issued FIVE DAYS after its target, which the write guard rejects.
+    // Insert it directly, bypassing the guard.
     const pastTarget = NOW.getTime() - 5 * DAY_MS;
     const lateIssuance = NOW.toISOString();
     await pool.query(
@@ -605,10 +604,9 @@ describe("runForecastFetchJob", () => {
   });
 
   it("archives only the in-window share of a realistic 34-day fetch window (issue #90)", async () => {
-    // The job fetches [now − HISTORY_DAYS, now + FORECAST_DAYS] every hour. Up
-    // to issue #90 it archived that whole window on every issuance. Sample the
-    // window every 6h (the exact spacing does not matter — the ratio does) for
-    // both forecast datasets, plus one actual.
+    // The job fetches [now − HISTORY_DAYS, now + FORECAST_DAYS] every hour.
+    // Sample the window every 6h (the exact spacing does not matter — the ratio
+    // does) for both forecast datasets, plus one actual.
     const step = 6 * HOUR_MS;
     const windowStart = NOW.getTime() - HISTORY_DAYS * DAY_MS;
     const windowEnd = NOW.getTime() + FORECAST_DAYS * DAY_MS;
@@ -637,8 +635,8 @@ describe("runForecastFetchJob", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.vintageStored).toBe(inWindow);
-      // The saving is the point of the issue: the old behaviour archived every
-      // forecast record in the window, an order of magnitude more.
+      // Archiving every forecast record in the window would store an order of
+      // magnitude more rows than the guard admits.
       expect(forecastRecords.length / result.vintageStored).toBeGreaterThan(9);
     }
 

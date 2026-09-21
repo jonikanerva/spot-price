@@ -48,12 +48,10 @@ export const addDays = (date: Date, days: number): Date => {
   return next;
 };
 
-// `Intl.DateTimeFormat` construction is comparatively expensive, but a given
-// instance is stateless across the dates passed to `formatToParts`. The
-// price-history endpoint formats up to ~2976 intervals (two calls each) per
-// request; building a fresh formatter per call breaches the STACK.md §4 100 ms
-// p99 budget (measured ~335 ms). Memoising per timezone keeps the formatter
-// construction O(timezones) instead of O(intervals).
+// `Intl.DateTimeFormat` construction is expensive, but one instance is stateless
+// across the dates passed to `formatToParts`. The price-history endpoint formats
+// thousands of intervals per request; a fresh formatter per call breaches the
+// `STACK.md §4` p99 budget. Memoise per timezone.
 const offsetFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 const getOffsetFormatter = (timeZone: string): Intl.DateTimeFormat => {

@@ -78,8 +78,8 @@ describe("applyBand", () => {
   });
 
   it("keeps low ≤ point ≤ high at a negative point, allowing a negative lower bound", () => {
-    // No floor any more: a genuinely negative FI price must keep an ordered band
-    // whose lower bound is free to go below zero (the old floor-clip is gone).
+    // A genuinely negative FI price keeps an ordered band whose lower bound may
+    // go below zero.
     const off: BandOffsets = { lowOffset: -2, highOffset: 1 };
     const bands = calibratedBands(new Map([[12, off]]), null);
     const point = -3.0;

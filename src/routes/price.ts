@@ -394,7 +394,7 @@ export const registerPriceRoutes = (app: OpenAPIHono<AppEnv>): void => {
     const tz = settings.timezone;
     const { today, tomorrow } = getCurrentAndNextDate(tz);
     // Use a single UTC range spanning today + tomorrow to ensure contiguous
-    // data across midnight (avoids the LIKE prefix gap bug)
+    // data across midnight.
     const todayRange = getUtcRangeForLocalDate(today, tz);
     const tomorrowRange = getUtcRangeForLocalDate(tomorrow, tz);
     const prices = await getPricesByRange(

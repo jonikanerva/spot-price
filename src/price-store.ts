@@ -1,7 +1,6 @@
 import type { Pool } from "pg";
 import type { HourlyPrice } from "./types.js";
 
-/** Upsert hourly prices into the database (idempotent via ON CONFLICT) */
 export const storePrices = async (
   pool: Pool,
   prices: readonly HourlyPrice[],

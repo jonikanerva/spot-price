@@ -8,8 +8,7 @@ import type {
 
 /**
  * OpenWeatherMap One Call API 3.0 fetch boundary for the FI weather collection
- * job (issue #73, Phase 1: forward-only collection; no change to any
- * price/forecast response).
+ * job.
  *
  * Weather data attribution: forecasts are sourced from OpenWeatherMap
  * (https://openweathermap.org) under the Open Data Commons Open Database
@@ -17,23 +16,18 @@ import type {
  * weather data — it stores forecasts only to drive its own derived FI price
  * forecast — so this credit is the required attribution.
  *
- * Calls One Call 3.0 for a single point, validates the response with zod
- * (STACK.md forbids raw `fetch` without zod-validated parsing — only the fields
- * the forecast uses are validated; the schema is NOT `.strict()` because OWM
- * adds fields), and degrades gracefully: a timeout, auth error, HTTP error, or
- * malformed body yields an empty `records` array plus a `reason` — it NEVER
- * throws, so a weather problem can never break the authoritative Nord Pool
- * price path.
+ * Validates the response with zod (`STACK.md §7` forbids raw `fetch` without
+ * zod-validated parsing). Only the fields the forecast uses are validated, and
+ * the schema is NOT `.strict()` because OWM adds fields. Degrades gracefully: a
+ * timeout, auth error, HTTP error, or malformed body yields an empty `records`
+ * array plus a `reason`. It NEVER throws, so a weather problem can never break
+ * the authoritative Nord Pool price path.
  *
- * Since issue #93 the SAME response also carries the DAILY block, parsed
- * INDEPENDENTLY of the hourly one so a daily schema drift can never discard the
- * hourly rows. The call count is unchanged at 48/day: the subscription is
- * billed per call, and `exclude` only shapes the response.
+ * The hourly and daily blocks are parsed INDEPENDENTLY, so a daily schema drift
+ * can never discard the hourly rows.
  *
- * The API key is passed in as a parameter so this module does not touch
- * `process.env` / `env.ts` — the boundary stays a pure function of (key, point,
- * issuedAt), which also keeps it trivial to leave un-exercised in tests that
- * have no key.
+ * The API key is a parameter, not a `process.env` read, so this boundary stays a
+ * pure function of (key, point, issuedAt).
  */
 
 const BASE_URL = "https://api.openweathermap.org/data/3.0/onecall";
@@ -48,12 +42,10 @@ export interface WeatherPoint {
 }
 
 /**
- * The fixed set of FI points the forecast collects weather for. Deliberately
- * SMALL (devils-advocate scope cut): southern demand/solar centre (Helsinki)
- * plus the west-coast wind region (Vaasa). Two points × 24 hourly runs ≈ 48
- * One Call requests/day — well inside the 1000/day free tier. Adding points is
- * a later, explicit decision (the leakage-free history only accumulates for the
- * points collected from deploy onward).
+ * The fixed set of FI points the forecast collects weather for: the southern
+ * demand/solar centre (Helsinki) plus the west-coast wind region (Vaasa).
+ * Adding points is a later, explicit decision (the leakage-free history only
+ * accumulates for the points collected from deploy onward).
  */
 export const HELSINKI: WeatherPoint = {
   id: "helsinki",
@@ -104,15 +96,13 @@ const EpochSecondsSchema = z
   .max(MAX_EPOCH_SECONDS);
 
 /**
- * Boundary schema for a single One Call 3.0 DAILY entry (issue #93).
+ * Boundary schema for a single One Call 3.0 DAILY entry.
  *
  * Collected: all six `temp` sub-fields, `clouds`, `uvi`, and the solar bounds
  * `sunrise` / `sunset`. The solar bounds are what make the daily scalars usable
- * at all: `clouds` and `uvi` are ONE value for the whole day, and PR #72
- * established that a per-day constant is rank-neutral for the within-day rank
- * metrics the product is judged on. Bounded by `sunrise`/`sunset` they become a
- * within-day shape instead — a closed-form diurnal curve, which is what
- * `VISION.md → The forecast` allows.
+ * at all: `clouds` and `uvi` are ONE value for the whole day. Bounded by
+ * `sunrise`/`sunset` they become a within-day shape instead — a closed-form
+ * diurnal curve, which is what `VISION.md → The forecast` allows.
  *
  * Deliberately NOT collected: `wind_speed` / `wind_deg` (Fingrid dataset 245
  * already forecasts wind power at 15-minute resolution over ~72 h for the whole
@@ -166,9 +156,8 @@ const buildUrl = (apiKey: string, point: WeatherPoint): string => {
   url.searchParams.set("lon", String(point.lon));
   url.searchParams.set("appid", apiKey);
   url.searchParams.set("units", "metric");
-  // `daily` is NOT excluded since issue #93: the daily block rides along in the
-  // SAME response. The subscription is "One Call by Call" — billed per CALL, not
-  // per block — so collecting it adds ZERO requests and keeps the rate at 48/day.
+  // Never add `daily` to `exclude`: the daily block rides along in the SAME
+  // response and costs no extra call (`STACK.md §9`).
   url.searchParams.set("exclude", "current,minutely,alerts");
   return url.toString();
 };
@@ -208,7 +197,7 @@ const epochSecondsToIso = (seconds: number | undefined): string | null =>
   seconds === undefined ? null : new Date(seconds * 1000).toISOString();
 
 /**
- * Pure mapping from a parsed One Call DAILY block to daily records (issue #93).
+ * Pure mapping from a parsed One Call DAILY block to daily records.
  * Network-free and unit-testable.
  *
  * `targetDate` is the UTC CALENDAR DATE of `dt` — the first ten characters of
@@ -255,12 +244,12 @@ const dailyDegraded = (reason: string): WeatherDailyResult => ({
 
 /**
  * Parse the DAILY block of an already-fetched body, INDEPENDENTLY of the hourly
- * parse (issue #93). Two separate `safeParse` calls over the same body is the
- * load-bearing shape: folding `daily` into the hourly schema would mean one
- * deviating daily entry fails the whole parse, so the point's HOURLY rows are
- * discarded — and `weather-job.ts` records that an issuance can never be
- * re-fetched once its hour has passed. The failure would also look like ordinary
- * per-point degradation rather than a regression.
+ * parse. Two separate `safeParse` calls over the same body is the load-bearing
+ * shape: folding `daily` into the hourly schema would mean one deviating daily
+ * entry fails the whole parse, so the point's HOURLY rows are discarded — and
+ * `weather-job.ts` records that an issuance can never be re-fetched once its
+ * hour has passed. The failure would also look like ordinary per-point
+ * degradation rather than a regression.
  *
  * No `.catch()` default and no coercion: a schema drift must surface as a
  * degraded daily result with a reason, never be silently papered over. The
@@ -297,10 +286,10 @@ const degraded = (reason: string): WeatherFetchResult => ({
 });
 
 /**
- * Fetch the One Call 3.0 forecast for a single point — the hourly block and,
- * since issue #93, the daily block from the same response. Always resolves;
- * failures are reported via the degraded branch of the tagged union and never
- * thrown. The two blocks degrade independently.
+ * Fetch the One Call 3.0 forecast for a single point — the hourly block and the
+ * daily block from the same response. Always resolves; failures are reported
+ * via the degraded branch of the tagged union and never thrown. The two blocks
+ * degrade independently.
  */
 export const fetchWeather = async (
   params: WeatherFetchParams,
@@ -328,7 +317,7 @@ export const fetchWeather = async (
       );
     }
 
-    // ONE body, TWO independent parses (issue #93) — see `parseDaily`.
+    // ONE body, TWO independent parses — see `parseDaily`.
     const body: unknown = await response.json();
     const daily = parseDaily(params.point, params.issuedAt, body);
 

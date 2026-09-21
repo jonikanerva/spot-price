@@ -1069,7 +1069,7 @@ describe("price/all endpoint", () => {
     expect("tomorrowAvailable" in body).toBe(false);
     expect("today" in body).toBe(false);
     expect("tomorrow" in body).toBe(false);
-    // The flat list exposes prices at the top level (was split under today/tomorrow).
+    // The flat list exposes prices at the top level.
     expect(Array.isArray(body.prices)).toBe(true);
   });
 
@@ -1134,7 +1134,6 @@ describe("OpenAPI spec", () => {
     expect(spec.info.title).toBe("Spot Price API");
     expect(spec.info.version).toBe("1.0.0");
 
-    // Verify all 9 migrated routes are present
     const paths = Object.keys(spec.paths);
     expect(paths).toContain("/api/v1/price/now");
     expect(paths).toContain("/api/v1/price/today");

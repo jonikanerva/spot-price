@@ -56,7 +56,8 @@ const vintage = (
  * knowable post-origin for future targets → the leaked selection). `staleRevision`
  * scales a mean-zero, per-quarter RANDOM revision on the stale WIND forecast
  * (a constant bias would be absorbed by the ridge fit; genuine noise is the
- * errors-in-variables effect #80 measures). 0 ⇒ a clean, non-revising ladder.
+ * errors-in-variables effect the vintage study measures). 0 ⇒ a clean,
+ * non-revising ladder.
  */
 const STALE_LEAD_H = 130;
 
@@ -345,7 +346,7 @@ describe("deriveBandsFromBacktest (90-day window guard, da cut 1)", () => {
     expect(bands.calibrated).toBe(false);
     expect(bands.offsetsByHour.size).toBe(0);
     // The shipped field stays null (contract); the MEASURED coverage is returned
-    // separately for the provenance comment (da cut 1) and is a real number.
+    // separately for the provenance comment and is a real number.
     expect(bands.observedCoverage).toBeNull();
     expect(observedCoverage).not.toBeNull();
     expect(observedCoverage ?? -1).toBeGreaterThanOrEqual(0);

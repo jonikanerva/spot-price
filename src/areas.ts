@@ -6,7 +6,7 @@ export interface DeliveryArea {
   readonly timezone: string;
 }
 
-/** All 21 Nord Pool delivery areas verified live on 2026-02-26 */
+/** The Nord Pool delivery areas. */
 export const DELIVERY_AREAS: readonly DeliveryArea[] = [
   { code: "FI", name: "Finland", country: "FI", timezone: "Europe/Helsinki" },
   {

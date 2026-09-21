@@ -117,11 +117,7 @@ export const spearman = (
 // ---------------------------------------------------------------------------
 // Distribution summaries — single-array descriptive stats
 //
-// Added for the offline vintage-revision study (issue #79): it summarises a
-// distribution of forecast-revision deltas (a single array), which the aligned
-// two-array metrics above don't cover. Null-on-empty (and null on n<2 for sd)
-// mirrors the convention here — an undefined statistic is null, never a throw
-// or a silent 0. Pure, dependency-free.
+// An undefined statistic is null, never a throw or a silent 0.
 // ---------------------------------------------------------------------------
 
 /** Median (50th percentile); null for an empty array. */

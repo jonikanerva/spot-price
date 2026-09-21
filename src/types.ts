@@ -68,9 +68,9 @@ export interface FingridRecord {
  * One archived per-issuance vintage of a Fingrid FORECAST dataset (245/165): a
  * `FingridRecord` plus the `issuedAt` at which that value was recorded (the
  * hour-truncated fetch-time proxy from migration 005). Public grid data, not
- * user data. Read only off the request path — by the offline revision study
- * (#79) and the vintage-correct backtest (#80), which need the full lead-time
- * ladder; the live forecast route uses the latest-per-target read instead.
+ * user data. Read only off the request path, by the offline studies that need
+ * the full lead-time ladder. The live forecast route uses the latest-per-target
+ * read instead.
  */
 export interface ForecastVintageRecord extends FingridRecord {
   readonly issuedAt: string;
@@ -111,8 +111,8 @@ export interface WeatherRecord {
 }
 
 /**
- * One issued OpenWeatherMap DAILY weather forecast, normalised to our domain
- * (issue #93). `issuedAt` is the issuance hour, as for `WeatherRecord`.
+ * One issued OpenWeatherMap DAILY weather forecast, normalised to our domain.
+ * `issuedAt` is the issuance hour, as for `WeatherRecord`.
  *
  * `targetDate` is the UTC CALENDAR DATE (`YYYY-MM-DD`) of `targetDt`, and
  * `targetDt` is the raw upstream `dt` kept as provenance so the date derivation
@@ -144,12 +144,12 @@ export interface WeatherDailyRecord {
 }
 
 /**
- * Outcome of parsing the DAILY block of one One Call response (issue #93).
- * Tagged separately from the hourly outcome, and nested inside
- * `WeatherFetchResult` rather than flattened into parallel booleans, because
- * the two blocks are parsed INDEPENDENTLY: a daily-schema drift must degrade
- * only itself and leave the hourly records untouched, since an issuance can
- * never be re-fetched once its hour has passed.
+ * Outcome of parsing the DAILY block of one One Call response. Tagged
+ * separately from the hourly outcome, and nested inside `WeatherFetchResult`
+ * rather than flattened into parallel booleans, because the two blocks are
+ * parsed INDEPENDENTLY: a daily-schema drift must degrade only itself and leave
+ * the hourly records untouched, since an issuance can never be re-fetched once
+ * its hour has passed.
  */
 export type WeatherDailyResult =
   | { readonly ok: true; readonly records: readonly WeatherDailyRecord[] }
@@ -165,9 +165,9 @@ export type WeatherDailyResult =
  * (timeout, auth, parse) yields an empty `records` plus a `reason`, and never
  * throws — a weather problem can never reach the authoritative price path.
  *
- * `daily` carries the independently-parsed daily block (issue #93) on BOTH
- * branches: a transport failure degrades both, while a schema failure in one
- * block leaves the other intact.
+ * `daily` carries the independently-parsed daily block on BOTH branches: a
+ * transport failure degrades both, while a schema failure in one block leaves
+ * the other intact.
  */
 export type WeatherFetchResult =
   | {
@@ -183,10 +183,10 @@ export type WeatherFetchResult =
     };
 
 /**
- * Daily-block summary of one weather job run (issue #93). Kept OUTSIDE the
- * `status` tag on purpose: `status` stays a statement about the HOURLY
- * collection, so the "every point failed → do not prune" guard keeps its
- * meaning. A daily failure never downgrades an hourly success.
+ * Daily-block summary of one weather job run. Kept OUTSIDE the `status` tag on
+ * purpose: `status` stays a statement about the HOURLY collection, so the
+ * "every point failed → do not prune" guard keeps its meaning. A daily failure
+ * never downgrades an hourly success.
  */
 export interface WeatherDailyJobSummary {
   /** Daily rows inserted this run (append-only per issuance). */
@@ -238,8 +238,7 @@ export interface WeatherPointFailure {
  * named `estimated*` so they share NO field name with the real-price schemas
  * (`TotalPrice`) — a misrouted consumer cannot blind-read an estimate as a
  * published price. The response's top-level `forecast: true` flags the whole
- * payload as an estimate (the old per-entry constant-true `estimated` field was
- * redundant — removed in issue #70).
+ * payload as an estimate.
  */
 export interface ForecastEntry {
   readonly start: string;
