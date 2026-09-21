@@ -146,7 +146,7 @@ describe("assembleBacktestData — parity with loadFixture", () => {
     expect(
       Object.keys(assembled.fingridForecastVintagesByDataset).sort(),
     ).toEqual(["165", "245"]);
-    // Vintages carry issuedAt (the whole point of #80).
+    // Vintages carry issuedAt.
     expect(
       assembled.fingridForecastVintagesByDataset["245"]?.[0]?.issuedAt,
     ).toBeTypeOf("string");

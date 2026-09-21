@@ -1,17 +1,14 @@
 /**
  * OFFLINE / DEV-ONLY backtest CLI for the FI forecast.
  *
- * IMPORTANT: this module lives in `tools/` (offline-only). It must NOT be
- * imported by any `src/` runtime module — the production bundle's only tsup
- * entry is `src/index.ts`, and an ESLint guard forbids `src/` runtime from
- * importing `tools/`, so this file never reaches `dist/`. It runs only as a tsx
- * script:
+ * Offline only. `STACK.md §0` forbids `src/` runtime from importing `tools/`.
+ * It runs only as a tsx script:
  *
  *     pnpm backtest --data tools/backtest-data/fixture.json   # replay a fixture
  *     pnpm backtest --db                            # score against the live DB
  *     pnpm backtest --db --window 120               # widen the DB window (days)
  *     pnpm backtest --db --export /tmp/snapshot.json   # snapshot DB → fixture
- *     pnpm backtest --db --compare                  # vintage-leak optimism (#80)
+ *     pnpm backtest --db --compare                  # vintage-leak optimism
  *
  * It is the single operator entry point for measuring forecast accuracy on
  * demand: it runs the EXISTING pure `runBacktest` (issue-time, leakage-guarded)
@@ -146,9 +143,8 @@ export const fetchBacktestData = async (
     fingridActualsByDataset[String(id)] = [...records];
   }
 
-  // Forecast datasets (245/165) as the full per-issuance vintage ladder — the
-  // read #80 shares with the revision study (#79), NOT the emptied actuals
-  // table (migration 006 deleted 245/165 there).
+  // Forecast datasets (245/165) as the full per-issuance vintage ladder, NOT
+  // the emptied actuals table (migration 006 deleted 245/165 there).
   const fingridForecastVintagesByDataset: Record<
     string,
     ForecastVintageRecord[]
@@ -492,7 +488,7 @@ const main = async (): Promise<void> => {
       );
     }
 
-    // --compare measures the vintage-leak optimism (issue #80): honest
+    // --compare measures the vintage-leak optimism: honest
     // issue-time vs leaked latest-vintage over the same origins.
     const ok = hasFlag(argv, "--compare")
       ? printCompare(data)

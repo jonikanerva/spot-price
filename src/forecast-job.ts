@@ -22,23 +22,17 @@ import { FLOOR_HISTORY_DAYS, FORECAST_DAYS } from "./forecast.js";
  * failures degrade (the Fingrid boundary never throws), so this job can never
  * break the authoritative price path.
  *
- * The FETCH-back window (~31 days) and the RETENTION window (~2 years) are
- * decoupled on purpose: Fingrid only serves data forward from now, so fetching
- * further back can never backfill missed history — there is no point widening
- * the fetch window. Retention, by contrast, is kept long so the table
- * ACCUMULATES grid history from deploy onward, giving future forecast phases
- * (conformal intervals, tree models) seasonal data to backtest against. History
- * therefore fills forward over time; it is not retroactive, and forecast
- * quality for those phases ramps up as the window fills.
+ * The FETCH-back window and the RETENTION window are decoupled on purpose —
+ * see `STACK.md §9`.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * History fetched before "now": enough to cover the wind weekly extension
- * (4 weeks) and the floor history (30 days), plus a day of margin. Unchanged —
- * Fingrid serves data only forward from now, so a wider fetch window cannot
- * backfill anything.
+ * (4 weeks) and the floor history (30 days), plus a day of margin. Fingrid
+ * serves data only forward from now, so a wider fetch window cannot backfill
+ * anything.
  */
 export const HISTORY_DAYS = Math.max(FLOOR_HISTORY_DAYS, 4 * 7) + 1; // 31 days
 
@@ -109,12 +103,12 @@ export const runForecastFetchJob = async (
   const pruneCutoff = new Date(nowMs - RETENTION_DAYS * DAY_MS).toISOString();
   const pruned = await pruneFingridRecordsBefore(pool, pruneCutoff);
 
-  // Step 2 — per-issuance vintage archival of the FORECAST datasets (issue #78),
+  // Step 2 — per-issuance vintage archival of the FORECAST datasets,
   // in its OWN try/catch and its OWN transaction. Per STACK §9 the forecast path
   // must never affect the authoritative actuals upsert above: a vintage failure
   // here degrades (logged + reported) and can never roll back or abort step 1.
-  // `storeFingridForecastVintages` filters internally — to 245/165, and (issue
-  // #90) to targets no older than `VINTAGE_BACKFILL_HOURS` before the issuance —
+  // `storeFingridForecastVintages` filters internally — to 245/165, and to
+  // targets no older than `VINTAGE_BACKFILL_HOURS` before the issuance —
   // so passing the full 34-day fetch result is safe and archives only the
   // forecast part of it. `issuedAt` is the job's `now`, hour-truncated to UTC (a
   // fetch-time proxy for true issuance, ±1h of jitter) so re-runs within the

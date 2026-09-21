@@ -27,13 +27,10 @@ const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
 
 /**
- * Training history window: how far back from the prediction origin we draw
- * labelled quarters for the fit. Deliberately a NAMED, BOUNDED constant — the
- * feature builder must never silently depend on the unbounded `prices` table
- * for an open-ended window. Reuses the ~30-day single-season floor window so
- * the model and the price floor track the same recent slice of Finnish prices
- * (`forecast.ts → FLOOR_HISTORY_DAYS`, kept in sync). 30 days × 96 quarters ≈
- * 2 880 training rows.
+ * Training history window: how far back from the prediction origin labelled
+ * quarters are drawn for the fit. A NAMED, BOUNDED constant — the feature builder
+ * must never depend on the unbounded `prices` table for an open-ended window.
+ * Kept in sync with `forecast.ts → FLOOR_HISTORY_DAYS`.
  */
 export const TRAINING_HISTORY_DAYS = 30;
 

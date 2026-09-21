@@ -96,7 +96,7 @@ const EpochSecondsSchema = z
   .max(MAX_EPOCH_SECONDS);
 
 /**
- * Boundary schema for a single One Call 3.0 DAILY entry (issue #93).
+ * Boundary schema for a single One Call 3.0 DAILY entry.
  *
  * Collected: all six `temp` sub-fields, `clouds`, `uvi`, and the solar bounds
  * `sunrise` / `sunset`. The solar bounds are what make the daily scalars usable
@@ -157,9 +157,8 @@ const buildUrl = (apiKey: string, point: WeatherPoint): string => {
   url.searchParams.set("lon", String(point.lon));
   url.searchParams.set("appid", apiKey);
   url.searchParams.set("units", "metric");
-  // `daily` is NOT excluded since issue #93: the daily block rides along in the
-  // SAME response. The subscription is "One Call by Call" — billed per CALL, not
-  // per block — so collecting it adds ZERO requests and keeps the rate at 48/day.
+  // Never add `daily` to `exclude`: the daily block rides along in the SAME
+  // response and costs no extra call (`STACK.md §9`).
   url.searchParams.set("exclude", "current,minutely,alerts");
   return url.toString();
 };
@@ -199,7 +198,7 @@ const epochSecondsToIso = (seconds: number | undefined): string | null =>
   seconds === undefined ? null : new Date(seconds * 1000).toISOString();
 
 /**
- * Pure mapping from a parsed One Call DAILY block to daily records (issue #93).
+ * Pure mapping from a parsed One Call DAILY block to daily records.
  * Network-free and unit-testable.
  *
  * `targetDate` is the UTC CALENDAR DATE of `dt` — the first ten characters of
@@ -246,7 +245,7 @@ const dailyDegraded = (reason: string): WeatherDailyResult => ({
 
 /**
  * Parse the DAILY block of an already-fetched body, INDEPENDENTLY of the hourly
- * parse (issue #93). Two separate `safeParse` calls over the same body is the
+ * parse. Two separate `safeParse` calls over the same body is the
  * load-bearing shape: folding `daily` into the hourly schema would mean one
  * deviating daily entry fails the whole parse, so the point's HOURLY rows are
  * discarded — and `weather-job.ts` records that an issuance can never be
@@ -288,8 +287,8 @@ const degraded = (reason: string): WeatherFetchResult => ({
 });
 
 /**
- * Fetch the One Call 3.0 forecast for a single point — the hourly block and,
- * since issue #93, the daily block from the same response. Always resolves;
+ * Fetch the One Call 3.0 forecast for a single point — the hourly block and the
+ * daily block from the same response. Always resolves;
  * failures are reported via the degraded branch of the tagged union and never
  * thrown. The two blocks degrade independently.
  */
@@ -319,7 +318,7 @@ export const fetchWeather = async (
       );
     }
 
-    // ONE body, TWO independent parses (issue #93) — see `parseDaily`.
+    // ONE body, TWO independent parses — see `parseDaily`.
     const body: unknown = await response.json();
     const daily = parseDaily(params.point, params.issuedAt, body);
 

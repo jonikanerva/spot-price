@@ -24,7 +24,7 @@ const main = async (): Promise<void> => {
     );
   }
 
-  // Weather collection (issue #73 Phase 1) is optional too. When disabled in
+  // Weather collection is optional too. When disabled in
   // production make it loud in the Railway logs rather than silently dropping
   // the forward-only weather history that future forecast phases depend on.
   if (env.NODE_ENV === "production" && !env.OPENWEATHERMAP_API_KEY) {

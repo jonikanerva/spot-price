@@ -1,5 +1,5 @@
 /**
- * OFFLINE / DEV-ONLY CLI for the Fingrid forecast-revision study (issue #79).
+ * OFFLINE / DEV-ONLY CLI for the Fingrid forecast-revision study.
  *
  * Offline only. `STACK.md §0` forbids `src/` runtime from importing `tools/`.
  * It runs only as a tsx script:
@@ -10,8 +10,8 @@
  *     pnpm revision-magnitude --db --export tools/x/v.json  # snapshot DB → file
  *
  * It reconstructs, per forecast dataset and lead-time bin, how much the archived
- * vintages (`fingrid_forecasts`, issue #78) were revised between early issuance
- * and delivery, and prints a GO / MARGINAL / DEFER recommendation for #81. All
+ * vintages (`fingrid_forecasts`) were revised between early issuance and
+ * delivery, and prints a GO / MARGINAL / DEFER recommendation. All
  * DB I/O lives here; `revision-magnitude.ts` stays pure. This is NOT a scheduled
  * job and adds no endpoint (`STACK §9`). It never logs the connection string or
  * any secret (`STACK §8`).

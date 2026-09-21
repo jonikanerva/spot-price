@@ -1,5 +1,5 @@
 -- Public OpenWeatherMap DAILY weather forecasts for the FI price forecast
--- (issue #93; collection only — no change to any price/forecast response). One
+-- (collection only — no change to any price/forecast response). One
 -- row per (point, issuance hour, target day) carrying the daily block as it was
 -- ISSUED at `issued_at`. These are public weather data, not user data
 -- (VISION.md -> Persistence and Privacy Posture).
@@ -12,7 +12,7 @@
 -- ten characters of the UTC ISO instant. No local-time arithmetic is used:
 -- STACK.md section 7 forbids it below the response boundary, and OWM's
 -- `daily[].dt` is LOCAL NOON at the point, so defining the day locally would
--- drag a timezone (and the DST fall-back tracked in #86) into storage.
+-- drag a timezone (and the DST fall-back) into storage.
 -- CONSTRAINT of the UTC derivation: it equals the point's local calendar day
 -- for any point between UTC-11 and UTC+11. Every point in `WEATHER_POINTS` is
 -- Finnish, far inside that range. A point outside it would need an explicit
@@ -54,5 +54,5 @@ CREATE TABLE IF NOT EXISTS weather_daily_forecasts (
 -- NO further indexes on purpose. The only queries today are the PK-keyed insert
 -- and the retention prune (DELETE WHERE issued_at < $1), which at ~154k rows in
 -- steady state is a cheap scan on a small table. The read path is designed in
--- issue #77; adding a speculative index now would cost write amplification on
+-- a later change; adding a speculative index now would cost write amplification on
 -- every hourly run for a query that does not exist yet.

@@ -1,7 +1,7 @@
 /**
  * Deterministic synthetic fixture generator for the forecast backtest.
  *
- * We do NOT commit real Fingrid/Nord Pool dumps. Since issue #80 the committed
+ * We do NOT commit real Fingrid/Nord Pool dumps. The committed
  * fixture is deliberately TEST-SIZED (< ~100 KB): its only role is the parity
  * round-trip and the old-shape-degrade tests, NOT a scoreable backtest — the
  * real delta and artifact recalibration run against the DB (`--db`). So this

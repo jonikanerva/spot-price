@@ -68,9 +68,9 @@ export interface FingridRecord {
  * One archived per-issuance vintage of a Fingrid FORECAST dataset (245/165): a
  * `FingridRecord` plus the `issuedAt` at which that value was recorded (the
  * hour-truncated fetch-time proxy from migration 005). Public grid data, not
- * user data. Read only off the request path — by the offline revision study
- * (#79) and the vintage-correct backtest (#80), which need the full lead-time
- * ladder; the live forecast route uses the latest-per-target read instead.
+ * user data. Read only off the request path, by the offline studies that need
+ * the full lead-time ladder. The live forecast route uses the
+ * latest-per-target read instead.
  */
 export interface ForecastVintageRecord extends FingridRecord {
   readonly issuedAt: string;
@@ -111,8 +111,8 @@ export interface WeatherRecord {
 }
 
 /**
- * One issued OpenWeatherMap DAILY weather forecast, normalised to our domain
- * (issue #93). `issuedAt` is the issuance hour, as for `WeatherRecord`.
+ * One issued OpenWeatherMap DAILY weather forecast, normalised to our domain.
+ * `issuedAt` is the issuance hour, as for `WeatherRecord`.
  *
  * `targetDate` is the UTC CALENDAR DATE (`YYYY-MM-DD`) of `targetDt`, and
  * `targetDt` is the raw upstream `dt` kept as provenance so the date derivation
@@ -144,7 +144,7 @@ export interface WeatherDailyRecord {
 }
 
 /**
- * Outcome of parsing the DAILY block of one One Call response (issue #93).
+ * Outcome of parsing the DAILY block of one One Call response.
  * Tagged separately from the hourly outcome, and nested inside
  * `WeatherFetchResult` rather than flattened into parallel booleans, because
  * the two blocks are parsed INDEPENDENTLY: a daily-schema drift must degrade
@@ -165,7 +165,7 @@ export type WeatherDailyResult =
  * (timeout, auth, parse) yields an empty `records` plus a `reason`, and never
  * throws — a weather problem can never reach the authoritative price path.
  *
- * `daily` carries the independently-parsed daily block (issue #93) on BOTH
+ * `daily` carries the independently-parsed daily block on BOTH
  * branches: a transport failure degrades both, while a schema failure in one
  * block leaves the other intact.
  */
@@ -183,7 +183,7 @@ export type WeatherFetchResult =
     };
 
 /**
- * Daily-block summary of one weather job run (issue #93). Kept OUTSIDE the
+ * Daily-block summary of one weather job run. Kept OUTSIDE the
  * `status` tag on purpose: `status` stays a statement about the HOURLY
  * collection, so the "every point failed → do not prune" guard keeps its
  * meaning. A daily failure never downgrades an hourly success.

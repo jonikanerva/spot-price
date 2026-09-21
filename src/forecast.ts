@@ -350,9 +350,8 @@ export const applyWithinDayShape = (
  * feature vector producing a wildly out-of-range quarter). Because the bound is
  * pushed `SANITY_MARGIN_K` price-spreads beyond the real-data range, it sits
  * provably outside anything the cheapest/most-expensive quarters can take, so
- * it never re-ties cheap or genuinely-negative quarters the way the old
- * percentile floor did — the within-day ordering down to and below zero is
- * preserved. The lower bound is `min(0, …)` so a flat-but-positive history can
+ * it never re-ties cheap or genuinely-negative quarters: the within-day
+ * ordering down to and below zero is preserved. The lower bound is `min(0, …)` so a flat-but-positive history can
  * never clamp a genuine near-zero/negative prediction up to a positive value;
  * the `−50 c/kWh` term is a backstop for an essentially flat history. The bound
  * auto-widens as FI deep-negative prices deepen the observed spread.
@@ -489,8 +488,8 @@ export interface ForecastOptions {
   /**
    * Output sanity clamp for predicted spot c/kWh (`sanityBoundFromHistory`).
    * Each emitted quarter is clamped to `[min, max]`. Absent ⇒ NO clamp (an
-   * honest no-op): unlike the removed percentile floor, the default is to leave
-   * predictions untouched, so near-zero/negative quarters keep their ordering.
+   * honest no-op). The default leaves predictions untouched, so
+   * near-zero/negative quarters keep their ordering.
    */
   readonly sanityBound?: { readonly min: number; readonly max: number };
   /** Ridge L2 penalty forwarded to the model fit. */

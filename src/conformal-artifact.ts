@@ -15,7 +15,7 @@ import type { CalibratedBands } from "./conformal.js";
  * false` and no bound fields. Bands turn on/off purely by committing a new
  * artifact here — no code change.
  *
- * Provenance (issue #80):
+ * Provenance:
  *   scored window: 2026-06-24T13:00:00.000Z … 2026-07-15T13:00:00.000Z
  *   scored origins: 22   span: 21.0 days
  *   SUMMER-ONLY — NOT validated across seasons; shipped DARK by the 90-day window guard.

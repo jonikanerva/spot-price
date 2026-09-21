@@ -121,7 +121,7 @@ export const pruneWeatherRecordsBefore = async (
 };
 
 // ---------------------------------------------------------------------------
-// DAILY block of the same One Call response (issue #93)
+// DAILY block of the same One Call response
 //
 // Same append-only-per-issuance contract as the hourly table above, in its OWN
 // table and — critically — its OWN transaction. The daily write must never

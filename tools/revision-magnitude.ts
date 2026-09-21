@@ -76,7 +76,7 @@ export const MIN_SAMPLES_PER_BIN = 100;
  */
 export const MIN_BAND_SAMPLES = 200;
 
-/** GO threshold: attenuation at or below this on either dataset earns #81. */
+/** GO threshold: attenuation at or below this on either dataset earns a GO. */
 export const GO_ATTENUATION = 0.9;
 
 /** At/above this the effect "barely moves" → MARGINAL, provisional (summer). */

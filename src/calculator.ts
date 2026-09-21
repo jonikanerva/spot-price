@@ -21,11 +21,10 @@ export const isNightHour = (
   return hour >= nightStartHour && hour < nightEndHour;
 };
 
-// An `Intl.DateTimeFormat` instance is stateless across the dates passed to
-// `formatToParts`, so it can be reused. `calculateTotalPrices` invokes this for
-// every interval (up to ~2976 at the price-history 31-day cap); memoising the
-// formatter per timezone keeps construction O(timezones) instead of
-// O(intervals) and stays inside the STACK.md §4 100 ms p99 budget.
+// `Intl.DateTimeFormat` construction is expensive, but one instance is stateless
+// across the dates passed to `formatToParts`. `calculateTotalPrices` formats
+// thousands of intervals per request; a fresh formatter per call breaches the
+// `STACK.md §4` p99 budget. Memoise per timezone.
 const hourFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 const getHourFormatter = (timeZone: string): Intl.DateTimeFormat => {
@@ -104,7 +103,7 @@ export interface ContractBreakdown {
  * in the one shared function, makes every total (real, forecast, and chart) match
  * the bill. The DISPLAYED `spotCentsKwh` stays RAW — possibly negative — so
  * "real prices stay real / return both" holds and the forecast's spot ranking
- * (issue #73 Phase 2) is preserved. The floor only affects the total, the VAT
+ * is preserved. The floor only affects the total, the VAT
  * (computed off the floored base, so VAT is never negative), and is inert for any
  * spot ≥ 0. The 0 is hardcoded (single tenant); the floor VALUE itself comes from
  * the contract settings at spot = 0, so it is not a separate tunable.

@@ -14,7 +14,7 @@
 -- !!! APPEND-ONLY PER ISSUANCE — NOT upsert-latest like `fingrid_actuals` !!!
 -- storeFingridForecastVintages inserts with ON CONFLICT DO NOTHING (it does NOT
 -- DO UPDATE), mirroring `weather_forecasts`. Keeping every issuance is what
--- makes a later vintage-correct backtest (issue #80) and calibrated fit (#81)
+-- makes a later vintage-correct backtest and calibrated fit
 -- leakage-free: they must train/evaluate on the forecast that was actually
 -- available before the target, never on a hindsight-overwritten value. Never
 -- "align" this table to a latest-only upsert — collapsing to one row per target

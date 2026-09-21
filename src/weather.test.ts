@@ -219,7 +219,7 @@ describe("fetchWeather", () => {
     await fetchWeather(fetchParams);
 
     // ONE request, not two: the subscription is billed per call, so the daily
-    // block is free and must never become a second call (issue #93).
+    // block is free and must never become a second call.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [requestedUrl] = fetchSpy.mock.calls[0] ?? [];
     // Runtime guard rather than a cast (STACK.md §7 forbids `as` here).
@@ -246,7 +246,7 @@ describe("fetchWeather", () => {
   });
 
   it("ISOLATION: a malformed daily block still yields every hourly record", async () => {
-    // The acceptance criterion of issue #93. One shared schema would fail the
+    // One shared schema would fail the
     // whole parse here and DISCARD the hourly rows — and that issuance can never
     // be re-fetched once its hour has passed.
     vi.spyOn(globalThis, "fetch").mockResolvedValue(

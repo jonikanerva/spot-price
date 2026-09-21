@@ -90,7 +90,7 @@ const seedPriceHistory = async (
  * hourly job writes it).
  *
  * The forecasts are archived ONE SEEDED DAY PER ISSUANCE, not the whole window
- * under a single issuance. Since issue #90 the store keeps only targets within
+ * under a single issuance. The store keeps only targets within
  * `VINTAGE_BACKFILL_HOURS` of the issuance, so a single all-window issuance
  * would persist ~6 h of rows and leave the fitting window empty. Day-by-day is
  * also what the archive really looks like: a target is archived while it is
@@ -223,9 +223,9 @@ describe("forecast endpoint", () => {
 
     // Forecast schema shares no money-field name with the real-price schema:
     // the raw payload must NOT carry spotCentsKwh / totalCentsKwh anywhere.
-    // Issue #70: the redundant per-entry `estimated: true` is also gone — the
-    // whole payload is flagged by the top-level `forecast: true` (asserted
-    // above), so the wire response must not emit the field at all.
+    // There is no per-entry `estimated` field: the whole payload is flagged by
+    // the top-level `forecast: true` (asserted above), so the wire response must
+    // not emit the field at all.
     const rawEntries = raw["entries"] as Record<string, unknown>[];
     expect(rawEntries[0]).toBeDefined();
     for (const entry of rawEntries) {
@@ -276,7 +276,7 @@ describe("forecast endpoint", () => {
     // Single-home seed: actuals -> fingrid_actuals, forecasts -> vintage table.
     // If the route still read 245/165 from fingrid_actuals it would get ZERO
     // forecast rows and degrade; an available estimate proves the live read now
-    // sources forecasts from the vintage table. (issue #78 single-home.)
+    // sources forecasts from the vintage table (single-home design).
     pool = await initTestDatabase();
     await seedUserAndKey(pool);
     const anchorMs = Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS;

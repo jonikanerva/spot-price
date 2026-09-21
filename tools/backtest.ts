@@ -1,12 +1,10 @@
 /**
  * OFFLINE / DEV-ONLY rolling-origin backtest ENGINE for the FI price forecast.
  *
- * This is a PURE LIBRARY: it has no `main` and no script self-guard. It lives in
- * `tools/` so it can never reach the production bundle (tsup's only entry is
- * `src/index.ts`, and the ESLint guard forbids `src/` runtime from importing
- * `tools/`). The single runnable entry point is `tools/backtest-cli.ts`; the
- * band-regeneration script is `tools/regenerate-bands.ts`. Both, and the tests,
- * import this engine. It adds NO background job (`STACK §9`).
+ * Offline only. `STACK.md §0` forbids `src/` runtime from importing `tools/`.
+ * The runnable entry points are `tools/backtest-cli.ts` and
+ * `tools/regenerate-bands.ts`. This module is PURE: no `main`, no
+ * `process.env`, no network, no DB.
  *
  * Why issue-time keyed (CORRECTNESS-CRITICAL): the forecast is only honestly
  * evaluable against the information the route ACTUALLY had when it issued the
@@ -83,7 +81,7 @@ const FORECAST_DATASET_IDS = ["245", "165"] as const;
 /**
  * Everything the backtest reads. Public grid + price data only — no user data.
  *
- * The Fingrid inputs are split by revision behaviour (issue #78/#80): ACTUALS
+ * The Fingrid inputs are split by revision behaviour: ACTUALS
  * (75/124) are single-valued per quarter (`FingridRecord`), while FORECASTS
  * (245/165) are kept as per-issuance VINTAGES (`ForecastVintageRecord`, carrying
  * `issuedAt`) so the backtest can reconstruct the forecast value actually
@@ -322,8 +320,8 @@ export const collectInputTimestamps = (
         boundaryMs: Number.POSITIVE_INFINITY,
         forwardLookingAllowed: true,
       });
-      // The ISSUANCE, however, must not postdate the issue time — that is the
-      // vintage leak #80 closes. A forecast issued at/after `tMs` was not
+      // The ISSUANCE, however, must not postdate the issue time. A forecast
+      // issued at/after `tMs` was not
       // knowable at issue time even though its target is (correctly) in the
       // future. This entry makes "latest" mode fail the guard by design.
       out.push({
@@ -491,7 +489,7 @@ export interface BacktestSummary {
   readonly fallbackOrigins: number;
   /**
    * Origins skipped because no forecast vintage was knowable as-of issue time
-   * (the pre-vintage era before #78 began archiving). Labelled, NOT folded into
+   * (the era before the vintage archive existed). Labelled, NOT folded into
    * the metrics — scoring them would compare an empty-forecast fallback.
    */
   readonly preVintageOrigins: number;
@@ -918,7 +916,7 @@ const ladderDiagnosticFor = (
 /**
  * Measure the vintage-leak optimism: the same backtest run twice over the SAME
  * scored origins, differing ONLY in forecast-vintage selection — honest
- * (issue-time) vs leaked (latest, the pre-#78 upsert-latest value). The delta is
+ * (issue-time) vs leaked (the latest vintage regardless of issue time). The delta is
  * how much better the leaked scoreboard looks. Pure.
  *
  * The covered-origin set is taken from the honest run (it skips pre-vintage
@@ -998,7 +996,7 @@ interface Fixture {
     Record<string, readonly RawVintage[]>
   >;
   /**
-   * OLD shape (pre-#80): a single `fingrid` map with no `issuedAt`. Kept only so
+   * OLD shape: a single `fingrid` map with no `issuedAt`. Kept only so
    * old-shape fixtures still LOAD (and degrade): actuals map through, but the
    * forecast datasets are DROPPED (empty vintages) — we must NEVER fabricate an
    * `issuedAt`, so an old fixture has no admissible vintages and every origin is

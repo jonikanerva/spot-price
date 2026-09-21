@@ -11,8 +11,8 @@ import type { FingridRecord, ForecastVintageRecord } from "./types.js";
  * synchronously). Mirrors `price-store.ts`: idempotent upsert keyed by
  * (dataset_id, start_time), range reads, and a prune to bound table growth.
  *
- * This file also owns the SEPARATE `fingrid_forecasts` table (issue
- * #78), the SINGLE HOME for the FORECAST datasets (245/165): every issuance is
+ * This file also owns the SEPARATE `fingrid_forecasts` table, the SINGLE HOME
+ * for the FORECAST datasets (245/165): every issuance is
  * archived append-only, and the live route reads the latest issuance per target
  * via `getFingridForecastVintagesLatest`. Forecasts are NOT written to
  * `fingrid_actuals` (only actuals 75/124 are). The two stores never share a
@@ -122,7 +122,7 @@ export const pruneFingridRecordsBefore = async (
 };
 
 // ---------------------------------------------------------------------------
-// Per-issuance vintages of the FORECAST datasets (issue #78)
+// Per-issuance vintages of the FORECAST datasets
 // ---------------------------------------------------------------------------
 
 /** Forecast datasets whose vintages we archive; actuals are excluded. */
@@ -134,8 +134,8 @@ const VINTAGE_DATASETS: ReadonlySet<number> = new Set([
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
- * How far BEFORE the issuance a target may lie and still be archived (issue
- * #90). This is an OUTAGE-TOLERANCE window, not a "keep one post-delivery
+ * How far BEFORE the issuance a target may lie and still be archived. This is
+ * an OUTAGE-TOLERANCE window, not a "keep one post-delivery
  * reference" knob.
  *
  * It lives here, beside `VINTAGE_DATASETS`, because the store owns the archive
@@ -154,7 +154,7 @@ export const VINTAGE_BACKFILL_HOURS = 6;
  *  1. DATASET — only the forecast datasets (245/165) in `VINTAGE_DATASETS` pass.
  *     An actual (75/124) handed in by the caller can never be archived here; the
  *     vintage table holds forecast vintages only.
- *  2. TARGET WINDOW (issue #90) — only targets with
+ *  2. TARGET WINDOW — only targets with
  *     `start_time >= issuedAt − VINTAGE_BACKFILL_HOURS` pass.
  *
  * The window threshold is computed ONCE, outside the filter, and compared on
@@ -260,11 +260,11 @@ interface ForecastVintageRow {
 /**
  * OFFLINE read: EVERY archived issuance per target in [startUtc, endUtc) for one
  * forecast dataset, ordered by (start_time, issued_at) — the full lead-time
- * ladder. The revision study (#79) and the vintage-correct backtest (#80) need
- * all issuances, unlike `getFingridForecastVintagesLatest`, which collapses to
- * the latest per target for the live route. The server never calls this; it
- * lives here (next to the latest-per-target read) so #79 and #80 share ONE query
- * and row mapping rather than duplicating the SQL in `tools/`. Backed by
+ * ladder. The offline studies need all issuances, unlike
+ * `getFingridForecastVintagesLatest`, which collapses to the latest per target
+ * for the live route. The server never calls this. It lives here, next to the
+ * latest-per-target read, so every caller shares ONE query and row mapping
+ * rather than duplicating the SQL in `tools/`. Backed by
  * `idx_fingrid_forecasts_target_issued` (leading `dataset_id, start_time`).
  */
 export const getFingridForecastVintagesAll = async (

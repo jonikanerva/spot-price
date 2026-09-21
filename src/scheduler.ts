@@ -88,9 +88,9 @@ export const runStartupForecastFetch = (
 };
 
 /**
- * Daily-block suffix for the weather log line (issue #93). Kept visible so a
- * daily collection that silently stops — the failure mode the issue is built
- * around — shows up in the operational log instead of only in a return value.
+ * Daily-block suffix for the weather log line. Kept visible so a daily
+ * collection that silently stops shows up in the operational log instead of
+ * only in a return value.
  */
 const dailyNote = (daily: WeatherDailyJobSummary): string => {
   const degradedPoints = daily.failures.map((f) => f.pointId).join(", ");
@@ -100,17 +100,14 @@ const dailyNote = (daily: WeatherDailyJobSummary): string => {
 };
 
 /**
- * Run the OpenWeatherMap weather data-collection fetch for the FI forecast
- * (issue #73, Phase 1).
+ * Run the OpenWeatherMap weather data-collection fetch for the FI forecast.
  *
  * Wrapped in its own try/catch and isolated from `safeFetch`/`safeForecastFetch`
  * so a weather failure can NEVER affect the authoritative Nord Pool price cron
- * or path (STACK.md §9). The OWM boundary already degrades rather than throwing
- * and the job reports partial/total failure per point; this is a second
- * belt-and-braces guard. No-op when no API key is configured — and because the
- * cron is only scheduled when a key is present (and Playwright's webServer.env
- * whitelist does not pass the key), no live OWM call is ever made in tests/E2E,
- * which keeps the One Call 3.0 billing surface at zero outside production.
+ * or path — see `STACK.md §9`. No-op when no API key is configured. The cron is
+ * only scheduled when a key is present, and Playwright's `webServer.env`
+ * whitelist does not pass the key, so no live OWM call is ever made in
+ * tests/E2E.
  */
 const safeWeatherFetch = async (
   pool: Pool,
@@ -227,7 +224,7 @@ export const startScheduler = (
     );
   }
 
-  // FI forecast: hourly OpenWeatherMap weather collection (issue #73 Phase 1).
+  // FI forecast: hourly OpenWeatherMap weather collection.
   // Isolated from every cron above — a weather failure can never affect the
   // authoritative price path (STACK.md §9). Only scheduled when a key is
   // configured, so no live (billable) One Call 3.0 request is made otherwise.

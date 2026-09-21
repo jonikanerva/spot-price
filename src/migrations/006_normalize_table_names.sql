@@ -25,7 +25,7 @@ ALTER INDEX IF EXISTS weather_series_pkey RENAME TO weather_forecasts_pkey;
 
 -- Purge now-orphaned forecast rows from the actuals table. Before single-home,
 -- the forecast datasets (245 wind, 165 consumption) were also upserted into
--- fingrid_series; after #78 forecasts live only in `fingrid_forecasts` and
+-- fingrid_series; forecasts now live only in `fingrid_forecasts` and
 -- nothing reads 245/165 from the actuals table. Deleting them makes the table
 -- truthfully actuals-only and reclaims storage. Safe: the live route reads
 -- forecasts from `fingrid_forecasts`, so this cannot change any response.

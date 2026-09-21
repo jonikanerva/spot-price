@@ -32,7 +32,7 @@ export const initDatabase = async (): Promise<pg.Pool> => {
   return pool;
 };
 
-/** WeakMap to track test schema names for cleanup without monkey-patching Pool */
+/** WeakMap to track test schema names for cleanup. */
 const testSchemas = new WeakMap<pg.Pool, string>();
 
 /** Create a test database using a unique schema for isolation */

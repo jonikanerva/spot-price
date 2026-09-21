@@ -566,10 +566,9 @@ describe("buildForecast (integration of the pure pipeline)", () => {
 
   it("does not tie-collapse cheap/near-zero quarters (the live-route defect)", () => {
     // A month whose within-day SHAPE dips to slightly-negative troughs each day,
-    // sitting on a low level. The old percentile floor collapsed every cheap
-    // quarter onto one clip value, destroying the cheapest-window ordering. With
-    // no floor (the new default — buildForecast with no sanityBound), the cheapest
-    // quarters must stay DISTINCT and strictly ordered down to and below zero.
+    // sitting on a low level. With no floor (buildForecast with no sanityBound),
+    // the cheapest quarters must stay DISTINCT and strictly ordered down to and
+    // below zero.
     const shape = (q: number): number => 3 * Math.sin((2 * Math.PI * q) / 96);
     const spot = new Map<string, number>();
     const cons: FingridRecord[] = [];
@@ -606,13 +605,12 @@ describe("buildForecast (integration of the pure pipeline)", () => {
 
     const values = result.series.map((p) => p.estimatedSpotCentsKwh);
     expect(result.diagnostics.sanityClampedQuarters).toBe(0);
-    // Some genuinely sub-zero quarters exist (proves we are in the regime the old
-    // floor mangled).
+    // Some genuinely sub-zero quarters exist, so the assertions below are in the
+    // regime a floor would mangle.
     expect(values.some((v) => v < 0)).toBe(true);
 
     // The 16 cheapest quarters keep MANY distinct values — they are not
-    // collapsed to one clip value. The old percentile floor would tie all the
-    // sub-zero quarters to a single number; here the cheapest set stays spread.
+    // collapsed to one clip value. The cheapest set stays spread.
     const cheapest16 = [...values].sort((a, b) => a - b).slice(0, 16);
     expect(new Set(cheapest16).size).toBeGreaterThanOrEqual(8);
 

@@ -9,19 +9,18 @@ import {
 import type { WeatherFetchJobResult, WeatherPointFailure } from "./types.js";
 
 /**
- * OpenWeatherMap weather data-collection job for the FI forecast (issue #73,
- * Phase 1: forward-only collection; no change to any price/forecast response).
+ * OpenWeatherMap weather data-collection job for the FI forecast.
  * Mirrors `forecast-job.ts`: fetch the public upstream, store idempotently,
  * then prune beyond the retention window. The OWM boundary degrades rather than
  * throwing, so this job can never break the authoritative price path.
  *
- * Per-point degrade (devils-advocate scope cut): the configured points are
+ * Per-point degrade: the configured points are
  * fetched and stored INDEPENDENTLY. One point's transient failure must not
  * discard the other point's irreversible issue-time data — that issuance can
  * never be re-fetched once the hour passes. So a failed point is recorded in
  * `failures` and the run reports `partial`; it does not abort the whole run.
  *
- * The DAILY block of the same response (issue #93) is stored on the same
+ * The DAILY block of the same response is stored on the same
  * principle, one level deeper: it is written after the hourly rows, in its own
  * transaction and its own try/catch, and its failures are reported in a separate
  * `daily` summary. `status`, `stored` and `pruned` remain statements about the
@@ -32,14 +31,9 @@ import type { WeatherFetchJobResult, WeatherPointFailure } from "./types.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Retention window for stored weather rows (~13 months). Like the Fingrid job,
- * the table ACCUMULATES forward from deploy: each hourly run appends a fresh
- * issuance, building the issue-time forecast history a later leakage-free
- * weather-feature backtest (Phase 3) needs. 400 days covers a full year plus a
- * month of margin so a backtest spanning a complete seasonal cycle always has
- * data, while still bounding storage per the VISION data-footprint principle
- * (2 points × 48 hourly entries × 24 issuances/day × 400 days ≈ 920k rows,
- * trivial on Railway).
+ * Retention window for stored weather rows (~13 months). Keep it above a full
+ * year, so a backtest spanning a complete seasonal cycle always has data.
+ * Accumulation policy and row math: see `STACK.md §9`.
  */
 export const WEATHER_RETENTION_DAYS = 400;
 
@@ -71,7 +65,7 @@ export const runWeatherFetchJob = async (
       failures.push({ pointId: point.id, reason: result.reason });
     }
 
-    // Daily block (issue #93) — AFTER the hourly store, in its OWN try/catch and
+    // Daily block — AFTER the hourly store, in its OWN try/catch and
     // its OWN transaction. The hourly rows are already committed at this point,
     // so nothing here can discard them. `successes` deliberately counts HOURLY
     // successes only, so the "every point failed → do not prune" guard below
