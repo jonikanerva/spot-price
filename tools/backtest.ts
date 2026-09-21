@@ -81,11 +81,11 @@ const FORECAST_DATASET_IDS = ["245", "165"] as const;
 /**
  * Everything the backtest reads. Public grid + price data only — no user data.
  *
- * The Fingrid inputs are split by revision behaviour. ACTUALS
- * (75/124) are single-valued per quarter (`FingridRecord`), while FORECASTS
- * (245/165) are kept as per-issuance VINTAGES (`ForecastVintageRecord`, carrying
- * `issuedAt`) so the backtest can reconstruct the forecast value actually
- * knowable at each issue time instead of the hindsight-overwritten latest one.
+ * The Fingrid inputs are split by revision behaviour. ACTUALS (75/124) are
+ * single-valued per quarter (`FingridRecord`), while FORECASTS (245/165) are
+ * kept as per-issuance VINTAGES (`ForecastVintageRecord`, carrying `issuedAt`)
+ * so the backtest can reconstruct the forecast value actually knowable at each
+ * issue time instead of the hindsight-overwritten latest one.
  */
 export interface BacktestData {
   readonly prices: readonly PricePoint[];

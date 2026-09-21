@@ -13,10 +13,10 @@
 -- STACK.md section 7 forbids it below the response boundary, and OWM's
 -- `daily[].dt` is LOCAL NOON at the point, so defining the day locally would
 -- drag a timezone (and the DST fall-back) into storage. CONSTRAINT of the UTC
--- derivation: it equals the point's local calendar day
--- for any point between UTC-11 and UTC+11. Every point in `WEATHER_POINTS` is
--- Finnish, far inside that range. A point outside it would need an explicit
--- decision, not a silent drift — the constraint is pinned by a unit test.
+-- derivation: it equals the point's local calendar day for any point between
+-- UTC-11 and UTC+11. Every point in `WEATHER_POINTS` is Finnish, far inside
+-- that range. A point outside it would need an explicit decision, not a silent
+-- drift — the constraint is pinned by a unit test.
 --
 -- `target_dt` keeps the raw upstream instant as PROVENANCE, so the date
 -- derivation stays recomputable from stored data without re-collecting. Weather

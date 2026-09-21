@@ -10,9 +10,9 @@ import type { WeatherFetchJobResult, WeatherPointFailure } from "./types.js";
 
 /**
  * OpenWeatherMap weather data-collection job for the FI forecast. Mirrors
- * `forecast-job.ts`: fetch the public upstream, store idempotently,
- * then prune beyond the retention window. The OWM boundary degrades rather than
- * throwing, so this job can never break the authoritative price path.
+ * `forecast-job.ts`: fetch the public upstream, store idempotently, then prune
+ * beyond the retention window. The OWM boundary degrades rather than throwing,
+ * so this job can never break the authoritative price path.
  *
  * Per-point degrade: the configured points are fetched and stored
  * INDEPENDENTLY. One point's transient failure must not discard the other
@@ -21,11 +21,11 @@ import type { WeatherFetchJobResult, WeatherPointFailure } from "./types.js";
  * reports `partial`; it does not abort the whole run.
  *
  * The DAILY block of the same response is stored on the same principle, one
- * level deeper: it is written after the hourly rows, in its own
- * transaction and its own try/catch, and its failures are reported in a separate
- * `daily` summary. `status`, `stored` and `pruned` remain statements about the
- * HOURLY collection alone. No extra upstream call is made — the daily block
- * rides along in the response the job already fetches.
+ * level deeper: it is written after the hourly rows, in its own transaction and
+ * its own try/catch, and its failures are reported in a separate `daily`
+ * summary. `status`, `stored` and `pruned` remain statements about the HOURLY
+ * collection alone. No extra upstream call is made — the daily block rides along
+ * in the response the job already fetches.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;

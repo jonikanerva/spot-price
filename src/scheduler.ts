@@ -225,9 +225,9 @@ export const startScheduler = (
   }
 
   // FI forecast: hourly OpenWeatherMap weather collection. Isolated from every
-  // cron above — a weather failure can never affect the
-  // authoritative price path (STACK.md §9). Only scheduled when a key is
-  // configured, so no live (billable) One Call 3.0 request is made otherwise.
+  // cron above — a weather failure can never affect the authoritative price
+  // path (STACK.md §9). Only scheduled when a key is configured, so no live
+  // (billable) One Call 3.0 request is made otherwise.
   const weather = weatherApiKey
     ? cron.schedule("0 * * * *", () => {
         void safeWeatherFetch(pool, weatherApiKey, "Weather fetch");

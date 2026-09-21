@@ -69,8 +69,8 @@ export interface FingridRecord {
  * `FingridRecord` plus the `issuedAt` at which that value was recorded (the
  * hour-truncated fetch-time proxy from migration 005). Public grid data, not
  * user data. Read only off the request path, by the offline studies that need
- * the full lead-time ladder. The live forecast route uses the
- * latest-per-target read instead.
+ * the full lead-time ladder. The live forecast route uses the latest-per-target
+ * read instead.
  */
 export interface ForecastVintageRecord extends FingridRecord {
   readonly issuedAt: string;
@@ -145,11 +145,11 @@ export interface WeatherDailyRecord {
 
 /**
  * Outcome of parsing the DAILY block of one One Call response. Tagged
- * separately from the hourly outcome, and nested inside
- * `WeatherFetchResult` rather than flattened into parallel booleans, because
- * the two blocks are parsed INDEPENDENTLY: a daily-schema drift must degrade
- * only itself and leave the hourly records untouched, since an issuance can
- * never be re-fetched once its hour has passed.
+ * separately from the hourly outcome, and nested inside `WeatherFetchResult`
+ * rather than flattened into parallel booleans, because the two blocks are
+ * parsed INDEPENDENTLY: a daily-schema drift must degrade only itself and leave
+ * the hourly records untouched, since an issuance can never be re-fetched once
+ * its hour has passed.
  */
 export type WeatherDailyResult =
   | { readonly ok: true; readonly records: readonly WeatherDailyRecord[] }

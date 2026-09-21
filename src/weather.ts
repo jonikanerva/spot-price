@@ -245,11 +245,11 @@ const dailyDegraded = (reason: string): WeatherDailyResult => ({
 /**
  * Parse the DAILY block of an already-fetched body, INDEPENDENTLY of the hourly
  * parse. Two separate `safeParse` calls over the same body is the load-bearing
- * shape: folding `daily` into the hourly schema would mean one
- * deviating daily entry fails the whole parse, so the point's HOURLY rows are
- * discarded — and `weather-job.ts` records that an issuance can never be
- * re-fetched once its hour has passed. The failure would also look like ordinary
- * per-point degradation rather than a regression.
+ * shape: folding `daily` into the hourly schema would mean one deviating daily
+ * entry fails the whole parse, so the point's HOURLY rows are discarded — and
+ * `weather-job.ts` records that an issuance can never be re-fetched once its
+ * hour has passed. The failure would also look like ordinary per-point
+ * degradation rather than a regression.
  *
  * No `.catch()` default and no coercion: a schema drift must surface as a
  * degraded daily result with a reason, never be silently papered over. The

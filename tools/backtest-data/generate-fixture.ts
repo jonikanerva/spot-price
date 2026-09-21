@@ -2,13 +2,13 @@
  * Deterministic synthetic fixture generator for the forecast backtest.
  *
  * We do NOT commit real Fingrid/Nord Pool dumps. The committed fixture is
- * deliberately TEST-SIZED (< ~100 KB): its only role is the parity
- * round-trip and the old-shape-degrade tests, NOT a scoreable backtest — the
- * real delta and artifact recalibration run against the DB (`--db`). So this
- * generates a compact NEW-SHAPE fixture: FI prices + Fingrid ACTUALS (75/124) +
+ * deliberately TEST-SIZED (< ~100 KB): its only role is the parity round-trip
+ * and the old-shape-degrade tests, NOT a scoreable backtest — the real delta
+ * and artifact recalibration run against the DB (`--db`). So this generates a
+ * compact NEW-SHAPE fixture: FI prices + Fingrid ACTUALS (75/124) +
  * per-issuance forecast VINTAGES (245/165) with a small 2-deep issuance ladder
- * (a stale early issuance and a fresh near-delivery one) whose values DIFFER, so
- * the sample exercises the vintage-selection path.
+ * (a stale early issuance and a fresh near-delivery one) whose values DIFFER,
+ * so the sample exercises the vintage-selection path.
  *
  * Run once with: pnpm tsx tools/backtest-data/generate-fixture.ts
  * The output fixture.json is committed; the backtest reads it by FILE PATH with
