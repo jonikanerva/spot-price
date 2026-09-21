@@ -1,9 +1,7 @@
 -- Normalize the Fingrid/weather table names to content-based names, matching
--- how each table is maintained (product-owner request):
+-- how each table is maintained:
 --   * fingrid_series   -> fingrid_actuals     (actuals 75/124, kept-latest)
 --   * weather_series   -> weather_forecasts   (forecasts, kept-all per issuance)
--- (`fingrid_forecasts` is created directly under its final name in migration
--- 005, which is still unmerged, so it needs no rename here.)
 --
 -- These tables are already DEPLOYED, so they are renamed in place rather than
 -- recreated. ALTER ... IF EXISTS keeps this idempotent/robust across
@@ -25,8 +23,8 @@ ALTER INDEX IF EXISTS weather_series_pkey RENAME TO weather_forecasts_pkey;
 
 -- Purge now-orphaned forecast rows from the actuals table. Before single-home,
 -- the forecast datasets (245 wind, 165 consumption) were also upserted into
--- fingrid_series; forecasts now live only in `fingrid_forecasts` and
--- nothing reads 245/165 from the actuals table. Deleting them makes the table
+-- fingrid_series; forecasts now live only in `fingrid_forecasts` and nothing
+-- reads 245/165 from the actuals table. Deleting them makes the table
 -- truthfully actuals-only and reclaims storage. Safe: the live route reads
 -- forecasts from `fingrid_forecasts`, so this cannot change any response.
 DELETE FROM fingrid_actuals WHERE dataset_id IN (245, 165);

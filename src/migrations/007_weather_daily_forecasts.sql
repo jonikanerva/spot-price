@@ -1,6 +1,6 @@
 -- Public OpenWeatherMap DAILY weather forecasts for the FI price forecast
--- (collection only — no change to any price/forecast response). One
--- row per (point, issuance hour, target day) carrying the daily block as it was
+-- (collection only — no change to any price/forecast response). One row per
+-- (point, issuance hour, target day) carrying the daily block as it was
 -- ISSUED at `issued_at`. These are public weather data, not user data
 -- (VISION.md -> Persistence and Privacy Posture).
 --
@@ -12,8 +12,8 @@
 -- ten characters of the UTC ISO instant. No local-time arithmetic is used:
 -- STACK.md section 7 forbids it below the response boundary, and OWM's
 -- `daily[].dt` is LOCAL NOON at the point, so defining the day locally would
--- drag a timezone (and the DST fall-back) into storage.
--- CONSTRAINT of the UTC derivation: it equals the point's local calendar day
+-- drag a timezone (and the DST fall-back) into storage. CONSTRAINT of the UTC
+-- derivation: it equals the point's local calendar day
 -- for any point between UTC-11 and UTC+11. Every point in `WEATHER_POINTS` is
 -- Finnish, far inside that range. A point outside it would need an explicit
 -- decision, not a silent drift — the constraint is pinned by a unit test.
@@ -29,9 +29,10 @@
 --
 -- All six `temp` sub-fields are collected although a first feature would use
 -- three. Collection is forward-only and irreversible: a value not collected
--- today can never be recovered for today. A first feature layer uses `day`,
--- `min` and `max` only; `night`, `eve` and `morn` stay unused until a
--- measurement justifies them. Retention: see STACK.md section 5.
+-- today can never be recovered for today. A first feature layer promotes only
+-- `day`, `min` and `max` into `FEATURE_NAMES` (`src/features.ts`); `night`,
+-- `eve` and `morn` stay out until a measurement justifies them.
+-- Retention: see STACK.md section 5.
 CREATE TABLE IF NOT EXISTS weather_daily_forecasts (
   point_id TEXT NOT NULL,
   issued_at TIMESTAMPTZ NOT NULL,

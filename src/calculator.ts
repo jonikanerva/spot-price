@@ -103,10 +103,10 @@ export interface ContractBreakdown {
  * in the one shared function, makes every total (real, forecast, and chart) match
  * the bill. The DISPLAYED `spotCentsKwh` stays RAW — possibly negative — so
  * "real prices stay real / return both" holds and the forecast's spot ranking
- * is preserved. The floor only affects the total, the VAT
- * (computed off the floored base, so VAT is never negative), and is inert for any
- * spot ≥ 0. The 0 is hardcoded (single tenant); the floor VALUE itself comes from
- * the contract settings at spot = 0, so it is not a separate tunable.
+ * is preserved. The floor only affects the total, the VAT (computed off the
+ * floored base, so VAT is never negative), and is inert for any spot ≥ 0. The 0
+ * is hardcoded (single tenant); the floor VALUE itself comes from the contract
+ * settings at spot = 0, so it is not a separate tunable.
  */
 export const applyContractTerms = (
   spotCentsKwh: number,
@@ -227,7 +227,8 @@ export const buildPriceWindow = (prices: TotalPrice[]): PriceWindow | null => {
  * exact multiple of the interval, the window rounds UP to the next interval
  * boundary (e.g. 280 min with 15-min data gives a 285-min window).
  *
- * Uses a contiguous-window scan — O(n^2), but n is small (<= 96/day).
+ * Scans contiguous windows in O(n^2). That is acceptable only because n is
+ * bounded at <= 96 per day; do not call it with an unbounded series.
  */
 export const findCheapestWindow = (
   prices: readonly TotalPrice[],

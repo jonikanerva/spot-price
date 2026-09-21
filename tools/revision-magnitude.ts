@@ -38,7 +38,9 @@ export const VINTAGE_DATASET_IDS: readonly number[] = [
  * uncertainty (migration 005), so 2h ≈ "the last issuance or two before/after
  * delivery". A negative lead (issuance postdates delivery) is also admissible —
  * that issuance is the closest thing to a settled value, so it is the best
- * available reference.
+ * available reference. A post-delivery reference exists only while
+ * `VINTAGE_BACKFILL_HOURS` (`src/fingrid-store.ts`) keeps archiving a target
+ * after its delivery.
  */
 export const REFERENCE_MAX_LEAD_H = 2;
 

@@ -13,8 +13,6 @@ export const storePrices = async (
   try {
     await client.query("BEGIN");
     for (const p of prices) {
-      // Keep this upsert unguarded: `fetch-job.ts` calls this writer OUTSIDE a
-      // try/catch, so a change here risks the authoritative price path.
       await client.query(
         `INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area)
          VALUES ($1, $2, $3, $4)
@@ -33,6 +31,9 @@ export const storePrices = async (
     client.release();
   }
 
+  // `fetch-job.ts` derives `tomorrowAvailable` from this count, so it must stay
+  // the number of records HANDED IN. A rows-written count would read unchanged
+  // data as missing prices and add upstream calls.
   return prices.length;
 };
 

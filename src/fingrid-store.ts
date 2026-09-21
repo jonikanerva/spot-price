@@ -12,9 +12,9 @@ import type { FingridRecord, ForecastVintageRecord } from "./types.js";
  * (dataset_id, start_time), range reads, and a prune to bound table growth.
  *
  * This file also owns the SEPARATE `fingrid_forecasts` table, the SINGLE HOME
- * for the FORECAST datasets (245/165): every issuance is
- * archived append-only, and the live route reads the latest issuance per target
- * via `getFingridForecastVintagesLatest`. Forecasts are NOT written to
+ * for the FORECAST datasets (245/165): every issuance is archived append-only,
+ * and the live route reads the latest issuance per target via
+ * `getFingridForecastVintagesLatest`. Forecasts are NOT written to
  * `fingrid_actuals` (only actuals 75/124 are). The two stores never share a
  * transaction — the authoritative actuals upsert below must never be aborted by
  * a vintage-write failure.
@@ -23,13 +23,6 @@ import type { FingridRecord, ForecastVintageRecord } from "./types.js";
 /**
  * Upsert Fingrid ACTUAL records (idempotent via ON CONFLICT).
  *
- * The `DO UPDATE` carries a change guard: a row is rewritten only when its
- * `(end_time, value)` pair differs from the incoming one. `IS DISTINCT FROM`
- * treats NULL as a value, so a NULL pair is never read as a change. The guard
- * addresses the stored row by TABLE NAME, not `EXCLUDED`; the syntax requires
- * that. `fetched_at` therefore means LAST CHANGED — see `STACK.md §5`.
- */
-/**
  * Returns the number of records HANDED IN, not the number of rows written. The
  * change guard must not leak into this count: `stored` means "this many
  * observations were accepted". `fetch-job.ts` derives `tomorrowAvailable` from
@@ -48,6 +41,12 @@ export const storeFingridRecords = async (
   try {
     await client.query("BEGIN");
     for (const r of records) {
+      // The `DO UPDATE` carries a change guard: a row is rewritten only when its
+      // `(end_time, value)` pair differs from the incoming one. `IS DISTINCT
+      // FROM` treats NULL as a value, so a NULL pair is never read as a change.
+      // The guard addresses the stored row by TABLE NAME, not `EXCLUDED`; the
+      // syntax requires that. `fetched_at` therefore means LAST CHANGED — see
+      // `STACK.md §5`.
       await client.query(
         `INSERT INTO fingrid_actuals (dataset_id, start_time, end_time, value)
          VALUES ($1, $2, $3, $4)
@@ -134,9 +133,10 @@ const VINTAGE_DATASETS: ReadonlySet<number> = new Set([
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
- * How far BEFORE the issuance a target may lie and still be archived. This is
- * an OUTAGE-TOLERANCE window, not a "keep one post-delivery
- * reference" knob.
+ * How far BEFORE the issuance a target may lie and still be archived.
+ *
+ * Lowering this below `REFERENCE_MAX_LEAD_H` (`tools/revision-magnitude.ts`)
+ * leaves that study with no post-delivery reference vintage per target.
  *
  * It lives here, beside `VINTAGE_DATASETS`, because the store owns the archive
  * write policy and both guards belong together. `forecast-job.ts` already
