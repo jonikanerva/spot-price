@@ -1,9 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(gh api repos/*/issues/comments:*)",
-      "Bash(gh api repos/*/pulls/*/comments:*)",
-      "Bash(gh api repos/*/pulls/*/reviews:*)",
+      "Bash(gh api repos/*/issues/comments*)",
+      "Bash(gh api repos/*/pulls/*/comments*)",
+      "Bash(gh api repos/*/pulls/*/reviews*)",
       "Bash(gh auth status)",
       "Bash(gh issue comment:*)",
       "Bash(gh issue list:*)",
@@ -72,7 +72,7 @@
       "Bash(git reset --hard:*)",
       "Bash(git clean -fd:*)",
       "Bash(git clean -fdx:*)",
-      "Bash(gh api repos/*/merges:*)"
+      "Bash(gh api *merges*)"
     ]
   },
   "hooks": {
