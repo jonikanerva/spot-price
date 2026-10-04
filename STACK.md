@@ -86,30 +86,33 @@ The `package.json` scripts are the single source of truth. Never invoke `tsc`, `
 
 Default answer to "should we add a library?" is **no**. New entries require a `STACK.md` PR with justification. The list below reflects the current `package.json`.
 
-| Dependency                   | Version | Why it earns its place                                                   | Approver  | Date       |
-| ---------------------------- | ------- | ------------------------------------------------------------------------ | --------- | ---------- |
-| `hono`                       | `^4.12` | Backend HTTP framework — the project's chosen default                    | (default) | (template) |
-| `@hono/node-server`          | `^2.0`  | Node adapter for Hono                                                    | (default) | (template) |
-| `@hono/zod-openapi`          | `^1.4`  | Schema-first route definitions + OpenAPI document generation             | (default) | (template) |
-| `@scalar/hono-api-reference` | `^0.10` | Renders the OpenAPI reference UI at `/api/docs`                          | (default) | (template) |
-| `better-auth`                | `^1.6`  | Self-hosted email/password auth backed by the same `pg` pool             | (default) | (template) |
-| `hono-rate-limiter`          | `^0.5`  | In-memory per-instance rate limiting                                     | (default) | (template) |
-| `node-cron`                  | `^4.2`  | In-process cron for the day-ahead price fetch jobs                       | (default) | (template) |
-| `pg`                         | `^8.20` | PostgreSQL driver                                                        | (default) | (template) |
-| `zod`                        | `^4.4`  | Boundary validation for every external input                             | (default) | (template) |
-| `vitest`                     | `^4.1`  | Unit + integration test runner                                           | (default) | (template) |
-| `@playwright/test`           | `^1.60` | End-to-end browser tests under `e2e/`                                    | (default) | (template) |
-| `eslint`                     | `^10.4` | Linter                                                                   | (default) | (template) |
-| `typescript-eslint`          | `^8.59` | TS-aware lint rules + flat-config helper (`@typescript-eslint/*`)        | (default) | (template) |
-| `@eslint/js`                 | `^10`   | ESLint's recommended JS rule set for the flat config                     | (default) | (template) |
-| `prettier`                   | `^3.8`  | Formatter                                                                | (default) | (template) |
-| `typescript`                 | `^5.9`  | Language                                                                 | (default) | (template) |
-| `tsup`                       | `^8.5`  | Production bundler (`pnpm build`)                                        | (default) | (template) |
-| `tsx`                        | `^4.22` | Dev runner (`pnpm dev`) and seed/migration script runner                 | (default) | (template) |
-| `@better-auth/cli`           | `^1.4`  | Generates the Better Auth SQL schema consumed by the numbered migrations | (default) | (template) |
-| `@types/node`                | `^25`   | Node type definitions                                                    | (default) | (template) |
-| `@types/node-cron`           | `^3.0`  | Type definitions for `node-cron`                                         | (default) | (template) |
-| `@types/pg`                  | `^8.20` | Type definitions for `pg`                                                | (default) | (template) |
+| Dependency                   | Version | Why it earns its place                                                               | Approver      | Date       |
+| ---------------------------- | ------- | ------------------------------------------------------------------------------------ | ------------- | ---------- |
+| `hono`                       | `^4.13` | Backend HTTP framework — the project's chosen default                                | (default)     | (template) |
+| `@hono/node-server`          | `^2.1`  | Node adapter for Hono                                                                | (default)     | (template) |
+| `@hono/zod-openapi`          | `^1.4`  | Schema-first route definitions + OpenAPI document generation                         | (default)     | (template) |
+| `@scalar/hono-api-reference` | `^0.10` | Renders the OpenAPI reference UI at `/api/docs`                                      | (default)     | (template) |
+| `better-auth`                | `^1.6`  | Self-hosted email/password auth backed by the same `pg` pool                         | (default)     | (template) |
+| `hono-rate-limiter`          | `^0.5`  | In-memory per-instance rate limiting                                                 | (default)     | (template) |
+| `node-cron`                  | `^4.2`  | In-process cron for the day-ahead price fetch jobs                                   | (default)     | (template) |
+| `pg`                         | `^8.20` | PostgreSQL driver                                                                    | (default)     | (template) |
+| `zod`                        | `^4.4`  | Boundary validation for every external input                                         | (default)     | (template) |
+| `vitest`                     | `^4.1`  | Unit + integration test runner                                                       | (default)     | (template) |
+| `@playwright/test`           | `^1.63` | End-to-end browser tests under `e2e/`                                                | (default)     | (template) |
+| `eslint`                     | `^10.4` | Linter                                                                               | (default)     | (template) |
+| `typescript-eslint`          | `^8.59` | TS-aware lint rules + flat-config helper (`@typescript-eslint/*`)                    | (default)     | (template) |
+| `@eslint/js`                 | `^10`   | ESLint's recommended JS rule set for the flat config                                 | (default)     | (template) |
+| `prettier`                   | `^3.8`  | Formatter                                                                            | (default)     | (template) |
+| `typescript`                 | `^5.9`  | Language                                                                             | (default)     | (template) |
+| `tsup`                       | `^8.5`  | Production bundler (`pnpm build`)                                                    | (default)     | (template) |
+| `vite`                       | `^7.3`  | Peer dependency of `vitest`; pinned at a patched version so `pnpm audit` stays clean | Claude (lead) | 2026-10-04 |
+| `tsx`                        | `^4.22` | Dev runner (`pnpm dev`) and seed/migration script runner                             | (default)     | (template) |
+| `@better-auth/cli`           | `^1.4`  | Generates the Better Auth SQL schema consumed by the numbered migrations             | (default)     | (template) |
+| `@types/node`                | `^25`   | Node type definitions                                                                | (default)     | (template) |
+| `@types/node-cron`           | `^3.0`  | Type definitions for `node-cron`                                                     | (default)     | (template) |
+| `@types/pg`                  | `^8.20` | Type definitions for `pg`                                                            | (default)     | (template) |
+
+`package.json → pnpm.overrides` raises two transitive packages to patched versions: `drizzle-orm` (an optional peer of `better-auth`) and `nanoid` (from `@scalar/hono-api-reference`). Remove an override when its parent package resolves a patched version without it.
 
 ---
 
