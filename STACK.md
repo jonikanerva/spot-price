@@ -64,7 +64,7 @@ Use with `DOCTRINE.md` (P1–P9) and `CLAUDE.md`. This file maps the doctrine to
 | `$TEST_CMD`   | `pnpm test`                                                                                      |
 | `$VERIFY_CMD` | `pnpm test:all` (format-check → type-check → lint → production dependency audit → tests → build) |
 
-**Required tests beyond `$VERIFY_CMD`:** `pnpm test:e2e` (Playwright). Every merge needs a passing run. Both `pnpm test:all` and `pnpm test:e2e` need the local PostgreSQL from `pnpm db:up`; `ECONNREFUSED :5432` means the database is not running, not a regression. The audit step (`pnpm audit:deps`) needs network access to the npm registry.
+**Required tests beyond `$VERIFY_CMD`:** `pnpm test:e2e` (Playwright). Every merge needs a passing run. Both `pnpm test:all` and `pnpm test:e2e` need the local PostgreSQL from `pnpm db:up` and `TEST_DATABASE_URL` (or `DATABASE_URL`) set as in `.env.example`. `ECONNREFUSED :5432` means the database is not running; "TEST_DATABASE_URL or DATABASE_URL environment variable is required" means the variable is not set. Neither is a regression. The audit step (`pnpm audit:deps`) needs network access to the npm registry.
 
 The `package.json` scripts are the single source of truth. Never invoke `tsc`, `eslint`, `vitest`, `playwright`, or `tsup` directly from commits, CI, or agent scripts.
 
@@ -142,6 +142,8 @@ Default answer to "should we add a library?" is **no**. New entries require a `S
 - Fire-and-forget async work with no owner and no cancellation path. Detached work needs a why comment.
 - Singletons, global mutable state, or DI containers without an entry in this file.
 - Debug output, stubs, or commented-out code in shipped code.
+- New compiler or lint warnings. `$VERIFY_CMD` must pass with no new warnings.
+- An external call without a timeout and a degraded result. Upstream failure must never block the price request path.
 
 **Logging exception:** direct `console.log` / `console.warn` / `console.error` calls to stdout / stderr **are** the approved logging mechanism (see §8). The reject rules above do not forbid them — they forbid the logger being replaced by a third-party library. PII still must not be logged regardless of the mechanism.
 
@@ -257,7 +259,7 @@ Enforced boundaries: an ESLint rule forbids `src/` from importing `tools/`. Not 
 ## 15. Release, recovery, and maintenance
 
 - **Release:** Railway service `spot-price` (project `calmdonut`, environment `production`) builds `main` from `jonikanerva/spot-price` with Railpack and deploys every push to `main`. A merge is a release. The owner reserves merge (`CLAUDE.md → Project-specific rules`). `src/migrate.ts` applies pending migrations on start. The container memory limit is 375 MB, below the §4 ceiling.
-- **Observe:** Railway gates the deploy on `GET /health` (30 s timeout). After a deploy, confirm the deployed commit in Railway, then run `BASE_URL=https://spot.calmdonut.com pnpm smoke` or the steps in `RAILWAY.md → Smoke test after deploy`. Diagnostic source: Railway process logs. Watch the next scheduled price fetch.
+- **Observe:** read-only checks only. Railway gates the deploy on `GET /health` (30 s timeout). After a deploy, confirm the deployed commit in Railway, call `GET https://spot.calmdonut.com/health` and expect `{"status":"ok","db":"connected"}`, and watch the next scheduled price fetch in the Railway process logs. Never run `pnpm smoke` or the `RAILWAY.md` smoke steps against production: they create an account and an API key. Run them against a local instance only, or on a first deploy with the owner present.
 - **Recover:** revert the merge commit through a PR, or redeploy the previous Railway deployment. Migrations are forward-only. A migration that drops or rewrites data needs a tested recovery path before merge; Railway's managed PostgreSQL backups are the last resort.
 - **Data:** the stores and retention rules are in §5 and `VISION.md → Persistence and Privacy Posture`. Price, grid, and weather data are public and can be fetched again within upstream limits. Account, settings, and API keys are the only personal data.
 

@@ -161,6 +161,8 @@ These rules narrow or extend the defaults above for this repository.
   `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. Use Teams only when teammate
   coordination helps the task.
 - **Local guards.** `.claude/settings.json` blocks every push to `main`,
-  `rm -rf`, `claude` CLI spawns, and reads of `.env` files. These guards apply
-  only to commands that Claude Code runs. A repository ruleset protects `main`
-  on the server. The owner owns that ruleset.
+  `rm -rf`, `claude` CLI spawns, and Read-tool reads of `.env` files. The
+  guards apply only to commands that Claude Code runs, and the `.env` guard
+  does not cover shell commands: never read `.env` files by any means. A
+  repository ruleset protects `main` on the server. The owner owns that
+  ruleset.
