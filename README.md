@@ -171,7 +171,7 @@ stops it (the data volume is kept).
 
 ### Verification & governance
 
-There is no CI. Verification is manual: run `pnpm test:all` and `pnpm test:e2e` locally before pushing. Changes routed through the project's `/codereview` run `test:all` automatically; direct edits are verified by the author. (The repo hooks block destructive pushes and remind about `/codereview` — they do not run the tests.)
+There is no CI. Verification is local: run `pnpm test:all` and `pnpm test:e2e` before pushing. `pnpm test:all` checks formatting, types, lint, and production dependency advisories (`pnpm audit:deps`, which needs network access), then runs the tests and the build. A material change also gets an independent `/codereview`, and the reviewer runs both commands again on the integrated result. `STACK.md → Applicability and evidence` lists the full gate. The repo hooks block destructive pushes; they do not run the tests.
 
 ### Environment variables
 
