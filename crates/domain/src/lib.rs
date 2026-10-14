@@ -3,6 +3,7 @@
 
 pub mod areas;
 pub mod endpoints;
+pub mod forecast;
 pub mod js;
 pub mod price;
 pub mod query;
