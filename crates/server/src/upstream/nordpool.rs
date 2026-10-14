@@ -149,7 +149,16 @@ impl NordPoolClient {
         match self.http.read_body(response).await {
             Err(error) => Attempt::Failed(NordPoolError::Transport(error)),
             Ok(body) => match parse_day_ahead(&body, areas) {
-                Ok(prices) => Attempt::Prices(prices),
+                Ok(day) => {
+                    if day.skipped_entries > 0 {
+                        tracing::warn!(
+                            code = "NORDPOOL_ENTRY_SKIPPED",
+                            skipped = day.skipped_entries,
+                            "invalid Nord Pool entries were left out; the other prices are kept"
+                        );
+                    }
+                    Attempt::Prices(day.prices)
+                }
                 Err(SchemaDrift) => Attempt::Drift,
             },
         }
@@ -169,9 +178,9 @@ impl NordPoolClient {
 ///
 /// Returns [`SchemaDrift`] when the body is not JSON or the envelope is
 /// invalid.
-pub fn parse_day_ahead(body: &[u8], areas: &[Area]) -> Result<Vec<PriceRow>, SchemaDrift> {
+pub fn parse_day_ahead(body: &[u8], areas: &[Area]) -> Result<DayAhead, SchemaDrift> {
     if body.is_empty() {
-        return Ok(Vec::new());
+        return Ok(DayAhead::default());
     }
     // `Value` keeps the last of repeated keys, like `JSON.parse`.
     let value: Value = serde_json::from_slice(body).map_err(|_| SchemaDrift)?;
@@ -180,8 +189,10 @@ pub fn parse_day_ahead(body: &[u8], areas: &[Area]) -> Result<Vec<PriceRow>, Sch
         .and_then(|envelope| array_field(envelope, "multiAreaEntries"))
         .ok_or(SchemaDrift)?;
     let mut prices = Vec::new();
+    let mut skipped_entries = 0;
     for entry in entries {
         let Some(entry) = Entry::decode(entry) else {
+            skipped_entries += 1;
             continue;
         };
         for &area in areas {
@@ -195,7 +206,17 @@ pub fn parse_day_ahead(body: &[u8], areas: &[Area]) -> Result<Vec<PriceRow>, Sch
             }
         }
     }
-    Ok(prices)
+    Ok(DayAhead {
+        prices,
+        skipped_entries,
+    })
+}
+
+/// The decoded prices of one body and the number of invalid entries left out.
+#[derive(Debug, Default, PartialEq)]
+pub struct DayAhead {
+    pub prices: Vec<PriceRow>,
+    pub skipped_entries: usize,
 }
 
 /// One valid `multiAreaEntries` item.
@@ -235,7 +256,7 @@ mod tests {
     use super::*;
 
     fn parse(body: &Value) -> Result<Vec<PriceRow>, SchemaDrift> {
-        parse_day_ahead(body.to_string().as_bytes(), &[Area::Fi])
+        parse_day_ahead(body.to_string().as_bytes(), &[Area::Fi]).map(|day| day.prices)
     }
 
     fn fi(start: &str, end: &str, price: f64) -> PriceRow {
@@ -296,10 +317,12 @@ mod tests {
                 "entryPerArea": {"FI": 1}
             }
         ]});
+        let day = parse_day_ahead(body.to_string().as_bytes(), &[Area::Fi]).unwrap();
         assert_eq!(
-            parse(&body).unwrap(),
+            day.prices,
             [fi("2026-06-09T00:00:00Z", "2026-06-09T01:00:00Z", 31.2)]
         );
+        assert_eq!(day.skipped_entries, 3);
     }
 
     #[test]
@@ -311,7 +334,7 @@ mod tests {
             parse_day_ahead(b"this is not json", &[Area::Fi]),
             Err(SchemaDrift)
         );
-        assert_eq!(parse_day_ahead(b"", &[Area::Fi]), Ok(Vec::new()));
+        assert_eq!(parse_day_ahead(b"", &[Area::Fi]), Ok(DayAhead::default()));
     }
 
     #[test]
@@ -341,7 +364,7 @@ mod tests {
             "deliveryEnd": "2026-06-09T01:00:00Z",
             "entryPerArea": {"FI": 1, "FI": 2}
         }]}"#;
-        let prices = parse_day_ahead(body, &[Area::Fi]).unwrap();
+        let prices = parse_day_ahead(body, &[Area::Fi]).unwrap().prices;
         assert!((prices[0].price_eur_mwh - 2.0).abs() < f64::EPSILON);
     }
 
@@ -356,7 +379,8 @@ mod tests {
             body.to_string().as_bytes(),
             &[Area::Fi, Area::Se1, Area::Ee],
         )
-        .unwrap();
+        .unwrap()
+        .prices;
         let areas: Vec<Area> = prices.iter().map(|p| p.area).collect();
         assert_eq!(areas, [Area::Fi, Area::Se1, Area::Ee]);
     }
