@@ -1,11 +1,16 @@
 //! Migration paths: a database of the TypeScript migrations 001 to 007, an
-//! empty database, a repeated run, and a partial TypeScript ledger.
+//! empty database, a repeated run, and a partial TypeScript ledger. The
+//! classified failures of `db::migrate`. The release precheck.
 //!
 //! The expected catalog is `fixtures/schema-snapshot.txt`, generated from the
 //! unchanged TypeScript migrations in `fixtures/ts-migrations/` with
 //! `scripts/schema-snapshot.sql`.
 
-use spot_price_server::db::{self, MIGRATOR, StoreError};
+use std::time::Duration;
+
+use spot_price_domain::areas::ALL_AREAS;
+use spot_price_server::db::{self, MIGRATOR, MigrationFailure, MigrationFailureKind, StoreError};
+use sqlx::postgres::{PgPoolOptions, PgSslMode};
 use sqlx::{AssertSqlSafe, PgPool};
 
 const TS_MIGRATIONS: [(i32, &str, &str); 7] = [
@@ -47,6 +52,7 @@ const TS_MIGRATIONS: [(i32, &str, &str); 7] = [
 ];
 
 const SNAPSHOT_SQL: &str = include_str!("../../../../scripts/schema-snapshot.sql");
+const PRECHECK_SQL: &str = include_str!("../../../../scripts/release-precheck.sql");
 const EXPECTED_SNAPSHOT: &str = include_str!("../fixtures/schema-snapshot.txt");
 
 /// The version of the baseline migration.
@@ -266,4 +272,192 @@ async fn serve_refuses_an_unmigrated_database(pool: PgPool) {
     }
     db::migrate(&pool).await.unwrap();
     assert_eq!(db::ensure_migrated(&pool).await, Ok(()));
+}
+
+fn failure(kind: MigrationFailureKind) -> MigrationFailure {
+    MigrationFailure {
+        kind,
+        sqlstate: None,
+        reason: None,
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_partial_typescript_ledger_fails_with_the_text_of_the_baseline_guard(pool: PgPool) {
+    apply_ts_migrations(&pool, 5).await;
+    assert_eq!(
+        db::migrate(&pool).await,
+        Err(MigrationFailure {
+            kind: MigrationFailureKind::Execute,
+            sqlstate: Some("P0001".to_owned()),
+            reason: Some("the TypeScript migrations 001 to 007 are not all applied".to_owned()),
+        })
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_failed_statement_logs_its_sqlstate_but_no_text(pool: PgPool) {
+    sqlx::raw_sql("CREATE TABLE prices (id TEXT)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::migrate(&pool).await,
+        Err(MigrationFailure {
+            kind: MigrationFailureKind::Execute,
+            sqlstate: Some("42703".to_owned()),
+            reason: None,
+        })
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_modified_migration_fails_as_a_checksum_mismatch(pool: PgPool) {
+    db::migrate(&pool).await.unwrap();
+    sqlx::raw_sql("UPDATE _sqlx_migrations SET checksum = '\\x00' WHERE version = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::migrate(&pool).await,
+        Err(failure(MigrationFailureKind::Checksum))
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn an_unknown_applied_migration_fails_as_a_version_mismatch(pool: PgPool) {
+    db::migrate(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
+         VALUES (9999, 'newer build', true, '\\x00', 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        db::migrate(&pool).await,
+        Err(failure(MigrationFailureKind::Version))
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn an_unsuccessful_ledger_row_fails_as_dirty(pool: PgPool) {
+    db::migrate(&pool).await.unwrap();
+    sqlx::raw_sql("UPDATE _sqlx_migrations SET success = false WHERE version = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::migrate(&pool).await,
+        Err(failure(MigrationFailureKind::Dirty))
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_server_without_tls_fails_a_required_tls_connection(pool: PgPool) {
+    // The isolated test server runs with `ssl = off`.
+    let options = (*pool.connect_options())
+        .clone()
+        .ssl_mode(PgSslMode::Require);
+    let tls_pool = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_lazy_with(options);
+    assert_eq!(
+        db::migrate(&tls_pool).await,
+        Err(failure(MigrationFailureKind::Tls))
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_refused_connection_fails_as_a_connection_failure(pool: PgPool) {
+    let options = (*pool.connect_options()).clone().port(1);
+    let refused = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_secs(1))
+        .connect_lazy_with(options);
+    assert_eq!(
+        db::migrate(&refused).await,
+        Err(failure(MigrationFailureKind::Connect))
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_missing_database_fails_as_a_connection_failure(pool: PgPool) {
+    let options = (*pool.connect_options())
+        .clone()
+        .database("spot_price_missing_database");
+    let missing = PgPoolOptions::new()
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_lazy_with(options);
+    assert_eq!(
+        db::migrate(&missing).await,
+        Err(MigrationFailure {
+            kind: MigrationFailureKind::Connect,
+            sqlstate: Some("3D000".to_owned()),
+            reason: None,
+        })
+    );
+}
+
+/// Runs `scripts/release-precheck.sql` in a read-only transaction, like
+/// `psql -A -t` with `default_transaction_read_only=on`.
+async fn precheck(pool: &PgPool) -> Vec<String> {
+    let mut transaction = pool.begin().await.unwrap();
+    sqlx::raw_sql("SET TRANSACTION READ ONLY")
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+    let lines: Vec<String> = sqlx::query_scalar(PRECHECK_SQL)
+        .fetch_all(&mut *transaction)
+        .await
+        .unwrap();
+    transaction.rollback().await.unwrap();
+    lines
+}
+
+#[sqlx::test(migrations = false)]
+async fn the_release_precheck_counts_the_settings_that_the_service_rejects(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    // One valid row for each area with its default zone covers every
+    // supported area and zone of the domain.
+    for area in ALL_AREAS {
+        sqlx::query("INSERT INTO user_settings (user_id, area, timezone) VALUES ($1, $2, $3)")
+            .bind(format!("good-{}", area.code()))
+            .bind(area.code())
+            .bind(area.timezone())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO user_settings (user_id, area, timezone, night_start_hour, night_end_hour) VALUES
+           ('bad-zone', 'FI', 'europe/helsinki', 22, 7),
+           ('bad-area', 'DE', 'Europe/Berlin', 22, 7),
+           ('bad-start', 'FI', 'Europe/Helsinki', 24, 7),
+           ('bad-end', 'FI', 'Europe/Helsinki', 22, -1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let version: String = sqlx::query_scalar("SELECT current_setting('server_version')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let lines = precheck(&pool).await;
+
+    assert_eq!(
+        lines,
+        [
+            "typescript_migrations|1,2,3,4,5,6,7".to_owned(),
+            format!("server_version|{version}"),
+            "user_settings_invalid_timezone|1".to_owned(),
+            "user_settings_invalid_area|1".to_owned(),
+            "user_settings_invalid_night_hours|2".to_owned(),
+        ]
+    );
+    let rendered = lines.join("\n");
+    assert!(
+        !rendered.contains("bad-"),
+        "the output must hold no user id"
+    );
 }

@@ -20,6 +20,26 @@ page is a short checklist.
 
 Railway sets `PORT`.
 
+## Before the first release
+
+Run these checks read-only against production
+(`STACK.md → Release procedure`):
+
+```bash
+PGOPTIONS='-c default_transaction_read_only=on' \
+  psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/schema-snapshot.sql \
+  | diff crates/server/tests/fixtures/schema-snapshot.txt -
+PGOPTIONS='-c default_transaction_read_only=on' \
+  psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
+```
+
+- The snapshot shows no difference.
+- The precheck prints `typescript_migrations|1,2,3,4,5,6,7` and `0` for each
+  `user_settings_invalid_*` count.
+- `DATABASE_URL` has no `sslmode`, or `sslmode=prefer` or `sslmode=disable`.
+- `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`, with no trailing
+  slash.
+
 ## Start and health check
 
 - Start command (in `railpack.json`):

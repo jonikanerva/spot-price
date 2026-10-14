@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use sqlx::PgPool;
-use sqlx::migrate::Migrator;
+use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::config::Secret;
@@ -37,8 +37,6 @@ impl Default for PoolSettings {
 pub enum StoreError {
     #[error("the database URL is invalid")]
     InvalidUrl,
-    #[error("the database migration failed")]
-    Migration,
     #[error("the database schema is not migrated")]
     NotMigrated,
     #[error("the database query failed")]
@@ -53,7 +51,6 @@ impl StoreError {
     pub fn code(self) -> &'static str {
         match self {
             Self::InvalidUrl => "invalid_database_url",
-            Self::Migration => "migration",
             Self::NotMigrated => "not_migrated",
             Self::Query => "query",
             Self::InvalidRow => "invalid_row",
@@ -83,13 +80,119 @@ pub fn connect_lazy(database_url: &Secret, settings: PoolSettings) -> Result<PgP
         .connect_lazy_with(options))
 }
 
+/// The kind of a failed `migrate` run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationFailureKind {
+    /// No connection: refused, closed, timed out, or rejected at sign-in.
+    Connect,
+    /// The TLS negotiation or handshake failed.
+    Tls,
+    /// An applied migration differs from the file of this build.
+    Checksum,
+    /// The ledger and the migrations of this build do not match.
+    Version,
+    /// A migration is marked as not successful in the ledger.
+    Dirty,
+    /// A migration or a ledger statement failed.
+    Execute,
+}
+
+impl MigrationFailureKind {
+    /// The fixed stage name of the log.
+    #[must_use]
+    pub const fn stage(self) -> &'static str {
+        match self {
+            Self::Connect => "migrate_connect",
+            Self::Tls => "migrate_tls",
+            Self::Checksum => "migrate_checksum",
+            Self::Version => "migrate_version",
+            Self::Dirty => "migrate_dirty",
+            Self::Execute => "migrate_execute",
+        }
+    }
+}
+
+/// A failed `migrate` run, safe to log. It holds no URL and no server text,
+/// except `reason`: only a `RAISE` (SQLSTATE `P0001`) gives a reason, and
+/// only the files in `migrations/` raise during a migration run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationFailure {
+    pub kind: MigrationFailureKind,
+    /// The SQLSTATE of a database error.
+    pub sqlstate: Option<String>,
+    pub reason: Option<String>,
+}
+
+impl MigrationFailure {
+    /// Classifies a migrator error.
+    #[must_use]
+    pub fn classify(error: &MigrateError) -> Self {
+        match error {
+            MigrateError::Execute(inner) | MigrateError::ExecuteMigration(inner, _) => {
+                Self::from_sqlx(inner)
+            }
+            MigrateError::VersionMismatch(_) => Self::kind(MigrationFailureKind::Checksum),
+            MigrateError::VersionMissing(_)
+            | MigrateError::VersionNotPresent(_)
+            | MigrateError::VersionTooOld(..)
+            | MigrateError::VersionTooNew(..) => Self::kind(MigrationFailureKind::Version),
+            MigrateError::Dirty(_) => Self::kind(MigrationFailureKind::Dirty),
+            _ => Self::kind(MigrationFailureKind::Execute),
+        }
+    }
+
+    fn kind(kind: MigrationFailureKind) -> Self {
+        Self {
+            kind,
+            sqlstate: None,
+            reason: None,
+        }
+    }
+
+    fn from_sqlx(error: &sqlx::Error) -> Self {
+        match error {
+            sqlx::Error::Tls(_) => Self::kind(MigrationFailureKind::Tls),
+            // rustls reports a failed handshake, such as a rejected
+            // certificate, as an I/O error of kind `InvalidData`.
+            sqlx::Error::Io(io) if io.kind() == std::io::ErrorKind::InvalidData => {
+                Self::kind(MigrationFailureKind::Tls)
+            }
+            sqlx::Error::Io(_)
+            | sqlx::Error::PoolTimedOut
+            | sqlx::Error::PoolClosed
+            | sqlx::Error::Protocol(_)
+            | sqlx::Error::Configuration(_) => Self::kind(MigrationFailureKind::Connect),
+            sqlx::Error::Database(database) => {
+                let sqlstate = database.code().map(std::borrow::Cow::into_owned);
+                let code = sqlstate.as_deref().unwrap_or_default();
+                // Classes 08 and 28 and SQLSTATE 3D000 occur at sign-in.
+                let kind = if code.starts_with("08") || code.starts_with("28") || code == "3D000" {
+                    MigrationFailureKind::Connect
+                } else {
+                    MigrationFailureKind::Execute
+                };
+                let reason = (code == "P0001").then(|| database.message().to_owned());
+                Self {
+                    kind,
+                    sqlstate,
+                    reason,
+                }
+            }
+            _ => Self::kind(MigrationFailureKind::Execute),
+        }
+    }
+}
+
 /// Applies the pending migrations.
 ///
 /// # Errors
 ///
-/// Returns [`StoreError::Migration`] when a migration fails.
-pub async fn migrate(pool: &PgPool) -> Result<(), StoreError> {
-    MIGRATOR.run(pool).await.map_err(|_| StoreError::Migration)
+/// Returns the classified [`MigrationFailure`] when the run fails.
+pub async fn migrate(pool: &PgPool) -> Result<(), MigrationFailure> {
+    MIGRATOR
+        .run(pool)
+        .await
+        .map_err(|error| MigrationFailure::classify(&error))
 }
 
 /// Checks that every migration of this build is applied. `serve` does not
@@ -126,4 +229,97 @@ pub async fn ping(pool: &PgPool) -> Result<bool, StoreError> {
         .fetch_one(pool)
         .await?;
     Ok(ok == 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kind_of(error: &MigrateError) -> MigrationFailureKind {
+        let failure = MigrationFailure::classify(error);
+        assert_eq!(failure.sqlstate, None);
+        assert_eq!(failure.reason, None);
+        failure.kind
+    }
+
+    #[test]
+    fn classifies_errors_without_a_database_error() {
+        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        let cases = [
+            (
+                MigrateError::Execute(sqlx::Error::PoolTimedOut),
+                MigrationFailureKind::Connect,
+            ),
+            (
+                MigrateError::Execute(sqlx::Error::Io(refused)),
+                MigrationFailureKind::Connect,
+            ),
+            (
+                MigrateError::Execute(sqlx::Error::Tls("postgres://user:secret@host".into())),
+                MigrationFailureKind::Tls,
+            ),
+            (
+                MigrateError::Execute(sqlx::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid peer certificate: UnknownIssuer",
+                ))),
+                MigrationFailureKind::Tls,
+            ),
+            (
+                MigrateError::ExecuteMigration(sqlx::Error::PoolClosed, 2),
+                MigrationFailureKind::Connect,
+            ),
+            (
+                MigrateError::ExecuteMigration(sqlx::Error::RowNotFound, 2),
+                MigrationFailureKind::Execute,
+            ),
+            (
+                MigrateError::VersionMismatch(1),
+                MigrationFailureKind::Checksum,
+            ),
+            (
+                MigrateError::VersionMissing(9),
+                MigrationFailureKind::Version,
+            ),
+            (
+                MigrateError::VersionNotPresent(9),
+                MigrationFailureKind::Version,
+            ),
+            (
+                MigrateError::VersionTooOld(1, 2),
+                MigrationFailureKind::Version,
+            ),
+            (
+                MigrateError::VersionTooNew(3, 2),
+                MigrationFailureKind::Version,
+            ),
+            (MigrateError::Dirty(2), MigrationFailureKind::Dirty),
+            (
+                MigrateError::Source("migrations/secret".into()),
+                MigrationFailureKind::Execute,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(kind_of(&error), expected, "{error}");
+        }
+    }
+
+    #[test]
+    fn every_kind_has_a_distinct_stage() {
+        let stages = [
+            MigrationFailureKind::Connect,
+            MigrationFailureKind::Tls,
+            MigrationFailureKind::Checksum,
+            MigrationFailureKind::Version,
+            MigrationFailureKind::Dirty,
+            MigrationFailureKind::Execute,
+        ]
+        .map(MigrationFailureKind::stage);
+        let mut unique = stages.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), stages.len());
+        assert!(!stages.contains(&"migrate_timeout"));
+        assert!(stages.iter().all(|stage| stage.starts_with("migrate_")));
+    }
 }

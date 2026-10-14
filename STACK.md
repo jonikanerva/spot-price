@@ -118,7 +118,7 @@ mise trust && mise run setup
 ```
 
 `rust-toolchain.toml` owns the Rust version. `mise.toml` owns the other
-tools: Node, pnpm, PostgreSQL 17.11 (conda package), sqlx-cli 0.9.0,
+tools: Node, pnpm, PostgreSQL 18.6 (conda package), sqlx-cli 0.9.0,
 cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
 
 ---
@@ -134,7 +134,7 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
 | HTTP contract       | utoipa 6, utoipa-axum 0.3                    | OpenAPI 3.1 document of the API routes         |
 | Time                | Jiff 0.2 (bundled tzdb), jiff-sqlx 0.2       | Instants, local days, DST                      |
 | Schedule            | croner 4 (`jiff` feature)                    | Job schedules in UTC and Europe/Oslo           |
-| Persistence         | PostgreSQL 17, SQLx 0.9                      | Checked query macros, migrations, transactions |
+| Persistence         | PostgreSQL 18, SQLx 0.9                      | Checked query macros, migrations, transactions |
 | Outbound HTTP       | reqwest 0.13 (rustls, gzip)                  | Nord Pool, Fingrid, OpenWeatherMap             |
 | Passwords           | scrypt, unicode-normalization, subtle        | Better Auth-compatible hashes (docs/adr/0002)  |
 | Logging             | tracing, tracing-subscriber                  | One JSON line per event with a field allowlist |
@@ -222,7 +222,7 @@ on the blocking pool behind a semaphore of two.
   `.sqlx` after a query or migration change), and `setup`.
 
 **Test database isolation.** `scripts/test-db.sh` runs the pinned PostgreSQL
-17.11 on `127.0.0.1:55436` with trust authentication and data in
+18.6 on `127.0.0.1:55436` with trust authentication and data in
 `.tmp/postgres`. The test tasks set `DATABASE_URL` to that server themselves.
 `#[sqlx::test]` creates and drops one database per test.
 
@@ -251,8 +251,9 @@ result.
 
 ## 5. Persistence shape
 
-- **Storage:** Railway PostgreSQL 17. The schema is the schema of the
-  TypeScript migrations `001`–`007` plus `app_sessions`.
+- **Storage:** Railway PostgreSQL 18 (image `postgres-ssl:18`). The schema
+  is the schema of the TypeScript migrations `001`–`007` plus
+  `app_sessions`.
 - **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
   is idempotent and changes nothing on the production schema; the old ledger
   `_migrations` stays. `0002_app_sessions.sql` adds the session table. The
@@ -262,8 +263,15 @@ result.
   TypeScript revert path until the owner ends it (docs/adr/0001).
 - **Queries:** SQLx `query!` macros with committed `.sqlx` metadata. The
   offline tools use runtime queries with bound parameters.
-- **Connection:** no TLS, over the Railway private network, as before. Pool
-  of 10 connections, acquire timeout 10 s, `statement_timeout` 30 s.
+- **Connection:** over the Railway private network. Pool of 10 connections,
+  acquire timeout 10 s, `statement_timeout` 30 s.
+- **TLS:** SQLx with rustls (`tls-rustls-aws-lc-rs`). With the default
+  `sslmode=prefer`, SQLx asks for TLS. It uses plain text only when the
+  server declines TLS. When the server accepts, a failed handshake fails
+  the connection; there is no fallback to plain text. `prefer` and `require` do not verify the certificate, so
+  the self-signed certificate of the Railway image works. `verify-ca` and
+  `verify-full` reject that certificate. `migrate` logs a TLS failure as
+  `migrate_tls`.
 - **`prices`:** upsert by `(delivery_start, area)`. Kept; no pruning.
 - **`fingrid_actuals`:** upsert-latest by `(dataset_id, start_time)` with a
   change guard: `DO UPDATE … WHERE (end_time, value) IS DISTINCT FROM
@@ -304,7 +312,7 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | thiserror                    | 2.0.21             | Error enums with fixed text                                                        |
 | jiff / jiff-sqlx             | 0.2.38 / 0.2.0     | Time values with the bundled tzdb, and their SQLx encoding                         |
 | croner                       | 4.0.1              | Cron schedules with Jiff types                                                     |
-| sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`                            |
+| sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)   |
 | reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                    |
 | futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                      |
 | tracing / tracing-subscriber | 0.1.44 / 0.3.23    | Structured logs; the formatter is first-party (§8)                                 |
@@ -435,7 +443,7 @@ TypeScript service, byte for byte. It must be usable without a pointer.
 ## 12. Best practices source
 
 - [Axum 0.8](https://docs.rs/axum/0.8.9/), [tower-http 0.6](https://docs.rs/tower-http/0.6.11/), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown)
-- [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.0/), [PostgreSQL 17](https://www.postgresql.org/docs/17/)
+- [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.0/), [PostgreSQL 18](https://www.postgresql.org/docs/18/)
 - [Jiff](https://docs.rs/jiff/0.2.38/), [croner 4](https://docs.rs/croner/4.0.1/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
 - [scrypt](https://docs.rs/scrypt/0.12.0/), [ECMAScript Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)
 - Upstream contracts: Nord Pool Data Portal API, [Fingrid open data](https://data.fingrid.fi/), [OpenWeatherMap One Call 3.0](https://openweathermap.org/api/one-call-3)
@@ -460,17 +468,17 @@ Run the required tests and the full `mise run verify` locally on the version
 to be merged against the current base. Missing or failed mandatory local
 evidence blocks merge. There is no CI.
 
-| Doctrine / applicability      | Required evidence                                                                                                       | Environment / gap                                         |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| P1, P6: each task             | Criteria, failures, assumptions, check mapping in the PR                                                                | Lead records; independent review for material changes     |
-| P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                | Purity inside the domain crate is review-only             |
-| P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                | Golden files come from one TypeScript commit              |
-| P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                         | Forecast tolerance (§13)                                  |
-| P5–P7: storage                | `sqlx:check`; migration tests (TypeScript schema, empty database, repeat, partial ledger); schema snapshot; store tests | Isolated PostgreSQL 17.11; production runs Railway's 17.x |
-| P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests          | Scanners do not prove authorization                       |
-| P5–P7: browser                | Playwright journeys against the Rust binary                                                                             | Chromium only; no axe check                               |
-| P7: release                   | Before merge: Railpack plan, owner-run schema snapshot. After release: §15 checks                                       | A local macOS build is not the Linux artifact             |
-| P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                            | Separate reviewer context                                 |
+| Doctrine / applicability      | Required evidence                                                                                                        | Environment / gap                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| P1, P6: each task             | Criteria, failures, assumptions, check mapping in the PR                                                                 | Lead records; independent review for material changes   |
+| P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                 | Purity inside the domain crate is review-only           |
+| P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                 | Golden files come from one TypeScript commit            |
+| P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                          | Forecast tolerance (§13)                                |
+| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | Isolated PostgreSQL 18.6; production: `postgres-ssl:18` |
+| P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                     |
+| P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                             |
+| P7: release                   | Before merge: Railpack plan, owner-run schema snapshot and precheck. After release: §15 checks                           | A local macOS build is not the Linux artifact           |
+| P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                             | Separate reviewer context                               |
 
 ### Golden files
 
@@ -528,10 +536,29 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 
 ### Release procedure
 
-1. Before merge: the owner runs `scripts/schema-snapshot.sql` read-only
-   against production and compares it with
-   `crates/server/tests/fixtures/schema-snapshot.txt`. Record the active
-   deployment as the known-good version.
+1. Before the merge of the first Rust release, the owner checks production
+   read-only:
+   - Run both scripts with the public database URL:
+
+     ```bash
+     PGOPTIONS='-c default_transaction_read_only=on' \
+       psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/schema-snapshot.sql \
+       | diff crates/server/tests/fixtures/schema-snapshot.txt -
+     PGOPTIONS='-c default_transaction_read_only=on' \
+       psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
+     ```
+
+   - The snapshot shows no difference. The precheck prints
+     `typescript_migrations|1,2,3,4,5,6,7`, the server version, and `0` for
+     each `user_settings_invalid_*` count. A non-zero count is a user for
+     whom the Rust service answers 500. It blocks the merge until the owner
+     decides how to correct the row.
+   - `DATABASE_URL` of the service has no `sslmode`, or `sslmode=prefer` or
+     `sslmode=disable` (§5).
+   - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
+     slash, no path. The `Origin` check compares it byte for byte.
+   - Record the active deployment as the known-good version.
+
 2. Merge. Watch the build log: Rust 1.99.0, the offline build, `migrations
 are up to date`, and a passing healthcheck.
 3. Run the post-release checks.

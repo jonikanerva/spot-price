@@ -46,7 +46,23 @@ pub async fn migrate(config: &Config) -> Result<(), &'static str> {
             tracing::info!(stage = "migrate", "migrations are up to date");
             Ok(())
         }
-        Ok(Err(_)) | Err(_) => Err("migrate"),
+        Ok(Err(failure)) => {
+            let stage = failure.kind.stage();
+            tracing::error!(
+                stage,
+                code = failure.sqlstate,
+                reason = failure.reason,
+                "the migration failed"
+            );
+            Err(stage)
+        }
+        Err(_) => {
+            tracing::error!(
+                stage = "migrate_timeout",
+                "the migration did not end before its deadline"
+            );
+            Err("migrate_timeout")
+        }
     }
 }
 

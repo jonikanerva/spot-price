@@ -127,7 +127,7 @@ Finland (FI), Sweden (SE1-SE4), Norway (NO1-NO5), Denmark (DK1-DK2), Estonia (EE
 
 ### Prerequisites
 
-Install [mise](https://mise.jdx.dev) and [rustup](https://rustup.rs). `rust-toolchain.toml` pins Rust. `mise.toml` pins the other tools: Node and pnpm (Playwright and Prettier only), PostgreSQL 17, sqlx-cli, cargo-deny, cargo-nextest, cargo-shear, and Gitleaks. Docker is not needed.
+Install [mise](https://mise.jdx.dev) and [rustup](https://rustup.rs). `rust-toolchain.toml` pins Rust. `mise.toml` pins the other tools: Node and pnpm (Playwright and Prettier only), PostgreSQL 18.6, sqlx-cli, cargo-deny, cargo-nextest, cargo-shear, and Gitleaks. Docker is not needed.
 
 ### Setup
 
@@ -135,7 +135,7 @@ Install [mise](https://mise.jdx.dev) and [rustup](https://rustup.rs). `rust-tool
 git clone https://github.com/jonikanerva/spot-price.git
 cd spot-price
 mise trust && mise run setup   # tools, locked dependencies, Playwright browser
-mise run db:start              # isolated PostgreSQL 17 on 127.0.0.1:55436
+mise run db:start              # isolated PostgreSQL 18.6 on 127.0.0.1:55436
 ```
 
 Keep local settings in `.env.local`, not `.env`: the SQLx query macros read every `.env` file at compile time.

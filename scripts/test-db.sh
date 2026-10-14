@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The isolated PostgreSQL server of the tests and the SQLx query checks
-# (STACK.md §3). It runs the pinned PostgreSQL 17 from mise, listens only on
+# (STACK.md §3). It runs the pinned PostgreSQL 18.6 from mise, listens only on
 # 127.0.0.1:55436, trusts local connections, and keeps its data in
 # .tmp/postgres. It never touches another server.
 #
