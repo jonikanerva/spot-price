@@ -209,7 +209,7 @@ on the blocking pool behind a semaphore of two.
 - **format:** `cargo fmt --all` and Prettier. `format-check` runs both in
   check mode.
 - **lint:** `cargo clippy --workspace --all-targets --locked -- -D warnings`
-  with `SQLX_OFFLINE=true`.
+  with `SQLX_OFFLINE=true`, and `tsc` on the e2e TypeScript (`e2e/tsconfig.json`).
 - **build:** `cargo build --release --locked --package spot-price-server`
   with `SQLX_OFFLINE=true`.
 - **test:** starts the isolated database, then `cargo nextest run

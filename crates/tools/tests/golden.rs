@@ -1,6 +1,6 @@
 //! Parity of the Rust tools with the TypeScript tools. The fixtures in
-//! `tests/golden/` come from `scripts/golden/tools.ts`, which ran the
-//! TypeScript tools and CLIs. Printed values and counts must be equal. A raw
+//! `tests/golden/` come from the TypeScript tools and CLIs
+//! (`tests/golden/README.md`). Printed values and counts must be equal. A raw
 //! float may differ within 1e-9 relative, because V8 and Rust use different
 //! `asinh`, `sinh`, `sin`, and `cos`.
 

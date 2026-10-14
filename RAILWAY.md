@@ -1,58 +1,34 @@
 # Railway Deployment Guide
 
+`STACK.md → Release, recovery, and maintenance` is the source of truth. This
+page is a short checklist.
+
 ## Service setup
 
 1. Create a Railway project from this repository.
-2. Add one service for the Node app.
-3. Add a PostgreSQL plugin (Railway provides managed Postgres).
+2. Add one service for the app. Railpack builds it from `railpack.json`
+   (Rust provider).
+3. Add a PostgreSQL service. Railway sets `DATABASE_URL`.
 
 ## Required environment variables
 
 - `NODE_ENV=production`
-- `PORT=3000`
-- `DATABASE_URL` — automatically set by Railway when you add the PostgreSQL plugin
-- `BETTER_AUTH_SECRET=<32+ char random secret>`
-- `BETTER_AUTH_URL=https://spot.calmdonut.com`
+- `DATABASE_URL` (set by Railway)
+- `BETTER_AUTH_URL=https://spot.calmdonut.com` (the public origin)
+- `BETTER_AUTH_SECRET=<32+ char random secret>` (kept for the revert path)
+- Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY`, `LOG_FORMAT`
 
-## Health checks
+Railway sets `PORT`.
 
-- Path: `/health`
-- Expected: `200` with `{ "status": "ok", "db": "connected" }`
+## Start and health check
 
-## Backup checklist (optional)
+- Start command (in `railpack.json`):
+  `./bin/spot-price migrate && exec ./bin/spot-price serve`
+- Health check path: `/health`
+- Expected: `200` with `{"status":"ok","db":"connected"}`
 
-For this hobby project, backups are optional because runtime data is non-critical and can be recreated.
-Railway's managed PostgreSQL includes automatic backups.
+## Smoke test
 
-## Smoke test after deploy
-
-Run after first successful deployment:
-
-```bash
-curl -sS "$APP_URL/health"
-AUTH_HEADERS="$(mktemp)"
-AUTH_BODY="$(mktemp)"
-
-curl -sS -D "$AUTH_HEADERS" -o "$AUTH_BODY" -X POST "$APP_URL/api/session/login-or-signup" \
-  -H "content-type: application/json" \
-  -d '{"username":"smoke_user","password":"smoke-password-123"}'
-
-SESSION_COOKIE="$(python3 - "$AUTH_HEADERS" <<'PY'
-import pathlib
-import re
-import sys
-
-headers = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r"^set-cookie:\\s*([^;\\r\\n]+)", headers, flags=re.IGNORECASE | re.MULTILINE)
-print(match.group(1) if match else "")
-PY
-)"
-
-curl -sS "$APP_URL/api/keys" -H "Cookie: $SESSION_COOKIE"
-```
-
-Then call one protected endpoint with returned API key:
-
-```bash
-curl -sS "$APP_URL/api/v1/price/now" -H "Authorization: Bearer <api-key>"
-```
+`mise run smoke` creates an account and an API key. Run it only against a
+local instance (`BASE_URL`, default `http://localhost:3000`), or on a first
+deploy with the owner present. Never run it against production.

@@ -150,6 +150,7 @@ Keep local settings in `.env.local`, not `.env`: the SQLx query macros read ever
 | `mise run test`                 | All Rust tests against the isolated database                                    |
 | `mise run e2e`                  | Playwright journeys against the Rust binary                                     |
 | `mise run verify`               | The full gate: format, lint, query metadata, contract, scans, build, tests, e2e |
+| `mise run dev`                  | Migrate and run the service with `.env.local` and readable logs                 |
 | `mise run sqlx:prepare`         | Regenerate `.sqlx` after a query or migration change                            |
 | `mise run db:start` / `db:stop` | Start or stop the isolated test database                                        |
 

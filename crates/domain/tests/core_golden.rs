@@ -1,5 +1,5 @@
-//! Compares the domain core with the golden fixtures that
-//! `scripts/golden/domain-core.ts` writes from the TypeScript modules.
+//! Compares the domain core with the golden fixtures that the TypeScript
+//! modules wrote (`tests/golden/README.md`).
 //! Each float must be equal bit for bit, and each text must be equal.
 
 #[cfg(test)]

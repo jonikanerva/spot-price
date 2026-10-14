@@ -55,9 +55,12 @@ description = "Fail on a formatting difference; change no file"
 run = ["cargo fmt --all -- --check", "pnpm exec prettier --check . --log-level warn"]
 
 [tasks.lint]
-description = "Clippy on every target, warnings are errors"
+description = "Clippy on every target and the type check of the e2e TypeScript; warnings are errors"
 env = { SQLX_OFFLINE = "true" }
-run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+run = [
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  "pnpm exec tsc -p e2e/tsconfig.json",
+]
 
 [tasks."sqlx:prepare"]
 description = "Regenerate .sqlx query metadata from the isolated database"
@@ -152,3 +155,13 @@ run = [
 [tasks.smoke]
 description = "Smoke check of a locally running server (BASE_URL, default http://localhost:3000); never production"
 run = "scripts/smoke-local.sh"
+
+# SQLX_OFFLINE: the query macros use .sqlx, not the database of .env.local.
+[tasks.dev]
+description = "Migrate the database of .env.local and run the service with readable logs"
+env = { _.file = ".env.local", LOG_FORMAT = "text", SQLX_OFFLINE = "true" }
+raw = true
+run = [
+  "cargo run --locked --package spot-price-server -- migrate",
+  "cargo run --locked --package spot-price-server -- serve",
+]

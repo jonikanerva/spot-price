@@ -97,8 +97,8 @@ async fn rows(pool: &PgPool) -> Vec<String> {
     all
 }
 
-/// Applies TypeScript migrations like `src/migrate.ts`: each file and its
-/// ledger row in one transaction.
+/// Applies the TypeScript migrations like the TypeScript migrator did: each
+/// file and its ledger row in one transaction.
 async fn apply_ts_migrations(pool: &PgPool, count: usize) {
     sqlx::raw_sql(
         "CREATE TABLE IF NOT EXISTS _migrations (

@@ -1,11 +1,15 @@
 # HTTP golden fixtures
 
-These fixtures record the HTTP responses of the real TypeScript service in
-`src/`. The Rust HTTP tests compare the Rust service against them. Do not edit
-the generated files by hand. Change `scripts/golden/http.ts` or
-`scripts/golden/http/*.ts` and generate the files again.
+These fixtures record the HTTP responses of the real TypeScript service. The
+Rust HTTP tests compare the Rust service against them. Do not edit the
+generated files by hand.
 
-## Generate
+The TypeScript service and the generator (`scripts/golden/http.ts` and
+`scripts/golden/http/*.ts`) are no longer in the tree. They are in the Git
+history of the Rust port PR: check out commit `e22c094` (the commit that
+added these files) to generate them again.
+
+## Generate (at commit `e22c094`)
 
 ```sh
 scripts/test-db.sh start

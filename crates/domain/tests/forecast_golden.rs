@@ -1,6 +1,6 @@
 //! Parity of the Rust forecast with the TypeScript forecast. The fixtures in
-//! `tests/golden/forecast/` come from `scripts/golden/forecast.ts`, which ran
-//! the TypeScript modules. Floats before rounding may differ by a few ULPs
+//! `tests/golden/forecast/` come from the TypeScript modules
+//! (`tests/golden/README.md`). Floats before rounding may differ by a few ULPs
 //! (V8 and Rust use different `asinh`, `sinh`, `sin`, and `cos`); values
 //! after the 0.001 rounding must be equal.
 
