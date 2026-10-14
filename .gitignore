@@ -14,7 +14,7 @@ graphify-out/
 *.db
 *.db-wal
 *.db-shm
-data/
+/data/
 
 # Environment
 .env
