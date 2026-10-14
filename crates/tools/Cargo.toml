@@ -1,0 +1,26 @@
+[package]
+name = "spot-price-tools"
+version = "0.1.0"
+description = "Offline forecast tools: the backtest, the band regeneration, and the revision study"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Offline developer tools only (STACK.md §0). The release build builds only
+# `spot-price-server`, and no crate depends on this one.
+[[bin]]
+name = "spot-price-tools"
+path = "src/main.rs"
+
+[dependencies]
+spot-price-domain.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

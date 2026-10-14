@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 use jiff::Timestamp;
 
 use super::conformal::SpotBand;
-use super::js::{count_f64, js_min, round3};
+use super::js::{count_f64, js_min};
 use super::quarter::{DAY_MS, QUARTER_MS, QuarterMap, QuarterStart, WEEK_MS};
+use crate::js::round3;
 
 /// Multiplier on the observed price spread that widens the output sanity clamp.
 pub const SANITY_MARGIN_K: f64 = 3.0;

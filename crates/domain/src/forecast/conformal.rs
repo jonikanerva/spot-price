@@ -7,8 +7,9 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
-use super::js::{count_f64, js_max, js_min, round3};
+use super::js::{count_f64, js_max, js_min};
 use super::quarter::QuarterStart;
+use crate::js::round3;
 
 /// Minimum measured out-of-sample coverage for the band to ship.
 pub const COVERAGE_GATE_THRESHOLD: f64 = 0.7;

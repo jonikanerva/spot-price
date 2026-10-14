@@ -29,6 +29,9 @@ mod golden {
         fit_ridge, forecast_for_route, iso_millis, observed_coverage_of, sanity_bound_from_history,
         to_forecast_entries,
     };
+    use spot_price_domain::price::apply_contract_terms;
+    use spot_price_domain::settings::{Hour, UserId, UserSettings};
+    use spot_price_domain::time::UserTimeZone;
 
     // ---------------------------------------------------------------------------
     // Comparison with counted tolerance
@@ -447,26 +450,21 @@ mod golden {
         night_end_hour: i8,
     }
 
-    /// `Math.round`, for the test port of `applyContractTerms`.
-    fn js_round(x: f64) -> f64 {
-        let floor = x.floor();
-        if x - floor >= 0.5 { floor + 1.0 } else { floor }
-    }
-
-    /// A test port of `applyContractTerms(...).totalCentsKwh`.
-    fn contract_total(spot: f64, s: &Settings, hour: i8) -> f64 {
-        let night = if s.night_start_hour > s.night_end_hour {
-            hour >= s.night_start_hour || hour < s.night_end_hour
-        } else {
-            hour >= s.night_start_hour && hour < s.night_end_hour
-        };
-        let transfer = if night {
-            s.transfer_night_cents_kwh
-        } else {
-            s.transfer_day_cents_kwh
-        };
-        let before_vat = spot.max(0.0) + s.margin_cents_kwh + transfer + s.tax_cents_kwh;
-        js_round(before_vat * (1.0 + s.vat_percent / 100.0) * 1000.0) / 1000.0
+    /// The settings of a case. `apply_contract_terms` reads only the money
+    /// fields and the night hours, so the zone and the area are placeholders.
+    fn user_settings(s: &Settings) -> UserSettings {
+        UserSettings {
+            user_id: UserId::new("golden".to_owned()),
+            margin_cents_kwh: s.margin_cents_kwh,
+            transfer_day_cents_kwh: s.transfer_day_cents_kwh,
+            transfer_night_cents_kwh: s.transfer_night_cents_kwh,
+            tax_cents_kwh: s.tax_cents_kwh,
+            vat_percent: s.vat_percent,
+            night_start_hour: Hour::try_from(i32::from(s.night_start_hour)).unwrap(),
+            night_end_hour: Hour::try_from(i32::from(s.night_end_hour)).unwrap(),
+            timezone: UserTimeZone::for_area(Area::Fi).unwrap(),
+            area: Area::Fi,
+        }
     }
 
     #[derive(Deserialize)]
@@ -724,8 +722,9 @@ mod golden {
         stats: &Stats,
     ) {
         let tz = TimeZone::get(&case.time_zone).unwrap();
+        let settings = user_settings(&case.settings);
         let entries = to_forecast_entries(result, &tz, |spot, hour| {
-            contract_total(spot, &case.settings, hour)
+            apply_contract_terms(spot, &settings, u8::try_from(hour).unwrap()).total_cents_kwh
         })
         .unwrap();
         assert_eq!(

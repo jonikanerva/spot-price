@@ -340,6 +340,39 @@ mod tests {
     }
 
     #[test]
+    fn math_round_matches_javascript_at_the_edges() {
+        let cases: [(f64, f64); 11] = [
+            (2.5, 3.0),
+            (-2.5, -2.0),
+            (0.499_999_999_999_999_94, 0.0),
+            (-0.7, -1.0),
+            (-0.500_000_000_000_000_1, -1.0),
+            (1.5, 2.0),
+            (-1.5, -1.0),
+            (4_503_599_627_370_497.0, 4_503_599_627_370_497.0),
+            (f64::INFINITY, f64::INFINITY),
+            (f64::NEG_INFINITY, f64::NEG_INFINITY),
+            (123.456, 123.0),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(math_round(input).to_bits(), expected.to_bits(), "{input}");
+        }
+        assert!(math_round(f64::NAN).is_nan());
+        for input in [-0.0, -0.3, -0.5, -1e-20] {
+            let out = math_round(input);
+            assert!(out == 0.0 && out.is_sign_negative(), "{input}");
+        }
+        assert!(math_round(0.3).is_sign_positive());
+    }
+
+    #[test]
+    fn round3_rounds_to_thousandths() {
+        assert_eq!(round3(1.234_6), 1.235);
+        assert_eq!(round3(-1.234_4), -1.234);
+        assert!(round3(-0.000_4).is_sign_negative());
+    }
+
+    #[test]
     fn round3_of_known_values() {
         assert_eq!(round3(2.675).to_bits(), 2.675_f64.to_bits());
         assert_eq!(round3(-0.0005).to_bits(), (-0.0_f64).to_bits());
