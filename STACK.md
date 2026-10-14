@@ -1,266 +1,566 @@
-# STACK.md — Strict TypeScript / Node 24 LTS / Hono profile
+# STACK.md — Spot-price: Rust / Axum service with PostgreSQL
 
 Policy revision: 2
 
-> Single-package Node 24 + Hono + TypeScript backend for the spot-price API. The web UI is a small set of server-rendered HTML strings emitted from Hono routes (`src/ui.ts`) plus a single inline client script (`src/ui-client.ts`) — there is no React, no Vite, no SPA, no monorepo. All source lives under `src/` and is built with `tsup`; the project is deployed as a single Node process on Railway.
+> One Rust service serves the spot-price REST API, a small server-rendered
+> setup page, and the OpenAPI document. It runs the scheduled Nord Pool,
+> Fingrid, and OpenWeatherMap fetch jobs in the same process. Axum, Tokio,
+> and Tower provide HTTP and concurrency. SQLx gives checked SQL on
+> PostgreSQL. Jiff represents time. There is no browser application build.
+
+This file adapts the agent-setup profile `stacks/STACK-RUST.md` (selection of
+13 October 2026) to this repository. Use it with `DOCTRINE.md` (P1–P9) and
+`CLAUDE.md`. MUST, MUST NOT, SHOULD, and MAY have the meanings in the
+doctrine. A rule of the profile that this file does not adopt is listed in
+§0 "Not applicable" with its reason, or in §13 as an exception. This file
+grants no authority beyond `CLAUDE.md`.
 
 ---
 
-Use with `DOCTRINE.md` (P1–P9) and `CLAUDE.md`. This file maps the doctrine to concrete technology, commands, budgets, and evidence. It grants no authority beyond `CLAUDE.md`.
-
 ## 0. Project shape
 
-- **Project risk rationale:** one household's home automations depend on this API to schedule flexible loads (sauna, EV, heating). A wrong or missing price shifts load to an expensive hour or skips it; the cost is money and comfort, not safety. Personal data is limited to one account, contract settings, and API keys (`VISION.md → Persistence and Privacy Posture`). Price and grid data are public and can be fetched again. Most failures are recoverable by a revert and redeploy; a destructive migration is the main irreversible risk.
-- **Change risk:** assess each task against that rationale. Changes to price math, the cheapest-window answer, auth, API keys, migrations, or retention are material. A risk label does not waive required checks or review.
-- **Layers:** interface (Hono routes, `src/ui.ts`), domain (pure transforms such as `src/calculator.ts` and `src/forecast.ts`; no framework, DB, clock, or network imports), and infrastructure (Nord Pool, Fingrid, and OpenWeatherMap clients, PostgreSQL stores), reached through narrow interfaces. Model phases as tagged unions, not parallel booleans.
-- **Shape:** single-package backend service. One Hono process exposes the REST API (`/api/v1/...`), a setup-only server-rendered HTML UI (`src/ui.ts` + inline `src/ui-client.ts`), the OpenAPI 3.1 document (`/api/v1/openapi.json`) with the interactive Scalar reference (`/api/docs`), and an in-process `node-cron` price-fetch job. **No `apps/`, no `packages/`, no frontend build.**
-- **Offline dev tooling:** the forecast backtest engine/CLI, `regenerate-bands`, and `backtest-metrics` live under `tools/` (not `src/`), are excluded from the production bundle (tsup's only entry is `src/index.ts`, and an ESLint guard forbids `src/` runtime from importing `tools/`), and are run on demand via `pnpm backtest` / `pnpm tsx tools/regenerate-bands.ts` — never in the server process.
-- **Critical execution path:** the per-request hot path on the API (price-now / today / tomorrow / cheapest / history / forecast) and the day-ahead price fetch path (`src/fetch-job.ts`). Price math is a pure function of `(HourlyPrice, UserSettings)` in `src/calculator.ts`; the forecast estimate is a pure function of its inputs in `src/forecast.ts` (no DB, clock, or network) — the forecast route reads pre-fetched Fingrid rows off the DB and never calls Fingrid synchronously.
-- **Applicable states:** API responses are typed success / typed error. When Nord Pool has not published, the answer is an explicit `available: false` / `404` — never an estimate (`VISION.md → Core Principles`). The setup UI handles awaiting-first-data, success, empty, permission/auth-blocked, and error.
+- **Project risk rationale:** one household's home automations depend on
+  this API to schedule flexible loads (sauna, EV, heating). A wrong or
+  missing price shifts load to an expensive hour or skips it; the cost is
+  money and comfort, not safety. Personal data is limited to one account,
+  contract settings, and API keys (`VISION.md → Persistence and Privacy
+Posture`). Price and grid data are public and can be fetched again. Most
+  failures are recoverable by a rollback in minutes. A destructive migration
+  is the main irreversible risk.
+- **Change risk:** assess each change against that rationale. Changes to
+  price math, the cheapest-window answer, the v1 wire format, sign-in,
+  sessions, API keys, migrations, retention, or the release configuration
+  are material. A risk label does not waive required checks or review.
+- **Shape:** one Rust service in a three-crate workspace. The setup page is
+  one HTML document with one inline script, rendered once at start-up.
+- **Critical execution paths:** (1) API request: key check, rate limit,
+  query validation, store read, domain calculation, JSON writer; (2) the
+  day-ahead price fetch job. Blocking work (scrypt, the forecast fit) runs on
+  the blocking pool, not on async request tasks.
+- **Applicable states:** API answers are a typed success or a typed error.
+  When Nord Pool has not published, the answer is `available: false` or
+  `404`, never an estimate. The setup page handles awaiting first data,
+  success, empty, signed out, and error.
+- **Reason for Rust:** owner decision (2026-10-14) to align with the owner's
+  other Rust services on Railway (mastofeed, commute, caltodo, psstore,
+  weather) and to reduce memory use.
+
+### Not applicable (with reasons)
+
+| Profile part                                                                     | Reason                                                                                                                                                 |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Frontend SPA: TypeScript 7, React, Vite, TanStack, Oxlint, Vitest (§1, §2, §2.4) | The UI is a setup page only (`VISION.md`). `crates/server/src/http/ui/` holds the HTML and the inline script of the TypeScript service, byte for byte. |
+| Hey API client and Zod validators (§2.1 steps 3–5)                               | No first-party client consumes the API. Home Assistant and scripts are the clients. `contract/openapi.json` is committed and drift-checked.            |
+| RFC 9457 Problem Details (§2.2)                                                  | The v1 contract keeps `{"error": "..."}` (docs/adr/0003). A change needs `/api/v2`.                                                                    |
+| OIDC (§2.5)                                                                      | The product uses local username and password accounts (docs/adr/0002).                                                                                 |
+| Exact decimals (§7)                                                              | Prices are `DOUBLE PRECISION` and binary floats with JavaScript rounding (docs/adr/0003).                                                              |
+| axe accessibility checks (§11)                                                   | Not adopted in the port. The page is unchanged from the TypeScript service. The keyboard and contrast thresholds of §11 stay review checks.            |
+| proptest, uuid, rust_decimal, Tailwind                                           | No current need. Golden files and seeded sweeps cover the rounding rules.                                                                              |
+
+### Repository layout and boundaries
+
+```text
+crates/
+  domain/src/          # areas, price math, local-day rules, query rules, JavaScript number rules, forecast
+  domain/tests/        # golden tests against TypeScript output
+  server/src/          # config, store, upstream clients, jobs, HTTP, auth, logging, lifecycle
+  server/tests/        # integration tests, HTTP golden replay, schema snapshot
+  server/sqlx.toml     # SQLx macro type override (TIMESTAMPTZ -> jiff_sqlx::Timestamp)
+  tools/               # offline forecast tools (backtest, regenerate-bands, revision-magnitude)
+migrations/            # SQLx migrations
+.sqlx/                 # committed SQLx query metadata
+contract/openapi.json  # exported OpenAPI 3.1 document
+e2e/                   # Playwright journeys against the Rust binary
+scripts/               # test-db.sh, smoke-local.sh, schema-snapshot.sql, golden generators (history only)
+docs/adr/              # decisions
+Cargo.toml  Cargo.lock  rust-toolchain.toml  clippy.toml  deny.toml  mise.toml
+railpack.json  .gitleaks.toml  package.json  pnpm-lock.yaml
+STACK.md  VISION.md  DOCTRINE.md  CLAUDE.md
+```
+
+- `spot-price-domain` depends only on `jiff`, `serde`, and `thiserror`. It
+  MUST NOT depend on Axum, Tokio, SQLx, reqwest, or the server crate. It
+  reads no clock, environment, or file; callers pass `now` and the data.
+- `spot-price-server` owns all effects: configuration (`config.rs`), the
+  store (`store/`), the upstream clients (`upstream/`), the jobs (`jobs/`),
+  HTTP (`http/`), sign-in (`auth/`), logging (`observability.rs`), and the
+  process lifecycle (`lifecycle.rs`, `main.rs`).
+- `spot-price-tools` is an offline binary. The release build compiles only
+  `spot-price-server`, so the tools never ship. The tools depend on the
+  domain crate, not on the server crate.
+- Cargo enforces the crate dependencies. Purity inside the domain crate is a
+  review check.
 
 ---
 
 ## 1. Language & Runtime
 
-- **Primary language:** TypeScript 5.9 (latest stable; do not jump to a 6.x prerelease)
-- **Strictness mode:** `"strict": true`, `"noUncheckedIndexedAccess": true`, `"exactOptionalPropertyTypes": true`, `"noImplicitOverride": true`, `"verbatimModuleSyntax": true`, plus `"noUnusedLocals"`, `"noUnusedParameters"`, `"noFallthroughCasesInSwitch"`, `"isolatedModules"`. ESLint with `@typescript-eslint/strict-type-checked` (flat config).
-- **Target runtime:** Node.js 24 LTS (Krypton)
-- **Minimum runtime version:** `>= 24.15.0` (current LTS patch, pinned in `.nvmrc`). No back-deployment to Node 22 or earlier.
-- **Package manager:** pnpm 10 (single package — **no workspaces**, no `apps/`, no `packages/`)
-- **Lockfile:** `pnpm-lock.yaml`
-- **Dev-environment provisioning:** `mise install` provisions Node, pnpm, and Python from `mise.toml`; `mise run setup` installs dependencies and Playwright browsers; `pnpm db:up` starts PostgreSQL 17 in Docker. `.nvmrc`, `package.json → engines`, and `packageManager` mirror the `mise.toml` pins.
+- **Language:** Rust 1.99.0, edition 2024, pinned in `rust-toolchain.toml`
+  with rustfmt and Clippy. `rust-version = "1.99"` in the workspace; the
+  server crate repeats it (§15, Railpack).
+- **Runtime:** a native Linux binary in the Railpack runtime image. A local
+  macOS build does not validate the Linux artifact.
+- **Package manager:** Cargo with workspace dependency inheritance, committed
+  `Cargo.lock`, `--locked` on every task.
+- **Strictness:** the workspace lints of the profile (`unsafe_code =
+"forbid"`, Clippy pedantic, and the deny list) plus
+  `missing_debug_implementations`. `clippy.toml` allows unwrap, expect,
+  panic, and print in tests.
+- **Node.js:** Node 24 and pnpm 10 run only Playwright and Prettier. They
+  are not in the production image.
+
+### Provisioning
+
+Install mise and rustup. Then run in the repository root:
+
+```bash
+mise trust && mise run setup
+```
+
+`rust-toolchain.toml` owns the Rust version. `mise.toml` owns the other
+tools: Node, pnpm, PostgreSQL 17.11 (conda package), sqlx-cli 0.9.0,
+cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
 
 ---
 
 ## 2. Frameworks
 
-| Concern                | Framework / library                                                                                      | Notes                                                                                                                   |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Backend HTTP framework | Hono + `@hono/node-server`                                                                               | Web-standards-aligned, runs on plain Node                                                                               |
-| OpenAPI / API docs     | `@hono/zod-openapi` + `@scalar/hono-api-reference`                                                       | Schema-first routes; OpenAPI 3.1 document at `/api/v1/openapi.json`, Scalar renders the reference UI at `/api/docs`     |
-| Authentication         | Better Auth (`better-auth`)                                                                              | Self-hosted email/password; sessions in PostgreSQL                                                                      |
-| Persistence            | PostgreSQL via raw `pg` driver                                                                           | No ORM. Numbered SQL migrations under `src/migrations/`, applied by `src/migrate.ts`.                                   |
-| Scheduling             | `node-cron` in-process                                                                                   | Day-ahead price fetch jobs in `src/scheduler.ts` and `src/fetch-job.ts`                                                 |
-| Rate limiting          | `hono-rate-limiter` (in-memory)                                                                          | Per-instance; no external store                                                                                         |
-| Validation             | Zod                                                                                                      | Boundary validation for every external input (HTTP, env, upstream responses, persisted state)                           |
-| Web UI                 | Server-rendered HTML strings (`src/ui.ts`) + a small inline client script (`src/ui-client.ts`)           | Setup-only surface per `VISION.md`. **No React, no Vite, no TanStack, no SPA.**                                         |
-| Testing                | Vitest 4 (unit + integration) and Playwright (`@playwright/test`) for E2E                                | Tests live next to their subjects (`*.test.ts`); E2E under `e2e/`                                                       |
-| Logging                | `console.log` / `console.warn` / `console.error` to stdout / stderr                                      | Captured by Railway's process logs. **No `pino`, no third-party logger.** PII discipline is enforced manually — see §8. |
-| Build                  | `tsup`                                                                                                   | Bundles `src/` to `dist/`; `pnpm copy:migrations` copies `src/migrations/*.sql` into `dist/migrations/`                 |
-| Dev runner             | `tsx`                                                                                                    | `pnpm dev` runs `tsx watch --env-file=.env src/index.ts`                                                                |
-| Formatting             | Prettier 3                                                                                               |                                                                                                                         |
-| Linting                | ESLint 10 with `@typescript-eslint/strict-type-checked` via the `typescript-eslint` helper (flat config) |                                                                                                                         |
-| Telemetry              | none                                                                                                     | No analytics, no crash reporter, no APM by default                                                                      |
+| Concern             | Technology                                   | Role                                           |
+| ------------------- | -------------------------------------------- | ---------------------------------------------- |
+| HTTP                | Axum 0.8, tower-http 0.6                     | Routes, extraction, panic containment          |
+| Concurrency         | Tokio 1 (multi-thread, 2 workers)            | Async I/O, jobs, signals, blocking pool        |
+| Errors              | `Result`, enums, thiserror                   | Fixed-text error kinds per adapter             |
+| Wire representation | serde, serde_json, a first-party JSON writer | JavaScript number format (docs/adr/0003)       |
+| HTTP contract       | utoipa 6, utoipa-axum 0.3                    | OpenAPI 3.1 document of the API routes         |
+| Time                | Jiff 0.2 (bundled tzdb), jiff-sqlx 0.2       | Instants, local days, DST                      |
+| Schedule            | croner 4 (`jiff` feature)                    | Job schedules in UTC and Europe/Oslo           |
+| Persistence         | PostgreSQL 17, SQLx 0.9                      | Checked query macros, migrations, transactions |
+| Outbound HTTP       | reqwest 0.13 (rustls, gzip)                  | Nord Pool, Fingrid, OpenWeatherMap             |
+| Passwords           | scrypt, unicode-normalization, subtle        | Better Auth-compatible hashes (docs/adr/0002)  |
+| Logging             | tracing, tracing-subscriber                  | One JSON line per event with a field allowlist |
+| Tests               | nextest, `#[sqlx::test]`, Playwright         | Unit, golden, integration, browser journeys    |
+| Formatting and lint | rustfmt, Clippy, Prettier                    | Named checks through mise                      |
+
+### 2.1 Public contract
+
+- `/api/v1/*`, `/api/public/spot`, `/api/session*`, `/api/keys*`, and
+  `/health` keep the TypeScript wire format byte for byte
+  (docs/adr/0003). `crates/server/tests/golden/http/` holds 91 recorded cases
+  of the TypeScript service; `golden_http.rs` replays them. The test lists
+  each intentional difference and fails when one stops occurring.
+- `contract/openapi.json` is the export of `spot-price export-openapi`. The
+  `contract:check` task fails on drift. `contract.rs` compares it with the
+  TypeScript document field by field.
+- `/api/docs` serves the Scalar reference page of the TypeScript service. It
+  loads Scalar from the jsDelivr CDN in the browser.
+- A breaking change needs `/api/v2` (`VISION.md`).
+
+### 2.2 Errors and failure containment
+
+- API errors are `{"error": "..."}` with the texts of the TypeScript service,
+  including the zod validation texts joined with `; `.
+- An unexpected failure gives 500 `Internal Server Error` as `text/plain`,
+  like the TypeScript service. `CatchPanicLayer` turns a handler panic into
+  the same answer.
+- A stored settings row that breaks the domain rules (an unsupported time
+  zone, an hour outside 0–23) gives 500 and logs `invalid_settings` with the
+  user id only.
+- Adapters map every failure to a fixed kind. Transport error text never
+  leaves the adapter, because it can contain a URL with a key.
+- Upstream data: an invalid Nord Pool entry is left out; an invalid Fingrid
+  record degrades the whole response; the OpenWeatherMap hourly and daily
+  blocks degrade separately (§9).
+
+### 2.3 Outbound sources
+
+One shared reqwest client: `User-Agent: spot-price/<version>`, redirects off,
+connect timeout 10 s, a 30 s deadline per attempt that covers the body, and a
+16 MiB body limit. Transport errors use `without_url`.
+
+- **Nord Pool:** `GET dataportal-api.nordpoolgroup.com/api/DayAheadPrices`
+  for all 21 areas in one call; 3 attempts, 7 s apart.
+- **Fingrid:** `GET data.fingrid.fi/api/data`, datasets 245, 75, 165, 124,
+  header `x-api-key`; no retry, never throws.
+- **OpenWeatherMap:** One Call 3.0 for two fixed FI points; the key is in the
+  query, so errors never include the URL.
+
+### 2.4 Sign-in and sessions
+
+docs/adr/0002 records the design. In short: Better Auth scrypt hashes in
+`account.password`; sign-up writes Better Auth rows in one transaction;
+sessions in `app_sessions` (SHA-256 of a 32-byte random token, 7-day expiry,
+renewed after one day, no IP or user agent); cookie `spot_session`
+(`__Host-spot_session` with `Secure` on HTTPS), `HttpOnly`, `SameSite=Lax`;
+a foreign `Origin` on a state-changing session route gives 403. scrypt runs
+on the blocking pool behind a semaphore of two.
 
 ---
 
 ## 3. Build & verify commands
 
-| Variable      | Command                                                                                          |
-| ------------- | ------------------------------------------------------------------------------------------------ |
-| `$FORMAT_CMD` | `pnpm format`                                                                                    |
-| `$LINT_CMD`   | `pnpm lint`                                                                                      |
-| `$BUILD_CMD`  | `pnpm build`                                                                                     |
-| `$TEST_CMD`   | `pnpm test`                                                                                      |
-| `$VERIFY_CMD` | `pnpm test:all` (format-check → type-check → lint → production dependency audit → tests → build) |
+| Variable      | Command           |
+| ------------- | ----------------- |
+| `$FORMAT_CMD` | `mise run format` |
+| `$LINT_CMD`   | `mise run lint`   |
+| `$BUILD_CMD`  | `mise run build`  |
+| `$TEST_CMD`   | `mise run test`   |
+| `$VERIFY_CMD` | `mise run verify` |
 
-**Required tests beyond `$VERIFY_CMD`:** `pnpm test:e2e` (Playwright). Every merge needs a passing run. Both `pnpm test:all` and `pnpm test:e2e` need the local PostgreSQL from `pnpm db:up` and `TEST_DATABASE_URL` (or `DATABASE_URL`) set as in `.env.example`. `ECONNREFUSED :5432` means the database is not running; "TEST_DATABASE_URL or DATABASE_URL environment variable is required" means the variable is not set. Neither is a regression. The audit step (`pnpm audit:deps`) needs network access to the npm registry.
+- **format:** `cargo fmt --all` and Prettier. `format-check` runs both in
+  check mode.
+- **lint:** `cargo clippy --workspace --all-targets --locked -- -D warnings`
+  with `SQLX_OFFLINE=true`.
+- **build:** `cargo build --release --locked --package spot-price-server`
+  with `SQLX_OFFLINE=true`.
+- **test:** starts the isolated database, then `cargo nextest run
+--workspace --locked` and `cargo test --doc --workspace --locked`.
+- **e2e:** the Playwright journeys in `e2e/` against the Rust binary.
+- **verify:** format-check, lint, `sqlx:check`, `contract:check`,
+  `scan:secrets`, `scan:deps`, build, test, and e2e, in this order. It stops
+  at the first failed step. The Playwright journeys are part of `verify`.
+- **Other tasks:** `db:start` / `db:stop`, `sqlx:prepare` (regenerate
+  `.sqlx` after a query or migration change), and `setup`.
 
-The `package.json` scripts are the single source of truth. Never invoke `tsc`, `eslint`, `vitest`, `playwright`, or `tsup` directly from commits, CI, or agent scripts.
+**Test database isolation.** `scripts/test-db.sh` runs the pinned PostgreSQL
+17.11 on `127.0.0.1:55436` with trust authentication and data in
+`.tmp/postgres`. The test tasks set `DATABASE_URL` to that server themselves.
+`#[sqlx::test]` creates and drops one database per test.
+
+**No `.env` file.** The SQLx query macros parse every `.env` file in the
+crate directory and its parent directories at compile time. Keep local
+settings in `.env.local`. sqlx-cli runs with `--no-dotenv`.
+
+**Sandboxes.** PostgreSQL needs System V shared memory, and the tests bind
+`127.0.0.1` ports. A sandbox that blocks either makes `db:start` or the tests
+fail; that is a missing environment, not a pass.
 
 ---
 
 ## 4. Performance budgets
 
-- **API request p99:** 100 ms (per route, excluding upstream calls).
-- **API request p50:** 30 ms.
-- **Cold start (Node):** < 2 s.
-- **Memory ceiling (API container):** < 512 MB resident.
+| Budget      | Adopted value and conditions                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| API request | p99 100 ms, p50 30 ms per route, excluding upstream calls (unchanged from the TypeScript service) |
+| Cold start  | Ready within 2 s, excluding migrations                                                            |
+| Memory      | Container limit 375 MB (Railway setting). scrypt uses at most 64 MiB (two hashes at 32 MiB).      |
+
+The PR of the port records the measurements. Do not raise a budget to fit a
+result.
 
 ---
 
 ## 5. Persistence shape
 
-- **Storage primitive:** **PostgreSQL only**, accessed via the raw `pg` driver. No ORM (no Drizzle, no Prisma, no Kysely).
-- **Persisted entities:** declared by `VISION.md → Persistence and Privacy Posture`.
-- **Schema migration policy:** numbered SQL files under `src/migrations/` (e.g. `001_baseline.sql`). Migrations are applied by `src/migrate.ts` on application startup and ship to the bundle via `pnpm copy:migrations`. Agents review every new migration before applying.
-- **`fingrid_actuals` (write policy, issue #88):** public Fingrid ACTUAL series (75/124), upsert-latest keyed by `(dataset_id, start_time)`. The hourly job re-upserts its whole ~31-day window, so the upsert carries a **change guard** — `DO UPDATE … WHERE (fingrid_actuals.end_time, fingrid_actuals.value) IS DISTINCT FROM (EXCLUDED.end_time, EXCLUDED.value)`. An unchanged row is not rewritten, so it costs no new row version, no index update and no `fetched_at` bump. **`fetched_at` therefore means LAST CHANGED, not last seen** — never read it as "when did we last see this row". Public grid data, not personal. Bounded by `RETENTION_DAYS` (~730 days), pruned by `start_time`.
-- **`weather_forecasts` (issue #73 Phase 1):** public OpenWeatherMap weather forecasts for a fixed set of FI points — **append-only per issuance** (PK `(point_id, issued_at, target_time)`, inserted with `ON CONFLICT DO NOTHING`, NOT the upsert-latest used by `fingrid_actuals`). One row per (point, issuance hour, target hour) preserves what the forecast said at each issue time so a later weather-feature backtest stays leakage-free; never collapse it to the latest issuance. Public weather data, not personal. Bounded by `WEATHER_RETENTION_DAYS` (~400 days) — it accumulates forward from deploy and prunes only beyond retention.
-- **`weather_daily_forecasts` (issue #93):** the DAILY block of the same OpenWeatherMap response — **append-only per issuance** (PK `(point_id, issued_at, target_date)`, `ON CONFLICT DO NOTHING`, never `DO UPDATE`). Collected per day: the six `temp` sub-fields, `clouds`, `uvi`, and the solar bounds `sunrise` / `sunset` (**nullable** — One Call omits them at polar latitudes). `target_date` is the **UTC calendar date** of the raw `dt`, which is stored alongside as `target_dt` for provenance; no local-time arithmetic is used (`STACK.md §7`), and the derivation is exact for any point between UTC−11 and UTC+11. **No index beyond the PK** — the read path is designed in issue #77. Public weather data, not personal. Shares `WEATHER_RETENTION_DAYS` (~400 days) with `weather_forecasts` and gets no constant of its own; ~154k rows ≈ ~31 MB in steady state. Kill commitment: if issue #77 is closed at its checkpoint, this table is dropped in the same PR.
-- **`fingrid_forecasts` (issue #78, narrowed by issue #90):** per-issuance vintages of the Fingrid FORECAST datasets (245/165) — **append-only per issuance** (PK `(dataset_id, issued_at, start_time)`, inserted with `ON CONFLICT DO NOTHING`, NOT the upsert-latest used by `fingrid_actuals`). An issuance archives **only targets with `start_time >= issued_at − VINTAGE_BACKFILL_HOURS` (6 h)**, not the whole 34-day fetch window: a past target is not a forecast, and re-archiving the window every hour wrote ~6 528 rows/hour and filled the 5 GB volume. The 6 h backfill keeps the job self-repairing across a deploy or a Fingrid outage. Both guards (dataset, target window) live INSIDE `storeFingridForecastVintages` — a caller cannot widen them. Public grid data, not personal. Bounded by `VINTAGE_RETENTION_DAYS` (180 days), pruned by `issued_at`. **Live read shape (do not change).** The latest-per-target read (`getFingridForecastVintagesLatest`) is a LATERAL skip-scan, not `DISTINCT ON`. Postgres has no loose index scan for `DISTINCT ON`. At 180-day depth the planner therefore reads every in-range issuance and sorts it to disk. That sort breaks the §4 p99 budget. The index `idx_fingrid_forecasts_target_issued` `(dataset_id, start_time, issued_at DESC)` serves both legs. The inner `SELECT DISTINCT start_time` runs as an index-only scan. The per-target LATERAL is one index seek plus `LIMIT 1`. Never simplify the live read to `DISTINCT ON`.
-- **Forbidden persistence:** anything declared forbidden in `VISION.md → Persistence and Privacy Posture`.
+- **Storage:** Railway PostgreSQL 17. The schema is the schema of the
+  TypeScript migrations `001`–`007` plus `app_sessions`.
+- **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
+  is idempotent and changes nothing on the production schema; the old ledger
+  `_migrations` stays. `0002_app_sessions.sql` adds the session table. The
+  migration runs as a separate step before the server starts (§15).
+  `serve` refuses to start on an unmigrated database. New migrations MUST
+  stay compatible with the running release and MUST NOT break the
+  TypeScript revert path until the owner ends it (docs/adr/0001).
+- **Queries:** SQLx `query!` macros with committed `.sqlx` metadata. The
+  offline tools use runtime queries with bound parameters.
+- **Connection:** no TLS, over the Railway private network, as before. Pool
+  of 10 connections, acquire timeout 10 s, `statement_timeout` 30 s.
+- **`prices`:** upsert by `(delivery_start, area)`. Kept; no pruning.
+- **`fingrid_actuals`:** upsert-latest by `(dataset_id, start_time)` with a
+  change guard: `DO UPDATE … WHERE (end_time, value) IS DISTINCT FROM
+(EXCLUDED.end_time, EXCLUDED.value)`. `fetched_at` means last changed, not
+  last seen. Pruned beyond `RETENTION_DAYS` (730).
+- **`fingrid_forecasts`:** append-only per issuance (`ON CONFLICT DO
+NOTHING`). An issuance stores only targets with `start_time >= issued_at −
+VINTAGE_BACKFILL_HOURS` (6 h). Pruned by `issued_at` beyond
+  `VINTAGE_RETENTION_DAYS` (180). **Live read shape (do not change):** the
+  latest-per-target read is a LATERAL skip-scan on
+  `idx_fingrid_forecasts_target_issued`, not `DISTINCT ON`; `DISTINCT ON`
+  sorts every in-range issuance to disk and breaks the §4 budget.
+- **`weather_forecasts`, `weather_daily_forecasts`:** append-only per
+  issuance; never collapse to the latest issuance. `target_date` is the UTC
+  calendar date of `dt`. Pruned beyond `WEATHER_RETENTION_DAYS` (400). If the
+  weather-feature work is closed at its checkpoint, the daily table is
+  dropped in the same PR.
+- **Accounts:** `"user"`, `"account"`, `usernames`, `user_settings`,
+  `api_keys` (plaintext keys, `VISION.md`). The Better Auth `"session"` and
+  `"verification"` tables stay untouched for the revert path.
+- **Recovery:** Railway PostgreSQL backups. Public data can be fetched again
+  within upstream limits.
 
 ---
 
 ## 6. Approved dependencies
 
-Default answer to "should we add a library?" is **no**. New entries require a `STACK.md` PR with justification. The list below reflects the current `package.json`.
+Exact versions are pinned in `Cargo.toml`. The lead approved the set on
+2026-10-14 in the Rust port PR.
 
-| Dependency                   | Version | Why it earns its place                                                               | Approver      | Date       |
-| ---------------------------- | ------- | ------------------------------------------------------------------------------------ | ------------- | ---------- |
-| `hono`                       | `^4.13` | Backend HTTP framework — the project's chosen default                                | (default)     | (template) |
-| `@hono/node-server`          | `^2.1`  | Node adapter for Hono                                                                | (default)     | (template) |
-| `@hono/zod-openapi`          | `^1.4`  | Schema-first route definitions + OpenAPI document generation                         | (default)     | (template) |
-| `@scalar/hono-api-reference` | `^0.10` | Renders the OpenAPI reference UI at `/api/docs`                                      | (default)     | (template) |
-| `better-auth`                | `^1.6`  | Self-hosted email/password auth backed by the same `pg` pool                         | (default)     | (template) |
-| `hono-rate-limiter`          | `^0.5`  | In-memory per-instance rate limiting                                                 | (default)     | (template) |
-| `node-cron`                  | `^4.2`  | In-process cron for the day-ahead price fetch jobs                                   | (default)     | (template) |
-| `pg`                         | `^8.20` | PostgreSQL driver                                                                    | (default)     | (template) |
-| `zod`                        | `^4.4`  | Boundary validation for every external input                                         | (default)     | (template) |
-| `vitest`                     | `^4.1`  | Unit + integration test runner                                                       | (default)     | (template) |
-| `@playwright/test`           | `^1.63` | End-to-end browser tests under `e2e/`                                                | (default)     | (template) |
-| `eslint`                     | `^10.4` | Linter                                                                               | (default)     | (template) |
-| `typescript-eslint`          | `^8.59` | TS-aware lint rules + flat-config helper (`@typescript-eslint/*`)                    | (default)     | (template) |
-| `@eslint/js`                 | `^10`   | ESLint's recommended JS rule set for the flat config                                 | (default)     | (template) |
-| `prettier`                   | `^3.8`  | Formatter                                                                            | (default)     | (template) |
-| `typescript`                 | `^5.9`  | Language                                                                             | (default)     | (template) |
-| `tsup`                       | `^8.5`  | Production bundler (`pnpm build`)                                                    | (default)     | (template) |
-| `vite`                       | `^7.3`  | Peer dependency of `vitest`; pinned at a patched version so `pnpm audit` stays clean | Claude (lead) | 2026-10-04 |
-| `tsx`                        | `^4.22` | Dev runner (`pnpm dev`) and seed/migration script runner                             | (default)     | (template) |
-| `@better-auth/cli`           | `^1.4`  | Generates the Better Auth SQL schema consumed by the numbered migrations             | (default)     | (template) |
-| `@types/node`                | `^25`   | Node type definitions                                                                | (default)     | (template) |
-| `@types/node-cron`           | `^3.0`  | Type definitions for `node-cron`                                                     | (default)     | (template) |
-| `@types/pg`                  | `^8.20` | Type definitions for `pg`                                                            | (default)     | (template) |
+| Dependency                   | Version            | Why it earns its place                                                             |
+| ---------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
+| axum                         | 0.8.9              | HTTP routing and extraction                                                        |
+| tokio                        | 1.53.2             | Async runtime, timers, signals, blocking pool                                      |
+| tower-http                   | 0.6.11             | `CatchPanicLayer`, header layers. 0.6, not 0.7: reqwest already depends on 0.6.11. |
+| tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                              |
+| serde / serde_json           | 1.0.229 / 1.0.151  | Wire types. `float_roundtrip` parses numbers like JavaScript.                      |
+| thiserror                    | 2.0.21             | Error enums with fixed text                                                        |
+| jiff / jiff-sqlx             | 0.2.38 / 0.2.0     | Time values with the bundled tzdb, and their SQLx encoding                         |
+| croner                       | 4.0.1              | Cron schedules with Jiff types                                                     |
+| sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`                            |
+| reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                    |
+| futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                      |
+| tracing / tracing-subscriber | 0.1.44 / 0.3.23    | Structured logs; the formatter is first-party (§8)                                 |
+| utoipa / utoipa-axum         | 6.0.0 / 0.3.0      | OpenAPI 3.1 document of the routes                                                 |
+| scrypt                       | 0.12.0             | Better Auth password hashes (N=16384, r=16, p=1, 64 bytes)                         |
+| unicode-normalization        | 0.1.25             | NFKC of a password, like `String.prototype.normalize`                              |
+| subtle                       | 2.6.1              | Constant-time comparison of a password hash                                        |
+| sha2                         | 0.11.1             | SHA-256 of a stored session token                                                  |
+| getrandom                    | 0.4.3              | Random tokens, API keys, ids, and salts                                            |
+| @playwright/test (dev, Node) | see `package.json` | Browser journeys                                                                   |
+| prettier (dev, Node)         | see `package.json` | Format check of Markdown, JSON, YAML, and e2e TypeScript                           |
 
-`package.json → pnpm.overrides` raises two transitive packages to patched versions: `drizzle-orm` (an optional peer of `better-auth`) and `nanoid` (from `@scalar/hono-api-reference`). Remove an override when its parent package resolves a patched version without it.
+The dev profile builds scrypt, salsa20, pbkdf2, and sha2 with `opt-level =
+3`, because an unoptimized scrypt takes seconds per hash in tests.
 
 ---
 
 ## 7. Stack-specific reject-list additions
 
-- `any` (explicit or implicit via `@typescript-eslint/no-explicit-any`) without an inline `// reason: ...` justification.
-- `as` casts that bypass type checking — use `satisfies` or a runtime guard.
-- `// @ts-ignore` / `// @ts-expect-error` without an inline explanation that names the underlying constraint.
-- `moment` / `moment.js` — use the standard library (`Intl.DateTimeFormat`, `Temporal` via polyfill when needed) or `date-fns` only if approved.
-- Full-import of `lodash` (`import _ from 'lodash'`) — import single functions only, or use the standard library equivalent.
-- Raw `fetch` without zod-validated response parsing for any external network call (e.g. the Nord Pool upstream at `dataportal-api.nordpoolgroup.com`).
-- Default exports for non-route, non-config modules — prefer named exports for tree-shakability and refactor safety.
-- `process.env.X` reads outside a single `src/env.ts` module that validates with zod and re-exports a typed `env` constant. Test files (`*.test.ts`, `src/test-utils.ts`) are exempt where they need to set up isolated test schemas or override env per test. (`DATABASE_PUBLIC_URL` is an optional env, declared in `env.ts` but never production-required — it is read only by the offline backtest CLI's `--db` mode to reach the Railway DB from a dev machine; the server uses `DATABASE_URL`.)
-- Local-time date / hour arithmetic inside calculators or storage — UTC is mandatory below the response boundary; only `formatDateTimeInTimeZone`-style conversion at the edge (`VISION.md → Core Principles`, "UTC inside, local time at the edge"; see §10).
-- Reintroducing any of the rejected stack choices: React, Vite, TanStack Router/Query, SPA build tooling, `pino` or other third-party loggers, ORMs (Drizzle/Prisma/Kysely), client-side state-management libraries (Redux/MobX/Recoil/Jotai).
+The profile list applies. In addition:
 
-- Fire-and-forget async work with no owner and no cancellation path. Detached work needs a why comment.
-- Singletons, global mutable state, or DI containers without an entry in this file.
-- Debug output, stubs, or commented-out code in shipped code.
-- New compiler or lint warnings. `$VERIFY_CMD` must pass with no new warnings.
-- An external call without a timeout and a degraded result. Upstream failure must never block the price request path.
-
-**Logging exception:** direct `console.log` / `console.warn` / `console.error` calls to stdout / stderr **are** the approved logging mechanism (see §8). The reject rules above do not forbid them — they forbid the logger being replaced by a third-party library. PII still must not be logged regardless of the mechanism.
+- A change of a v1 response, status, header, or error text without a matching
+  golden change, an `INTENTIONAL` entry in `golden_http.rs`, and an owner
+  decision. A breaking change needs `/api/v2`.
+- A migration that the TypeScript revert path cannot run on, while the
+  revert path holds (docs/adr/0001).
+- A password hash, user row, or account row that Better Auth cannot read
+  (docs/adr/0002).
+- `DISTINCT ON` in the live latest-vintage read (§5).
+- A log field outside `ALLOWED_FIELDS`, added only to see a value.
+- Local-time arithmetic below the response boundary; time zone conversion
+  outside Jiff.
+- An external call without a deadline and a degraded result. An upstream
+  failure must never block the price request path.
+- A test task that reaches a database other than the isolated server, or a
+  test that calls a live upstream.
 
 ### Code comments
 
-This policy narrows `DOCTRINE.md` P8 for this repository: rationale and history go to the issue or the PR, not to a comment.
-
-A comment earns its place by stating a **constraint a reader would otherwise break** — units, ownership, failure behaviour, an actor or thread requirement, what a caller must not do. It does not describe the code. Default to none: code that needs explaining is a naming or structure defect, so fix the code first. Doc-comment an exported symbol only when the name and the signature leave a contract unstated.
-
-The list below is the rule. The budget is a smell that points at it: a comment runs to at most 5 lines. Past that the content is usually rationale, not a constraint — move it to the issue, the PR, or `STACK.md`, and leave a pointer. A comment carrying two distinct constraints splits into two comments; it is not cut to fit. A comment over 5 lines that holds only constraints stays, and the reviewer says so. Never cut a contract to reach a number.
-
-Never write:
-
-- **History.** What the code used to be, what a fix changed, what a design replaced, what a measurement was. The commit, the PR, and the issue hold that record. A comment describes the present only.
-- **Rationale and rejected alternatives.** Why an option lost, notes from a design session, measured numbers. These go to the issue, the PR, or `STACK.md → Scoped exceptions`.
-- **A reference that does not resolve inside the repository.** Delete every issue number, PR number, and commit reference from the comment: it must still read correctly. A bare `#170` or "the previous shape" is not a reference; a named `STACK.md` section is.
-- **The same explanation twice** — in a type doc and again at the call site, or in the source and again in a `STACK.md` section. Name the section instead of restating it.
-- **Anything answering the current task or its author.** Tell the user instead.
-- **A line number, a file offset, or a count of things elsewhere** — a later edit invalidates it silently.
-
-Write for a reader who has the source file and nothing else: no issue, no chat, no external schema. Read each comment back cold, as a standalone sentence — an unclear referent is a defect even when the content is right. Do this while writing: a later pruning pass tests redundancy, not clarity. A note about an implementation choice sits at the line that makes it, not in the doc comment.
-
-Keep an existing comment unless the change makes it wrong. A comment that breaks this policy is already wrong: prune it when you touch that code.
+A comment earns its place by stating a **constraint a reader would otherwise
+break** — units, ownership, failure behaviour, what a caller must not do. It
+does not describe the code. Default to none. A comment runs to at most 5
+lines; past that, move the content to the issue, the PR, or this file, and
+leave a pointer. Never write history, rationale, rejected alternatives, issue
+or PR numbers, line numbers, or counts of things elsewhere. Write for a
+reader who has only the source file. Keep an existing comment unless the
+change makes it wrong.
 
 ---
 
 ## 8. Logging & privacy
 
-- **Logger:** `console.log` / `console.warn` / `console.error` writing to stdout / stderr. Railway captures both streams as the operational log sink. There is no third-party logger and no redaction middleware.
-- **PII discipline (manual):** reviewers and authors must ensure no PII is logged. Specifically, the following must never appear in log output: user email addresses, password hashes, API key plaintext or hashes, session tokens, request bodies, IP addresses beyond what is needed for in-memory rate limiting. User identifiers (numeric / opaque `user_id`) may be logged only when strictly necessary to diagnose a problem; free-text user input may not.
-- **Crash / error reporter:** none. If one were ever added (e.g. Sentry), it would require an entry in §6 with explicit data-flow justification.
-- **Telemetry / analytics:** none.
+- `observability.rs` writes one JSON object per line to standard output
+  (`LOG_FORMAT=json`, the default) or readable text (`LOG_FORMAT=text`).
+  Railway keeps the log.
+- Only the fields in `ALLOWED_FIELDS` keep their values. Other fields are
+  dropped, and only their names appear in `dropped_fields`.
+- One line per request: method, matched route pattern (or `unmatched`),
+  status, and time. The raw path, the query string, headers, bodies, keys,
+  and IP addresses are never logged.
+- A user id is logged only for the `invalid_settings` diagnosis (§2.2).
+- The panic hook logs only the source location.
+- `Config` debug output redacts `DATABASE_URL`, `BETTER_AUTH_SECRET`, and the
+  upstream keys. A configuration error names the setting, never the value.
+- No crash reporter, analytics, or telemetry exporter.
 
 ---
 
 ## 9. Background & lifecycle
 
-- **Allowed background work:** the `node-cron` jobs declared in `src/scheduler.ts`:
-  - the day-ahead price fetch executed by `src/fetch-job.ts` — 2h baseline cadence plus a 10-minute burst window around the Nord Pool publication time;
-  - the FI-forecast Fingrid grid-data fetch executed by `src/forecast-job.ts` — hourly (`0 * * * *`), fetching the public wind/consumption datasets (245/75/165/124) from `data.fingrid.fi`. The ACTUALS (75/124) go upsert-latest into the `fingrid_actuals` table; the FORECASTS (245/165) go append-only per issuance into `fingrid_forecasts`, and since issue #90 only for targets within `VINTAGE_BACKFILL_HOURS` (6 h) before the issuance — never the whole fetch window (see §5). It fetches a ~31-day window back from now (Fingrid serves data only forward, so a wider fetch can't backfill) but retains `fingrid_actuals` rows for ~2 years (`RETENTION_DAYS`), pruning only beyond that — so the table accumulates grid history forward from deploy for future forecast phases, bounded to cap storage (2 ACTUAL datasets × 96 quarters/day × 730 days ≈ 140k rows ≈ ~7 MB). It runs only when `FINGRID_API_KEY` is set, is wrapped in its own isolated try/catch, and its Fingrid boundary degrades rather than throwing, so a forecast failure can never affect the authoritative Nord Pool price cron or the price request path.
-  - the FI-forecast OpenWeatherMap weather-collection fetch executed by `src/weather-job.ts` (issue #73 Phase 1) — hourly (`0 * * * *`), fetching the One Call API 3.0 hourly forecast (48h: `temp`/`clouds`/`uvi`/`wind_speed`/`wind_deg`) for two fixed FI points (Helsinki, Vaasa) from `api.openweathermap.org` into the `weather_forecasts` table. Since issue #93 the SAME response also yields the DAILY block, stored in `weather_daily_forecasts` — **zero extra upstream calls**, because the subscription is billed per call and `exclude` only shapes the response, so the rate stays 48 calls/day. The two blocks are parsed and stored INDEPENDENTLY (two `safeParse` calls, separate transactions, per-point try/catch), so a daily schema drift can never discard the hourly rows of that issuance. Rows are **archived per issuance** (`ON CONFLICT DO NOTHING`, NOT the Fingrid upsert), so each `target_time` keeps one row per issue time — the leakage-free history a later weather-feature backtest needs. It retains ~400 days (`WEATHER_RETENTION_DAYS`), pruning only beyond that, accumulating forward from deploy. It runs only when `OPENWEATHERMAP_API_KEY` is set (so no live, billable call is made when unconfigured — e.g. in tests/E2E, where the key is never passed), is wrapped in its own isolated try/catch with per-point degrade, and its OWM boundary degrades rather than throwing, so a weather failure can never affect the authoritative Nord Pool price cron or the price request path. At ~48 calls/day it stays well inside the 1000/day free tier. Phase 1 changes no price/forecast response.
+`lifecycle::serve` owns the scheduler task. Each job run has a deadline and
+`catch_unwind`; a failure or a panic of one job never affects another job
+or the request path. Runs of one job never overlap. All jobs run once at
+start. These are the only allowed background tasks; a new one needs an
+entry here.
 
-  These three are the **only** allowed background tasks; new ones require an entry here.
+| Job               | Schedule                                                                          | Work                                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Day-ahead prices  | `0 */2 * * *` UTC, plus `*/10 12-13 * * *` Europe/Oslo until tomorrow is complete | Nord Pool for today and tomorrow (UTC dates); skip a date when every area has at least `MIN_ENTRIES_PER_AREA` (23) rows. Deadline 300 s.  |
+| Fingrid grid data | `0 * * * *` UTC, only with `FINGRID_API_KEY`                                      | Actuals (75, 124) upsert and prune; forecast vintages (245, 165) append and prune (§5). Deadline 120 s.                                   |
+| OpenWeatherMap    | `0 * * * *` UTC, only with `OPENWEATHERMAP_API_KEY`                               | Hourly and daily blocks for two FI points, stored separately; no pruning when every point failed. About 48 calls per day. Deadline 120 s. |
 
-- **Forbidden background work:** long-polling websockets that keep a connection alive without active user interaction; daemons that drive expensive computation on idle; service workers; any background task that retains data forbidden by `VISION.md`.
+- **Shutdown:** SIGTERM or SIGINT stops accepting connections and signals the
+  jobs. Active requests get 10 s; jobs get 5 s, then they are aborted; the
+  pool gets 5 s; the runtime gets 5 s for blocking tasks.
+- **Durable work:** none. A restart loses nothing; the next run fetches
+  again.
+- **Forbidden:** long-polling connections, idle computation, and any task
+  that keeps data that `VISION.md` forbids.
 
 ---
 
 ## 10. Time & timezones
 
-Apply `DOCTRINE.md` P5 according to meaning. `VISION.md → Core Principles` sets "UTC inside, local time at the edge".
-
-- **Instant:** `Date`, always UTC. Store instants in PostgreSQL `timestamptz`. Exchange them as ISO-8601 with `Z`. Validate external timestamps with zod at the boundary.
-- **Calendar value:** a delivery day ("today", "tomorrow") is a local calendar date in the user's IANA timezone (`user_settings.timezone`). Resolve it to a UTC range with `getUtcRangeForLocalDate` / `getUtcRangeForLocalDateSpan` in `src/time.ts`. The night-rate window (`night_start_hour`, `night_end_hour`) is a recurring local time-of-day schedule. Evaluate it per instant from the local hour; never store it as a fixed instant.
-- **Duration:** a number with the unit in its name (`durationMinutes`, `RETENTION_DAYS`). A delivery day can have 23, 24, or 25 hours; never assume 24 hours per local day.
-- **Conversion:** only through `Intl.DateTimeFormat` with an explicit `timeZone`, wrapped by the helpers in `src/time.ts` (for example `formatDateTimeInTimeZone`). Never compute timezone offsets by hand.
-- **Tests:** inject the clock or use Vitest fake timers. Cover DST transitions for delivery-day ranges and the night window. Results must not depend on the host timezone.
+- **Instant:** `jiff::Timestamp`; PostgreSQL `timestamptz`; on the wire
+  `YYYY-MM-DDTHH:MM:SS.sssZ`.
+- **Calendar value:** a delivery day is a local date in the user's IANA zone
+  (`user_settings.timezone`, one of the 13 supported zones). `time.rs` turns
+  it into a UTC range with `Zoned::start_of_day`, so 23-hour and 25-hour days
+  are correct. The night window is a recurring local hour range, evaluated
+  per instant.
+- **Duration:** a number with the unit in its name (`duration_minutes`,
+  `RETENTION_DAYS`). Never assume 24 hours per local day.
+- **Conversion:** only through Jiff with the bundled time zone database. The
+  database updates with the jiff crate version.
+- **Tests:** pass fixed time (`FixedClock`, explicit `now`). Golden files
+  cover every supported zone on every day of 2026 and around the 2025 DST
+  changes. Results do not depend on the host time zone.
 
 ---
 
 ## 11. Design guidelines & UX thresholds
 
-The web UI is a setup surface only (`VISION.md → Core Principles`). It still must be usable without a pointer.
+The web UI is a setup surface only (`VISION.md`). It is the page of the
+TypeScript service, byte for byte. It must be usable without a pointer.
 
-- **Design authority:** WCAG 2.2 AA and native HTML semantics. Use semantic elements first; use ARIA only when no native element fits.
-- **Documented thresholds to exercise at the threshold:**
-  - Pointer target size ≥ 24×24 CSS px (WCAG 2.5.8).
-  - Text contrast ≥ 4.5:1 for body text and ≥ 3:1 for large text (WCAG 1.4.3).
-  - A visible focus indicator on every interactive element (WCAG 2.4.7).
+- **Design authority:** WCAG 2.2 AA and native HTML semantics.
+- **Thresholds:** pointer target size ≥ 24×24 CSS px (WCAG 2.5.8); text
+  contrast ≥ 4.5:1 and ≥ 3:1 for large text (WCAG 1.4.3); a visible focus
+  indicator on every interactive element (WCAG 2.4.7).
 - **Input paths:** full keyboard operation; focus order follows DOM order.
+- **Browser evidence:** the Playwright journeys in `e2e/` (Chromium) run
+  against the Rust binary with seeded data and no live upstream calls.
 - **Copy:** terse and technical, as in `VISION.md → Audience & Voice`.
 
 ---
 
 ## 12. Best practices source
 
-Consult current, version-relevant official documentation when an API, platform rule, or material technology decision is uncertain. Use the documentation tools available in the current host. Cite the relevant section in the decision or review.
-
-- **Sources:** Node.js (`nodejs.org/docs`), TypeScript (`typescriptlang.org/docs`), Hono (`hono.dev/docs`), Better Auth (`better-auth.com/docs`), Zod (`zod.dev`), PostgreSQL (`postgresql.org/docs`), Vitest (`vitest.dev`), Playwright (`playwright.dev`), Railway (`docs.railway.com`), MDN (`developer.mozilla.org`).
-- **Upstream contracts:** Nord Pool Data Portal API, Fingrid open data (`data.fingrid.fi`), and the OpenWeatherMap One Call API 3.0 documentation.
+- [Axum 0.8](https://docs.rs/axum/0.8.9/), [tower-http 0.6](https://docs.rs/tower-http/0.6.11/), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown)
+- [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.0/), [PostgreSQL 17](https://www.postgresql.org/docs/17/)
+- [Jiff](https://docs.rs/jiff/0.2.38/), [croner 4](https://docs.rs/croner/4.0.1/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
+- [scrypt](https://docs.rs/scrypt/0.12.0/), [ECMAScript Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)
+- Upstream contracts: Nord Pool Data Portal API, [Fingrid open data](https://data.fingrid.fi/), [OpenWeatherMap One Call 3.0](https://openweathermap.org/api/one-call-3)
+- [Railpack Rust](https://railpack.com/languages/rust/), [Railpack config file](https://railpack.com/config/file/), Railway [healthchecks](https://docs.railway.com/deployments/healthchecks)
+- [WCAG 2.2](https://www.w3.org/TR/WCAG22/), [Playwright](https://playwright.dev/)
 
 ---
 
 ## 13. Scoped exceptions
 
-Do not weaken a rule or check to make a change pass. The responsible lead resolves exceptions within project authority, with an independent reviewer. The change author must not approve their own weaker acceptance or checks. Escalate changes beyond that authority and unresolved material risks to the owner. Record significant design decisions in concise `docs/adr/` files. Read them when relevant; keep backlog and change history in GitHub.
-
-| Rule / scope | Reason and consequences | Compensating evidence | Responsible lead / reviewer / approval | Expiry or reassessment |
-| ------------ | ----------------------- | --------------------- | -------------------------------------- | ---------------------- |
-| _(none)_     | —                       | —                     | —                                      | —                      |
+| Rule / scope                                                                                                                                                                                          | Reason and consequences                                                                                                                                                           | Compensating evidence                                                                                                          | Lead / reviewer / approval                | Expiry or reassessment                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Profile §15 build isolation: Railpack gives every Railway service variable, including `DATABASE_URL`, `BETTER_AUTH_SECRET`, and the upstream keys, to every build command and dependency build script | Railpack has no per-step variable filter; `"secrets": []` limits only cache invalidation. The same applies to the owner's other Railpack services.                                | Committed `Cargo.lock` with `--locked`; cargo-deny (sources, bans, advisories); a small dependency set with a reason each (§6) | Lead; independent reviewer of the port PR | When a dependency with a build script or proc macro is added, or on a supply-chain advisory |
+| Profile §15 dependency-aware readiness: `/health` checks only `SELECT 1`                                                                                                                              | The TypeScript contract of `/health` stays. The start command runs `migrate` first, so a broken database stops the deploy before traffic moves.                                   | Migration and health tests; §15 healthcheck                                                                                    | Lead; independent reviewer of the port PR | When the service gets another dependency that a deploy must check                           |
+| Forecast parity: values before rounding differ from V8 by a few ULPs                                                                                                                                  | Rust uses the platform maths library for `asinh`, `sinh`, `exp`, `sin`, `cos`. A residual exactly on a band edge can flip the observed band coverage of the offline regeneration. | Golden tests: relative tolerance 1e-9 before rounding, exact after rounding; the band-edge count is asserted                   | Lead; independent reviewer of the port PR | When the bands are calibrated and shipped                                                   |
 
 ---
 
 ## 14. Applicability and evidence
 
-P1–P9 refer to `DOCTRINE.md`. Run `$VERIFY_CMD` and the required tests in §3 locally for the exact version to merge, integrated with the current `main`. Failed or missing required local checks block merge. The repository has no CI; local verification and the independent review are the merge gate. Assign each check a phase: before merge or after release. Missing pre-merge evidence blocks merge. Missing post-release evidence blocks a claim of successful release. Record results for the exact commit and environment. Retain procedures, safe inputs, expected outcomes and their sources, and results for material claims. Trace expectations to original requirements, independent sources, or labelled provisional assumptions.
+Run the required tests and the full `mise run verify` locally on the version
+to be merged against the current base. Missing or failed mandatory local
+evidence blocks merge. There is no CI.
 
-| Doctrine / applicability             | Required evidence                                                                                                                                           | Environment / gap to resolve                                                                                                                                                                                                                                             |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| P1, P6: every task                   | Acceptance criteria, material failure cases, assumptions, and their check mapping in the issue or PR                                                        | Lead prepares; independent review for material changes                                                                                                                                                                                                                   |
-| P2–P5: changed code and dependencies | `pnpm test:all`: Prettier check, strict `tsc` (`src/` and `tools/`), ESLint `strict-type-checked`, Vitest, `tsup` build; dependency rationale in §6         | Local with PostgreSQL from `pnpm db:up`                                                                                                                                                                                                                                  |
-| P5–P6: changed data boundaries       | zod validation of every upstream response; tests for transformations, one invalid item among valid items, and whole-operation failure where each can occur  | Upstreams are faked in tests; no live Nord Pool, Fingrid, or OpenWeatherMap call in tests                                                                                                                                                                                |
-| P3, P7: security and dependencies    | `pnpm audit:deps` (`pnpm audit --prod --audit-level high`) inside `pnpm test:all`; triage moderate and low findings in the PR                               | **Gap:** dev-only advisories are outside the gate until the `follow-up` issue that clears them closes. **Gap:** no secret scanner; compensating controls are `.gitignore` for `.env*`, the `.env` read guard, and review of every diff. The audit needs the npm registry |
-| P5–P7: API and web journeys          | Vitest route and integration tests; `pnpm test:e2e` (Playwright, Chromium) for setup, dashboard, and API-key journeys; migration tests when storage changes | Local; requires Playwright browsers from `mise run setup`                                                                                                                                                                                                                |
-| P4: performance                      | §4 budgets; profile hot-path changes and record the measurement in the PR                                                                                   | **Gap:** no automated budget check                                                                                                                                                                                                                                       |
-| P7: release and recovery             | Before merge: migration and recovery evidence for schema changes. After release: deployed version, `/health`, and the next scheduled price fetch (§15)      | Railway production; the owner merges                                                                                                                                                                                                                                     |
-| P8–P9: material changes              | Current setup instructions, significant ADRs, independent `/codereview` of the integrated result, explicit limitations                                      | Separate reviewer context                                                                                                                                                                                                                                                |
+| Doctrine / applicability      | Required evidence                                                                                                       | Environment / gap                                         |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| P1, P6: each task             | Criteria, failures, assumptions, check mapping in the PR                                                                | Lead records; independent review for material changes     |
+| P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                | Purity inside the domain crate is review-only             |
+| P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                | Golden files come from one TypeScript commit              |
+| P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                         | Forecast tolerance (§13)                                  |
+| P5–P7: storage                | `sqlx:check`; migration tests (TypeScript schema, empty database, repeat, partial ledger); schema snapshot; store tests | Isolated PostgreSQL 17.11; production runs Railway's 17.x |
+| P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests          | Scanners do not prove authorization                       |
+| P5–P7: browser                | Playwright journeys against the Rust binary                                                                             | Chromium only; no axe check                               |
+| P7: release                   | Before merge: Railpack plan, owner-run schema snapshot. After release: §15 checks                                       | A local macOS build is not the Linux artifact             |
+| P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                            | Separate reviewer context                                 |
 
-Enforced boundaries: an ESLint rule forbids `src/` from importing `tools/`. Not enforced mechanically: the domain/infrastructure layer split (§0), complexity limits, and unused exports. Review covers them.
+### Golden files
+
+`crates/server/tests/golden/http/README.md`, the domain golden files, and the
+tools golden files record how they were produced from the TypeScript
+service. The TypeScript service is gone from the tree; regenerate them only
+from the port PR's history. A golden change is a contract change.
 
 ---
 
 ## 15. Release, recovery, and maintenance
 
-- **Release:** Railway service `spot-price` (project `calmdonut`, environment `production`) builds `main` from `jonikanerva/spot-price` with Railpack and deploys every push to `main`. A merge is a release. The owner reserves merge (`CLAUDE.md → Project-specific rules`). `src/migrate.ts` applies pending migrations on start. The container memory limit is 375 MB, below the §4 ceiling.
-- **Observe:** read-only checks only. Railway gates the deploy on `GET /health` (30 s timeout). After a deploy, confirm the deployed commit in Railway, call `GET https://spot.calmdonut.com/health` and expect `{"status":"ok","db":"connected"}`, and watch the next scheduled price fetch in the Railway process logs. Never run `pnpm smoke` or the `RAILWAY.md` smoke steps against production: they create an account and an API key. Run them against a local instance only, or on a first deploy with the owner present.
-- **Recover:** revert the merge commit through a PR, or redeploy the previous Railway deployment. Migrations are forward-only. A migration that drops or rewrites data needs a tested recovery path before merge; Railway's managed PostgreSQL backups are the last resort.
-- **Data:** the stores and retention rules are in §5 and `VISION.md → Persistence and Privacy Posture`. Price, grid, and weather data are public and can be fetched again within upstream limits. Account, settings, and API keys are the only personal data.
+The release is one always-on Railway service (`spot-price` in project
+`calmdonut`, environment `production`, 1 replica) built by Railpack from
+`railpack.json`. Each merge to `main` deploys automatically. The owner
+reserves merge (`CLAUDE.md`).
 
-Main stays production-ready. Added cost, a new provider or external data transfer, material lock-in, a product change, and irreversible production-data changes outside the approved retention rules need owner approval.
+### Build and start (in the repository)
+
+| Item          | Value                                                                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Builder       | Railpack, Rust provider (`"provider": "rust"`: the root also has `package.json`)                                                                        |
+| Toolchain     | Rust 1.99.0 from `rust-toolchain.toml`                                                                                                                  |
+| Build         | `SQLX_OFFLINE=true cargo build --release --locked --package spot-price-server`, then copy the binary to `bin/`                                          |
+| Caches        | `cargo_registry`, `cargo_git`, `cargo_target`                                                                                                           |
+| Image content | `bin/spot-price` only                                                                                                                                   |
+| Start         | `./bin/spot-price migrate && exec ./bin/spot-price serve`. The entrypoint is `/bin/bash -c`, so after `exec` the service is PID 1 and receives SIGTERM. |
+| Build context | Without `mise.toml` (local tools only)                                                                                                                  |
+
+`SQLX_OFFLINE=true` is required: the build gets the service variable
+`DATABASE_URL`, and the SQLx macros would otherwise connect to the
+production database. Railpack cannot read inherited package fields in the
+binary crate, so `crates/server/Cargo.toml` repeats them. Check `railpack
+info --show-plan .` after a change to a manifest or to `railpack.json`.
+
+### Service settings (in Railway)
+
+| Setting       | Value                                                 |
+| ------------- | ----------------------------------------------------- |
+| Healthcheck   | `/health`, timeout 30 s                               |
+| Memory limit  | 375 MB                                                |
+| Custom domain | `spot.calmdonut.com` (port 8080); Railway sets `PORT` |
+
+### Runtime variables (names only)
+
+- Required in production: `DATABASE_URL`, `BETTER_AUTH_URL` (the public
+  origin; it sets the cookie security and the `Origin` check),
+  `BETTER_AUTH_SECRET` (unused by the Rust service; kept for the revert
+  path), `NODE_ENV=production`.
+- Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY` (a missing key
+  disables its job and logs a warning), `LOG_FORMAT`.
+- Platform: `PORT`.
+- An invalid value stops the start with exit code 2. The message names the
+  setting, never its value.
+
+### Release procedure
+
+1. Before merge: the owner runs `scripts/schema-snapshot.sql` read-only
+   against production and compares it with
+   `crates/server/tests/fixtures/schema-snapshot.txt`. Record the active
+   deployment as the known-good version.
+2. Merge. Watch the build log: Rust 1.99.0, the offline build, `migrations
+are up to date`, and a passing healthcheck.
+3. Run the post-release checks.
+
+### Post-release checks (read-only)
+
+- The active deployment shows the merged commit.
+- `GET https://spot.calmdonut.com/health` gives `{"status":"ok","db":"connected"}`.
+- The next scheduled price fetch appears in the log without errors.
+- The owner calls one price route with their own API key.
+- Railway metrics: memory after one hour, compared with §4.
+
+Never run `scripts/smoke-local.sh` against production: it creates an account
+and an API key.
+
+### Rollback and recovery
+
+- **Immediate:** roll back to the known-good deployment in Railway.
+- **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. The
+  revert removes `railpack.json`, so Railpack detects the Node service
+  again.
+- **Data:** a revert needs no data change (docs/adr/0001). Users sign in
+  again after a revert. `_sqlx_migrations` and `app_sessions` stay and are
+  harmless.
+- **Database loss:** restore a Railway PostgreSQL backup.
+
+### Maintenance
+
+Review toolchain and dependency upgrades with the same evidence. After a
+query or migration change, run `mise run sqlx:prepare` and commit `.sqlx`.
+After a Railpack change, compare the plan again. Keep the TypeScript revert
+path until the owner ends it.
