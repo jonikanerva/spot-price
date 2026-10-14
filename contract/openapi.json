@@ -1,0 +1,1145 @@
+{
+  "components": {
+    "parameters": {},
+    "schemas": {
+      "ChartData": {
+        "properties": {
+          "resolutionMinutes": {
+            "example": 15,
+            "type": "integer"
+          },
+          "today": {
+            "items": {
+              "$ref": "#/components/schemas/TotalPrice"
+            },
+            "type": "array"
+          },
+          "tomorrow": {
+            "items": {
+              "$ref": "#/components/schemas/TotalPrice"
+            },
+            "type": "array"
+          },
+          "tomorrowAvailable": {
+            "example": true,
+            "type": "boolean"
+          },
+          "unit": {
+            "example": "c/kWh",
+            "type": "string"
+          }
+        },
+        "required": [
+          "today",
+          "tomorrow",
+          "tomorrowAvailable",
+          "unit",
+          "resolutionMinutes"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "properties": {
+          "error": {
+            "example": "Description of what went wrong",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "ForecastBands": {
+        "description": "Empirical prediction-band descriptor. An estimate of recent residual spread, NOT a guaranteed coverage probability — prices can fall outside it, especially at spikes. Currently ships dark (calibrated:false) until a regenerated artifact clears the coverage gate.",
+        "properties": {
+          "calibrated": {
+            "description": "When false, bands are dark (no bound fields emitted) — coverage did not clear the ship gate or history is too thin.",
+            "example": false,
+            "type": "boolean"
+          },
+          "generatedAt": {
+            "description": "When the band artifact was generated, or empty when dark.",
+            "example": "",
+            "type": "string"
+          },
+          "method": {
+            "enum": [
+              "empirical-residual"
+            ],
+            "example": "empirical-residual",
+            "type": "string"
+          },
+          "nominalCoverage": {
+            "description": "Target fraction the P10/P90 offsets aim to contain.",
+            "example": 0.8,
+            "type": "number"
+          },
+          "observedCoverage": {
+            "description": "Measured out-of-sample coverage of the shipped offsets, or null when uncalibrated.",
+            "example": null,
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "method",
+          "nominalCoverage",
+          "observedCoverage",
+          "calibrated",
+          "generatedAt"
+        ],
+        "type": "object"
+      },
+      "ForecastEntry": {
+        "properties": {
+          "end": {
+            "example": "2026-02-28T22:15:00.000Z",
+            "type": "string"
+          },
+          "estimatedSpotCentsKwh": {
+            "example": 4.12,
+            "type": "number"
+          },
+          "estimatedSpotHighCentsKwh": {
+            "description": "Upper empirical band bound (spot). Present only with a calibrated band.",
+            "example": 7.8,
+            "type": "number"
+          },
+          "estimatedSpotLowCentsKwh": {
+            "description": "Lower empirical band bound (spot). Present only with a calibrated band.",
+            "example": 2.1,
+            "type": "number"
+          },
+          "estimatedTotalCentsKwh": {
+            "description": "Estimated total price (c/kWh). Floored at the contract-cost minimum: negative spot is treated as 0 (a retailer does not credit negatives), so the total never drops below (margin + transfer + tax) × (1 + VAT). The displayed estimatedSpotCentsKwh stays raw and may be negative.",
+            "example": 11.74,
+            "type": "number"
+          },
+          "estimatedTotalHighCentsKwh": {
+            "description": "Upper empirical band bound (total, contract terms applied).",
+            "example": 16.3,
+            "type": "number"
+          },
+          "estimatedTotalLowCentsKwh": {
+            "description": "Lower empirical band bound (total, contract terms applied).",
+            "example": 9.6,
+            "type": "number"
+          },
+          "localEnd": {
+            "example": "2026-03-01T00:15:00.000+02:00",
+            "type": "string"
+          },
+          "localStart": {
+            "example": "2026-03-01T00:00:00.000+02:00",
+            "type": "string"
+          },
+          "start": {
+            "example": "2026-02-28T22:00:00.000Z",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "localStart",
+          "localEnd",
+          "estimatedSpotCentsKwh",
+          "estimatedTotalCentsKwh"
+        ],
+        "type": "object"
+      },
+      "ForecastResponse": {
+        "properties": {
+          "area": {
+            "example": "FI",
+            "type": "string"
+          },
+          "available": {
+            "example": true,
+            "type": "boolean"
+          },
+          "bands": {
+            "$ref": "#/components/schemas/ForecastBands"
+          },
+          "confidence": {
+            "enum": [
+              "normal",
+              "low"
+            ],
+            "example": "normal",
+            "type": "string"
+          },
+          "degraded": {
+            "example": false,
+            "type": "boolean"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ForecastEntry"
+            },
+            "type": "array"
+          },
+          "forecast": {
+            "enum": [
+              true
+            ],
+            "example": true,
+            "type": "boolean"
+          },
+          "generatedAt": {
+            "example": "2026-02-28T13:00:00.000Z",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Present when available is false or degraded is true",
+            "example": "Forecast available for FI only",
+            "type": "string"
+          },
+          "resolutionMinutes": {
+            "example": 15,
+            "type": "integer"
+          },
+          "unit": {
+            "example": "c/kWh",
+            "type": "string"
+          }
+        },
+        "required": [
+          "forecast",
+          "area",
+          "available",
+          "degraded",
+          "confidence",
+          "generatedAt",
+          "unit",
+          "resolutionMinutes",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "PriceList": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PriceWindow"
+          },
+          {
+            "properties": {
+              "available": {
+                "example": true,
+                "type": "boolean"
+              },
+              "expectedAt": {
+                "example": "12:00 UTC",
+                "type": "string"
+              }
+            },
+            "required": [
+              "available"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PriceWindow": {
+        "properties": {
+          "averageTotalCentsKwh": {
+            "example": 8.42,
+            "type": "number"
+          },
+          "end": {
+            "example": "2026-02-28T01:00:00.000Z",
+            "type": "string"
+          },
+          "endLocal": {
+            "example": "2026-02-28T03:00:00.000+02:00",
+            "type": "string"
+          },
+          "maxTotalCentsKwh": {
+            "example": 11.05,
+            "type": "number"
+          },
+          "minTotalCentsKwh": {
+            "example": 6.21,
+            "type": "number"
+          },
+          "prices": {
+            "items": {
+              "$ref": "#/components/schemas/TotalPrice"
+            },
+            "type": "array"
+          },
+          "start": {
+            "example": "2026-02-27T22:00:00.000Z",
+            "type": "string"
+          },
+          "startLocal": {
+            "example": "2026-02-28T00:00:00.000+02:00",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "startLocal",
+          "endLocal",
+          "minTotalCentsKwh",
+          "maxTotalCentsKwh",
+          "averageTotalCentsKwh",
+          "prices"
+        ],
+        "type": "object"
+      },
+      "PublicSpot": {
+        "properties": {
+          "area": {
+            "example": "FI",
+            "type": "string"
+          },
+          "resolutionMinutes": {
+            "example": 15,
+            "type": "integer"
+          },
+          "today": {
+            "items": {
+              "$ref": "#/components/schemas/SpotPriceEntry"
+            },
+            "type": "array"
+          },
+          "tomorrow": {
+            "items": {
+              "$ref": "#/components/schemas/SpotPriceEntry"
+            },
+            "type": "array"
+          },
+          "tomorrowAvailable": {
+            "example": true,
+            "type": "boolean"
+          },
+          "unit": {
+            "example": "c/kWh",
+            "type": "string"
+          }
+        },
+        "required": [
+          "area",
+          "today",
+          "tomorrow",
+          "tomorrowAvailable",
+          "unit",
+          "resolutionMinutes"
+        ],
+        "type": "object"
+      },
+      "SpotPriceEntry": {
+        "properties": {
+          "area": {
+            "example": "FI",
+            "type": "string"
+          },
+          "deliveryEnd": {
+            "example": "2026-02-27T10:15:00.000Z",
+            "type": "string"
+          },
+          "deliveryStart": {
+            "example": "2026-02-27T10:00:00.000Z",
+            "type": "string"
+          },
+          "priceEurMwh": {
+            "example": 52.3,
+            "type": "number"
+          },
+          "spotCentsKwh": {
+            "example": 5.23,
+            "type": "number"
+          }
+        },
+        "required": [
+          "deliveryStart",
+          "deliveryEnd",
+          "priceEurMwh",
+          "area",
+          "spotCentsKwh"
+        ],
+        "type": "object"
+      },
+      "TotalPrice": {
+        "properties": {
+          "deliveryEnd": {
+            "example": "2026-02-27T10:15:00.000Z",
+            "type": "string"
+          },
+          "deliveryStart": {
+            "example": "2026-02-27T10:00:00.000Z",
+            "type": "string"
+          },
+          "isNightRate": {
+            "example": false,
+            "type": "boolean"
+          },
+          "localEnd": {
+            "example": "2026-02-27T12:15:00.000+02:00",
+            "type": "string"
+          },
+          "localStart": {
+            "example": "2026-02-27T12:00:00.000+02:00",
+            "type": "string"
+          },
+          "marginCentsKwh": {
+            "example": 0.5,
+            "type": "number"
+          },
+          "spotCentsKwh": {
+            "example": 5.23,
+            "type": "number"
+          },
+          "taxCentsKwh": {
+            "example": 2.79372,
+            "type": "number"
+          },
+          "totalCentsKwh": {
+            "description": "Total price (c/kWh) the household pays. Floored at the contract-cost minimum: negative spot is treated as 0 (a retailer does not credit negatives), so the total never drops below (margin + transfer + tax) × (1 + VAT). The displayed spotCentsKwh stays raw and may be negative.",
+            "example": 13.83,
+            "type": "number"
+          },
+          "transferCentsKwh": {
+            "example": 2.5,
+            "type": "number"
+          },
+          "vatCentsKwh": {
+            "example": 2.81,
+            "type": "number"
+          }
+        },
+        "required": [
+          "deliveryStart",
+          "deliveryEnd",
+          "localStart",
+          "localEnd",
+          "spotCentsKwh",
+          "marginCentsKwh",
+          "transferCentsKwh",
+          "taxCentsKwh",
+          "vatCentsKwh",
+          "totalCentsKwh",
+          "isNightRate"
+        ],
+        "type": "object"
+      },
+      "UserSettings": {
+        "properties": {
+          "area": {
+            "example": "FI",
+            "type": "string"
+          },
+          "marginCentsKwh": {
+            "example": 0.5,
+            "type": "number"
+          },
+          "nightEndHour": {
+            "example": 7,
+            "type": "integer"
+          },
+          "nightStartHour": {
+            "example": 22,
+            "type": "integer"
+          },
+          "taxCentsKwh": {
+            "example": 2.79372,
+            "type": "number"
+          },
+          "timezone": {
+            "example": "Europe/Helsinki",
+            "type": "string"
+          },
+          "transferDayCentsKwh": {
+            "example": 2.5,
+            "type": "number"
+          },
+          "transferNightCentsKwh": {
+            "example": 1.2,
+            "type": "number"
+          },
+          "userId": {
+            "example": "abc123",
+            "type": "string"
+          },
+          "vatPercent": {
+            "example": 25.5,
+            "type": "number"
+          }
+        },
+        "required": [
+          "userId",
+          "marginCentsKwh",
+          "transferDayCentsKwh",
+          "transferNightCentsKwh",
+          "taxCentsKwh",
+          "vatPercent",
+          "nightStartHour",
+          "nightEndHour",
+          "timezone",
+          "area"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "description": "API key obtained from the web dashboard. Use as: Authorization: Bearer <api-key>",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Finnish and Nordic spot electricity price API with total price calculation, cheapest window finder, and per-user contract settings.",
+    "title": "Spot Price API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/public/spot": {
+      "get": {
+        "description": "Returns raw spot prices in c/kWh for the requested delivery area. No authentication required.",
+        "parameters": [
+          {
+            "description": "Nord Pool delivery area code",
+            "in": "query",
+            "name": "area",
+            "required": false,
+            "schema": {
+              "default": "FI",
+              "description": "Nord Pool delivery area code",
+              "enum": [
+                "FI",
+                "SE1",
+                "SE2",
+                "SE3",
+                "SE4",
+                "NO1",
+                "NO2",
+                "NO3",
+                "NO4",
+                "NO5",
+                "DK1",
+                "DK2",
+                "EE",
+                "LT",
+                "LV",
+                "AT",
+                "BE",
+                "FR",
+                "GER",
+                "NL",
+                "PL"
+              ],
+              "example": "FI",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSpot"
+                }
+              }
+            },
+            "description": "Spot prices for today and tomorrow (if available)"
+          }
+        },
+        "summary": "Public spot prices (today + tomorrow)",
+        "tags": [
+          "Public"
+        ]
+      }
+    },
+    "/api/v1/me/chart": {
+      "get": {
+        "description": "Returns today's and tomorrow's total prices calculated with the user's contract settings.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChartData"
+                }
+              }
+            },
+            "description": "Chart data for today and tomorrow"
+          }
+        },
+        "summary": "Chart data (total prices)",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v1/me/settings": {
+      "get": {
+        "description": "Returns the authenticated user's electricity contract settings.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSettings"
+                }
+              }
+            },
+            "description": "Current user settings"
+          }
+        },
+        "summary": "Get user settings",
+        "tags": [
+          "User"
+        ]
+      },
+      "put": {
+        "description": "Update one or more electricity contract settings. Only provided fields are changed.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "area": {
+                    "enum": [
+                      "FI",
+                      "SE1",
+                      "SE2",
+                      "SE3",
+                      "SE4",
+                      "NO1",
+                      "NO2",
+                      "NO3",
+                      "NO4",
+                      "NO5",
+                      "DK1",
+                      "DK2",
+                      "EE",
+                      "LT",
+                      "LV",
+                      "AT",
+                      "BE",
+                      "FR",
+                      "GER",
+                      "NL",
+                      "PL"
+                    ],
+                    "example": "FI",
+                    "type": "string"
+                  },
+                  "marginCentsKwh": {
+                    "example": 0.5,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "nightEndHour": {
+                    "description": "Night rate end hour (0-23)",
+                    "example": 7,
+                    "maximum": 23,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "nightStartHour": {
+                    "description": "Night rate start hour (0-23)",
+                    "example": 22,
+                    "maximum": 23,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "taxCentsKwh": {
+                    "example": 2.79372,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "timezone": {
+                    "enum": [
+                      "Europe/Amsterdam",
+                      "Europe/Berlin",
+                      "Europe/Brussels",
+                      "Europe/Copenhagen",
+                      "Europe/Helsinki",
+                      "Europe/Oslo",
+                      "Europe/Paris",
+                      "Europe/Riga",
+                      "Europe/Stockholm",
+                      "Europe/Tallinn",
+                      "Europe/Vienna",
+                      "Europe/Vilnius",
+                      "Europe/Warsaw"
+                    ],
+                    "example": "Europe/Helsinki",
+                    "type": "string"
+                  },
+                  "transferDayCentsKwh": {
+                    "example": 2.5,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "transferNightCentsKwh": {
+                    "example": 1.2,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "vatPercent": {
+                    "description": "VAT percentage (0-100)",
+                    "example": 25.5,
+                    "maximum": 100,
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSettings"
+                }
+              }
+            },
+            "description": "Updated user settings"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Validation error"
+          }
+        },
+        "summary": "Update user settings",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v1/price/all": {
+      "get": {
+        "description": "Returns every currently-known published total price in a single flat list (today always, tomorrow's intervals appended once Nord Pool has published them), so an automation can poll once instead of hitting /today and /tomorrow separately. The response is the same shape as /today: whether tomorrow is included is inferable from the 'end' timestamp. 'available' is true whenever any prices are known and false with an empty 'prices' array only when nothing is published — never an estimate. 'min/max/average' cover ALL currently-known prices, so the span widens as tomorrow publishes (~24h before, ~48h after) rather than being a stable daily figure. No 'expectedAt' hint is emitted here — that is /tomorrow's job. Published prices only — this is not a forecast.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceList"
+                }
+              }
+            },
+            "description": "All currently-known published prices in a single list"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "User settings not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "All currently-known hourly total prices in one list",
+        "tags": [
+          "Price"
+        ]
+      }
+    },
+    "/api/v1/price/cheapest": {
+      "get": {
+        "description": "Finds the cheapest contiguous N-minute window from available future prices. Optionally constrain the search with startTime, endTime, and maxPrice.",
+        "parameters": [
+          {
+            "description": "Window duration in minutes (1-1440)",
+            "in": "query",
+            "name": "duration",
+            "required": true,
+            "schema": {
+              "description": "Window duration in minutes (1-1440)",
+              "example": 180,
+              "maximum": 1440,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Earliest allowed window start (ISO 8601)",
+            "in": "query",
+            "name": "startTime",
+            "required": false,
+            "schema": {
+              "description": "Earliest allowed window start (ISO 8601)",
+              "example": "2026-02-27T14:00:00+02:00",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Latest allowed window end (ISO 8601)",
+            "in": "query",
+            "name": "endTime",
+            "required": false,
+            "schema": {
+              "description": "Latest allowed window end (ISO 8601)",
+              "example": "2026-02-28T06:00:00+02:00",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum allowed total price in c/kWh for each interval in the selected window",
+            "in": "query",
+            "name": "maxPrice",
+            "required": false,
+            "schema": {
+              "description": "Maximum allowed total price in c/kWh for each interval in the selected window",
+              "example": 12,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceWindow"
+                }
+              }
+            },
+            "description": "Cheapest window with price breakdown per interval"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid query parameters"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No price data available or insufficient data for requested window"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Cheapest contiguous window",
+        "tags": [
+          "Price"
+        ]
+      }
+    },
+    "/api/v1/price/forecast": {
+      "get": {
+        "description": "Returns a clearly-labelled price ESTIMATE for the days Nord Pool has not published yet, derived from public Fingrid grid data plus stored price history using simple closed-form math (no ML). Structurally distinct from the real-price endpoints — every money field is named `estimated*` and the response carries `forecast: true`. FI only; other areas return available:false. When data is insufficient the response is degraded/low-confidence rather than a confident guess.",
+        "parameters": [
+          {
+            "description": "Delivery area. The forecast is FI-only; other areas return available:false.",
+            "in": "query",
+            "name": "area",
+            "required": false,
+            "schema": {
+              "default": "FI",
+              "description": "Delivery area. The forecast is FI-only; other areas return available:false.",
+              "enum": [
+                "FI",
+                "SE1",
+                "SE2",
+                "SE3",
+                "SE4",
+                "NO1",
+                "NO2",
+                "NO3",
+                "NO4",
+                "NO5",
+                "DK1",
+                "DK2",
+                "EE",
+                "LT",
+                "LV",
+                "AT",
+                "BE",
+                "FR",
+                "GER",
+                "NL",
+                "PL"
+              ],
+              "example": "FI",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastResponse"
+                }
+              }
+            },
+            "description": "Forecast estimate (check available/degraded/confidence). Non-FI areas return available:false."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastResponse"
+                }
+              }
+            },
+            "description": "User settings not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "FI price forecast (estimate)",
+        "tags": [
+          "Forecast"
+        ]
+      }
+    },
+    "/api/v1/price/history": {
+      "get": {
+        "description": "Returns all stored total prices for the inclusive local date range [from, to]. Totals apply the user's CURRENT contract settings to the historical public spot prices — there is no historical settings versioning. Dates are YYYY-MM-DD interpreted in the user's timezone; the maximum span is 31 days (inclusive). Check the 'available' field: it is false with an empty 'prices' array when no data is stored for the range.",
+        "parameters": [
+          {
+            "description": "Inclusive range start, YYYY-MM-DD, interpreted in the user's timezone.",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "description": "Inclusive range start, YYYY-MM-DD, interpreted in the user's timezone.",
+              "example": "2026-04-01",
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive range end, YYYY-MM-DD, interpreted in the user's timezone.",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "description": "Inclusive range end, YYYY-MM-DD, interpreted in the user's timezone.",
+              "example": "2026-05-01",
+              "format": "date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceList"
+                }
+              }
+            },
+            "description": "Historical prices for the range (check 'available'; false + empty when no data stored)"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid query parameters (bad date, from after to, or span over 31 days)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "User settings not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Historical total prices for a local date range",
+        "tags": [
+          "Price"
+        ]
+      }
+    },
+    "/api/v1/price/now": {
+      "get": {
+        "description": "Returns the total price breakdown for the current 15-minute delivery interval.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotalPrice"
+                }
+              }
+            },
+            "description": "Current total price with full breakdown"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No current price available or settings not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Current total price",
+        "tags": [
+          "Price"
+        ]
+      }
+    },
+    "/api/v1/price/today": {
+      "get": {
+        "description": "Returns all total prices for today, calculated with the user's contract settings.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceList"
+                }
+              }
+            },
+            "description": "Today's prices"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "User settings not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Today's hourly total prices",
+        "tags": [
+          "Price"
+        ]
+      }
+    },
+    "/api/v1/price/tomorrow": {
+      "get": {
+        "description": "Returns tomorrow's total prices if available. Prices are typically published after 12:00 UTC.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceList"
+                }
+              }
+            },
+            "description": "Tomorrow's prices (check 'available' field)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "User settings not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Tomorrow's hourly total prices",
+        "tags": [
+          "Price"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://spot.calmdonut.com"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Electricity price endpoints (API key required)",
+      "name": "Price"
+    },
+    {
+      "description": "FI price forecast — a clearly-labelled estimate, separate from real prices (API key required)",
+      "name": "Forecast"
+    },
+    {
+      "description": "User settings and chart data (session required)",
+      "name": "User"
+    },
+    {
+      "description": "Unauthenticated endpoints",
+      "name": "Public"
+    }
+  ],
+  "webhooks": {}
+}

@@ -3,6 +3,8 @@
 //! `spot-price migrate` applies the database migrations and exits.
 //! `spot-price serve` (the default) serves HTTP and runs the scheduled jobs.
 //! `serve` refuses to start before `migrate` has run.
+//! `spot-price export-openapi <path>` writes the `OpenAPI` document and exits;
+//! it needs no environment and no database.
 
 use std::process::ExitCode;
 use std::time::Duration;
@@ -21,12 +23,33 @@ enum Command {
     Migrate,
 }
 
+/// Writes the `OpenAPI` document to `path`.
+fn export_openapi(path: &str) -> ExitCode {
+    let Ok(text) = spot_price_server::http::openapi::document_json() else {
+        report("spot-price: the OpenAPI document could not be built");
+        return ExitCode::FAILURE;
+    };
+    if std::fs::write(path, text).is_err() {
+        report("spot-price: the OpenAPI document could not be written");
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
-    let command = match std::env::args().nth(1).as_deref() {
+    let mut args = std::env::args().skip(1);
+    let command = match args.next().as_deref() {
         None | Some("serve") => Command::Serve,
         Some("migrate") => Command::Migrate,
+        Some("export-openapi") => {
+            if let (Some(path), None) = (args.next(), args.next()) {
+                return export_openapi(&path);
+            }
+            report("usage: spot-price export-openapi <path>");
+            return ExitCode::from(EXIT_CONFIG);
+        }
         Some(_) => {
-            report("usage: spot-price [serve|migrate]");
+            report("usage: spot-price [serve|migrate|export-openapi <path>]");
             return ExitCode::from(EXIT_CONFIG);
         }
     };

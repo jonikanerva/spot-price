@@ -18,17 +18,24 @@ spot-price-domain.workspace = true
 axum.workspace = true
 croner.workspace = true
 futures-util.workspace = true
+getrandom.workspace = true
 jiff.workspace = true
 jiff-sqlx.workspace = true
+subtle.workspace = true
 reqwest.workspace = true
+scrypt.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+unicode-normalization.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

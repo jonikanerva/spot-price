@@ -90,10 +90,11 @@ pub async fn serve(config: Config) -> Result<(), &'static str> {
         weather: WeatherClient::new(http, urls.openweathermap),
         clock: clock.clone(),
     };
-    let app = router(AppState {
-        pool: pool.clone(),
-        clock: clock.clone(),
-    });
+    let app = router(AppState::new(
+        pool.clone(),
+        clock.clone(),
+        &config.auth_base_url,
+    ));
 
     let listener = TcpListener::bind(config.bind).await.map_err(|_| "bind")?;
     let bound = listener.local_addr().map_err(|_| "bind")?;

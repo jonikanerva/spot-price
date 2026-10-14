@@ -37,6 +37,22 @@ tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 tower-http = { version = "=0.6.11", default-features = false, features = ["catch-panic", "set-header"] }
 tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["registry", "std"] }
+# http-server
+# Random bytes of session tokens, API keys, ids, and password salts. Already
+# in the graph through the RustCrypto crates.
+getrandom = { version = "=0.4.3", default-features = false, features = ["std"] }
+# The Better Auth password hash: scrypt N=16384, r=16, p=1, 64 bytes.
+scrypt = { version = "=0.12.0", default-features = false }
+# The SHA-256 hash of a stored session token. Already in the graph (scrypt).
+sha2 = { version = "=0.11.1", default-features = false }
+# Constant-time comparison of a password hash.
+subtle = { version = "=2.6.1", default-features = false, features = ["std"] }
+# NFKC normalization of a password, like `String.prototype.normalize`.
+# Already in the graph through SQLx.
+unicode-normalization = { version = "=0.1.25", default-features = false, features = ["std"] }
+# The OpenAPI 3.1 document of the API routes (contract/openapi.json).
+utoipa = { version = "=6.0.0", default-features = false, features = ["macros", "preserve_order"] }
+utoipa-axum = "=0.3.0"
 
 # The lints of the default Rust profile (STACK.md §1). Each crate inherits
 # them with `[lints] workspace = true`.
@@ -64,3 +80,18 @@ let_underscore_must_use = "deny"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# http-server
+# A debug build of scrypt takes seconds per password hash. The tests and
+# local development use the optimized code of these crates only.
+[profile.dev.package.scrypt]
+opt-level = 3
+
+[profile.dev.package.salsa20]
+opt-level = 3
+
+[profile.dev.package.pbkdf2]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3

@@ -13,10 +13,11 @@ use tower::ServiceExt as _;
 use crate::common::ts;
 
 async fn get_health(pool: PgPool) -> (StatusCode, Value) {
-    let app = router(AppState {
+    let app = router(AppState::new(
         pool,
-        clock: Arc::new(FixedClock(ts("2026-01-01T00:00:00Z"))),
-    });
+        Arc::new(FixedClock(ts("2026-01-01T00:00:00Z"))),
+        &"http://localhost:3000".parse().unwrap(),
+    ));
     let response = app
         .oneshot(Request::get("/health").body(Body::empty()).unwrap())
         .await

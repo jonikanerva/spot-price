@@ -9,7 +9,11 @@
     reason = "the helpers of this test binary fail a check by panicking"
 )]
 
+mod account;
+mod auth_vectors;
 mod common;
+mod contract;
+mod golden_http;
 mod health;
 mod jobs;
 mod migrations;

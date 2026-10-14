@@ -9,7 +9,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 
-use super::AppState;
+use super::{AppState, only};
 use crate::db;
 
 /// The deadline of the `SELECT 1` check, below the 30 s Railway timeout.
@@ -22,7 +22,7 @@ pub struct Health {
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/health", get(health))
+    Router::new().route("/health", only(get(health)))
 }
 
 /// 200 `{"status":"ok","db":"connected"}` when `SELECT 1` returns 1.
