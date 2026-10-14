@@ -1,3 +1,6 @@
+/target
+/.tmp
+/bin
 # Dependencies
 node_modules/
 .pnpm-store/

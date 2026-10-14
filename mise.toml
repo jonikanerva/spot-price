@@ -1,25 +1,86 @@
-# Development environment for spot-price.
+# Source of truth for the tool versions and the command surface (STACK.md §1
+# and §3). The Rust version comes only from rust-toolchain.toml.
 #
-# mise PREPARES the environment; package.json RUNS the project.
-# Pins the exact toolchain so every machine builds and tests identically:
-#   mise install      provision the tools below (Node, pnpm, Python)
-#   mise run setup     install dependencies + Playwright browsers
-#   pnpm db:up         start the local PostgreSQL 17 database (Docker)
-#
-# Versions mirror .nvmrc, package.json "engines"/"packageManager", and
-# docker-compose.yml. See README.md -> Local development.
+# A fresh machine: install mise and rustup, then run `mise trust` and
+# `mise run setup` in the repository root.
+[settings]
+idiomatic_version_file_enable_tools = ["rust"]
 
 [tools]
-node = "24.15.0"   # matches .nvmrc and package.json "engines"
-pnpm = "10.30.0"   # matches package.json "packageManager"
-python = "3.13"    # scripts/smoke-local.sh parses headers via python3
+# Node and pnpm run only the Playwright journeys and Prettier. They do not
+# ship in the production image.
+node = "24.15.0"
+pnpm = "10.30.0"
+# The PostgreSQL major version of production (Railway Postgres 17).
+"conda:postgresql" = "17.11"
+# Keep the options equal to the pin of the owner's other projects; a different
+# option set makes mise reinstall the tool on every project switch.
+"cargo:sqlx-cli" = { version = "0.9.0", default-features = false, features = "postgres,rustls", locked = true }
+cargo-deny = "0.20.2"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.146"
+"github:Boshen/cargo-shear" = "1.14.0"
+gitleaks = "8.30.1"
 
-# `setup` stays a mise task: `pnpm setup` is a reserved pnpm builtin and would
-# shadow a package.json script of the same name. db:up/db:down live in
-# package.json (no mise delegators — one source of truth per command).
+# The tests and the query checks use only the isolated server of
+# scripts/test-db.sh. Their tasks set DATABASE_URL themselves, so a
+# DATABASE_URL in the shell or in .env.local cannot reach them.
+#
+# The local settings of the service are in .env.local, not .env: the SQLx
+# query macros parse every .env file in the crate directory and its parents
+# at compile time.
+
 [tasks.setup]
-description = "Install dependencies and Playwright browsers"
+description = "Install the pinned tools, the locked dependencies, and the Playwright browser"
 run = [
-  "pnpm install",
-  "pnpm exec playwright install",
+  "mise install",
+  "cargo fetch --locked",
+  "pnpm install --frozen-lockfile",
+  "pnpm exec playwright install chromium",
+]
+
+[tasks."db:start"]
+description = "Start the isolated test PostgreSQL on 127.0.0.1:55436 and migrate it"
+run = "scripts/test-db.sh start"
+
+[tasks."db:stop"]
+description = "Stop the isolated test PostgreSQL"
+run = "scripts/test-db.sh stop"
+
+[tasks.format]
+description = "Format the Rust sources and the browser files"
+run = ["cargo fmt --all", "pnpm exec prettier --write ."]
+
+[tasks.format-check]
+description = "Fail on a formatting difference; change no file"
+run = ["cargo fmt --all -- --check", "pnpm exec prettier --check ."]
+
+[tasks.lint]
+description = "Clippy on every target, warnings are errors"
+env = { SQLX_OFFLINE = "true" }
+run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+
+[tasks."sqlx:prepare"]
+description = "Regenerate .sqlx query metadata from the isolated database"
+depends = ["db:start"]
+env = { DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_dev" }
+run = "cargo sqlx prepare --no-dotenv --workspace -- --all-targets --locked"
+
+[tasks."sqlx:check"]
+description = "Fail when .sqlx differs from the queries and the migrated schema"
+depends = ["db:start"]
+env = { DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_dev" }
+run = "cargo sqlx prepare --no-dotenv --workspace --check -- --all-targets --locked"
+
+[tasks.build]
+description = "The locked release build with the committed query metadata"
+env = { SQLX_OFFLINE = "true" }
+run = "cargo build --release --locked --package spot-price-server"
+
+[tasks.test]
+description = "Nextest and the doc tests against the isolated database"
+depends = ["db:start"]
+env = { DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_dev", SQLX_OFFLINE = "true" }
+run = [
+  "cargo nextest run --workspace --locked --no-tests=fail",
+  "cargo test --doc --workspace --locked",
 ]

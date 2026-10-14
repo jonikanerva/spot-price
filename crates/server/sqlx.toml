@@ -1,0 +1,3 @@
+# Type overrides of the SQLx query macros (STACK.md §10).
+[macros.type-overrides]
+'TIMESTAMPTZ' = "jiff_sqlx::Timestamp"

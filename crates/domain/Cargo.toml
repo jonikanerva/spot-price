@@ -1,0 +1,20 @@
+[package]
+name = "spot-price-domain"
+version = "0.1.0"
+description = "Price math, local-day ranges, delivery areas, and the FI forecast, without I/O"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# No Axum, Tokio, SQLx, or reqwest here (STACK.md §0).
+[dependencies]
+jiff.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
