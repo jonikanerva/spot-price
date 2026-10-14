@@ -37,6 +37,9 @@ PGOPTIONS='-c default_transaction_read_only=on' \
 - The precheck prints `typescript_migrations|1,2,3,4,5,6,7` and `0` for each
   `user_settings_invalid_*` count.
 - `DATABASE_URL` has no `sslmode`, or `sslmode=prefer` or `sslmode=disable`.
+  The service has no `PGSSLMODE` variable, or it is `prefer` or `disable`.
+- The database certificate is version 3 (`STACK.md` §15 has the `openssl`
+  command). The Rust service rejects a version 1 certificate.
 - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`, with no trailing
   slash.
 
