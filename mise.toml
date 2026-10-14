@@ -47,12 +47,12 @@ description = "Stop the isolated test PostgreSQL"
 run = "scripts/test-db.sh stop"
 
 [tasks.format]
-description = "Format the Rust sources and the browser files"
-run = ["cargo fmt --all", "pnpm exec prettier --write ."]
+description = "Format the Rust sources and the Prettier files (TypeScript, Markdown, JSON, YAML)"
+run = ["cargo fmt --all", "pnpm exec prettier --write . --log-level warn"]
 
 [tasks.format-check]
 description = "Fail on a formatting difference; change no file"
-run = ["cargo fmt --all -- --check", "pnpm exec prettier --check ."]
+run = ["cargo fmt --all -- --check", "pnpm exec prettier --check . --log-level warn"]
 
 [tasks.lint]
 description = "Clippy on every target, warnings are errors"
@@ -84,3 +84,71 @@ run = [
   "cargo nextest run --workspace --locked --no-tests=fail",
   "cargo test --doc --workspace --locked",
 ]
+
+[tasks."contract:check"]
+description = "Fail when contract/openapi.json differs from the Rust HTTP types; change no file"
+env = { SQLX_OFFLINE = "true" }
+run = '''
+set -eu
+exported="$(mktemp)"
+trap 'rm -f "$exported"' EXIT
+cargo run --locked --quiet --package spot-price-server -- export-openapi "$exported"
+if ! cmp -s "$exported" contract/openapi.json; then
+  echo "contract:check: contract/openapi.json differs from the exported document" >&2
+  diff -u contract/openapi.json "$exported" | head -n 40 >&2 || true
+  exit 1
+fi
+'''
+
+[tasks."scan:secrets"]
+description = "Gitleaks on the history, the staged changes, and the unstaged changes of tracked files"
+# Untracked files such as .env.local are not scanned.
+run = [
+  "gitleaks git --no-banner --redact --log-level warn --config .gitleaks.toml .",
+  "gitleaks git --staged --no-banner --redact --log-level warn --config .gitleaks.toml .",
+  "gitleaks git --pre-commit --no-banner --redact --log-level warn --config .gitleaks.toml .",
+]
+
+[tasks."scan:deps"]
+description = "cargo-deny (advisories, bans, licences, sources), cargo-shear, and pnpm audit"
+run = [
+  "cargo deny --locked check",
+  "cargo shear --deny-warnings",
+  "pnpm audit --audit-level high",
+]
+
+# The browser journeys run against the release binary on the database
+# spot_price_e2e of the isolated test server (playwright.config.ts).
+[tasks.e2e]
+description = "Build the release binary, reset and seed the e2e database, and run the Playwright journeys"
+depends = ["db:start", "build"]
+env = { E2E_DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_e2e" }
+run = '''
+set -eu
+bin="$(mise where conda:postgresql)/bin"
+psql() { "$bin/psql" --host=127.0.0.1 --port=55436 --username=postgres --quiet --set=ON_ERROR_STOP=1 "$@"; }
+psql --dbname=postgres \
+  --command="DROP DATABASE IF EXISTS spot_price_e2e WITH (FORCE)" \
+  --command="CREATE DATABASE spot_price_e2e"
+DATABASE_URL="$E2E_DATABASE_URL" LOG_FORMAT=text ./target/release/spot-price migrate
+psql --dbname=spot_price_e2e --file=e2e/seed.sql
+pnpm exec playwright test
+'''
+
+[tasks.verify]
+description = "The full verification (VERIFY_CMD); stops at the first failed step"
+run = [
+  { task = "format-check" },
+  { task = "lint" },
+  { task = "sqlx:check" },
+  { task = "contract:check" },
+  { task = "scan:secrets" },
+  { task = "scan:deps" },
+  { task = "build" },
+  { task = "test" },
+  { task = "e2e" },
+]
+
+[tasks.smoke]
+description = "Smoke check of a locally running server (BASE_URL, default http://localhost:3000); never production"
+run = "scripts/smoke-local.sh"

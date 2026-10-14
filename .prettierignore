@@ -10,3 +10,6 @@ crates/server/tests/fixtures/ui-home.html
 contract/openapi.json
 # Generated SQLx query metadata.
 .sqlx/
+# Generated golden files: the recorders under scripts/golden/ own their bytes.
+crates/*/tests/golden/
+crates/tools/data/

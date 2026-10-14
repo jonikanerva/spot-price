@@ -1,0 +1,17 @@
+# Gitleaks configuration for `mise run scan:secrets`.
+# The default rules apply. The allowlist names only files whose matches are
+# fixed fake test values, never a real credential.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fixed fake test values"
+paths = [
+  # Recorded HTTP golden files: fake session tokens and API keys from a
+  # seeded random source.
+  '''^crates/server/tests/golden/''',
+  # A fake API key in a test of the removed TypeScript service. The file
+  # stays in the Git history.
+  '''^src/forecast-route\.test\.ts$''',
+]
