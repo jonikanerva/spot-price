@@ -49,8 +49,17 @@ server start.
   sources. Railpack then detects the Node service again. A Railway rollback
   restores the old image at once.
 - After a revert, `_sqlx_migrations` and `app_sessions` stay. The TypeScript
-  service does not read them. Users sign in again after a revert, because
-  the TypeScript service does not read `app_sessions`.
+  service does not read them. A session created by the Rust service does
+  not work after a revert, because the TypeScript service does not read
+  `app_sessions`. A Better Auth session that has not expired still works.
+- The TypeScript service cannot start on a database that the Rust service
+  created from empty: its migration `006` fails. Production was created by
+  the TypeScript service, so this does not affect the revert path.
+- Evidence (2026-10-14, local): on a database created by the TypeScript
+  service, the Rust `migrate` added only `_sqlx_migrations` and
+  `app_sessions`. A user created on each service signed in on the other,
+  with the same password and the same API key. The TypeScript migrator then
+  applied nothing.
 - During a deploy, the old and the new service run their jobs for a short
   time. Both write the same values. The primary keys, `ON CONFLICT`, and the
   change guard make this safe.

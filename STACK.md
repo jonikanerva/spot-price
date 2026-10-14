@@ -553,8 +553,8 @@ and an API key.
 - **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. The
   revert removes `railpack.json`, so Railpack detects the Node service
   again.
-- **Data:** a revert needs no data change (docs/adr/0001). Users sign in
-  again after a revert. `_sqlx_migrations` and `app_sessions` stay and are
+- **Data:** a revert needs no data change (docs/adr/0001). Sessions created
+  by the Rust service end at a revert; users sign in again. `_sqlx_migrations` and `app_sessions` stay and are
   harmless.
 - **Database loss:** restore a Railway PostgreSQL backup.
 
