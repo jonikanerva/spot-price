@@ -1,0 +1,78 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT dataset_id, issued_at, start_time, end_time, value\n        FROM fingrid_forecasts\n        WHERE dataset_id = $1 AND start_time >= $2 AND start_time < $3\n        ORDER BY start_time, issued_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dataset_id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "fingrid_forecasts",
+            "name": "dataset_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "issued_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "fingrid_forecasts",
+            "name": "issued_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "start_time",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "fingrid_forecasts",
+            "name": "start_time"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "end_time",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "fingrid_forecasts",
+            "name": "end_time"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "value",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "fingrid_forecasts",
+            "name": "value"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c81c49560470cb2e7235ea37289ffdbd41b6d139184ae6aaa7fd5a4f0029e508"
+}

@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO weather_daily_forecasts\n              (point_id, issued_at, target_date, target_dt,\n               temp_morn, temp_day, temp_eve, temp_night, temp_min, temp_max,\n               clouds, uvi, sunrise, sunset)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\n            ON CONFLICT (point_id, issued_at, target_date) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Date",
+        "Timestamptz",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "10d4a7598579f3b61f6552058fdbeff38d1029b10086d0f141196f5c76febee1"
+}

@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,\n               tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area\n        FROM user_settings\n        WHERE user_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "margin_cents_kwh",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "margin_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "transfer_day_cents_kwh",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "transfer_day_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "transfer_night_cents_kwh",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "transfer_night_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "tax_cents_kwh",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "tax_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "vat_percent",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "vat_percent"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "night_start_hour",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "night_start_hour"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "night_end_hour",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "night_end_hour"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "timezone",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "timezone"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "area",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "area"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "82c345747a69dad1bb3b2c01ae0d6a1b87cf1532077245166c4695d58487705e"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM weather_forecasts WHERE issued_at < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7df704091b8dc6333d878a15d5d68179c40f3780e7b2bcacc2907394d4f9c301"
+}

@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO prices (delivery_start, delivery_end, price_eur_mwh, area)\n            VALUES ($1, $2, $3, $4)\n            ON CONFLICT (delivery_start, area)\n            DO UPDATE SET delivery_end = EXCLUDED.delivery_end,\n                          price_eur_mwh = EXCLUDED.price_eur_mwh,\n                          fetched_at = NOW()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Float8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b3e762460db1a1a3c9745234557b8c9c71e5ac1b73512dcf065a576fa698c6da"
+}

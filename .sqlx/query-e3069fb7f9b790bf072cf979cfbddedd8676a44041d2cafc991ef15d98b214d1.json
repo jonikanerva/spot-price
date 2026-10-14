@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM fingrid_actuals WHERE start_time < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e3069fb7f9b790bf072cf979cfbddedd8676a44041d2cafc991ef15d98b214d1"
+}
