@@ -296,12 +296,57 @@ fn actual_records(inputs: &IssueTimeInputs, id: DatasetId) -> Vec<GridRecord> {
     )
 }
 
+/// The forecast options that a backtest can vary. The default is the
+/// production model. The sanity bound and the bands stay at their
+/// [`ForecastOptions`] defaults: neither changes a point prediction here.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ForecastVariant {
+    pub ridge_lambda: f64,
+    pub wind_extension_weeks: u32,
+    pub consumption_extension_weeks: u32,
+}
+
+impl Default for ForecastVariant {
+    fn default() -> Self {
+        let production = ForecastOptions::default();
+        Self {
+            ridge_lambda: production.ridge_lambda,
+            wind_extension_weeks: production.wind_extension_weeks,
+            consumption_extension_weeks: production.consumption_extension_weeks,
+        }
+    }
+}
+
+impl ForecastVariant {
+    /// The pipeline options of this variant.
+    #[must_use]
+    pub fn forecast_options(self) -> ForecastOptions<'static> {
+        ForecastOptions {
+            ridge_lambda: self.ridge_lambda,
+            wind_extension_weeks: self.wind_extension_weeks,
+            consumption_extension_weeks: self.consumption_extension_weeks,
+            ..ForecastOptions::default()
+        }
+    }
+}
+
 /// Runs the production forecast with the issue-time inputs and the default
 /// options.
 ///
 /// # Errors
 /// [`OutOfRange`] when the series window leaves the `Timestamp` range.
 pub fn forecast_at_issue_time(inputs: &IssueTimeInputs) -> Result<IssueForecast, OutOfRange> {
+    forecast_at_issue_time_with(inputs, ForecastVariant::default())
+}
+
+/// Runs the forecast of `variant` with the issue-time inputs.
+///
+/// # Errors
+/// [`OutOfRange`] when the series window leaves the `Timestamp` range.
+pub fn forecast_at_issue_time_with(
+    inputs: &IssueTimeInputs,
+    variant: ForecastVariant,
+) -> Result<IssueForecast, OutOfRange> {
     let series_start_ms = inputs.origin_ms;
     let series_end_ms = series_start_ms + FORECAST_DAYS * DAY_MS;
     // The forecast reads only the neighbour areas it knows by exact code.
@@ -325,7 +370,7 @@ pub fn forecast_at_issue_time(inputs: &IssueTimeInputs) -> Result<IssueForecast,
             series_start: instant(series_start_ms)?,
             series_end: instant(series_end_ms)?,
         },
-        &ForecastOptions::default(),
+        &variant.forecast_options(),
     );
     Ok(IssueForecast {
         predicted: result
@@ -447,6 +492,7 @@ pub struct BacktestOptions {
     /// When set, only these origins (UTC ms) are scored, and the pre-vintage
     /// skip does not apply.
     pub restrict_origins_ms: Option<BTreeSet<i64>>,
+    pub variant: ForecastVariant,
 }
 
 #[derive(Debug, Default)]
@@ -618,7 +664,7 @@ pub fn run_backtest(
             if !find_leaking_inputs(&inputs).is_empty() {
                 leak_free = false;
             }
-            let fc = forecast_at_issue_time(&inputs)?;
+            let fc = forecast_at_issue_time_with(&inputs, options.variant)?;
             scoring.score_origin(&inputs, &fc, &realized);
         }
     }
@@ -788,7 +834,7 @@ pub fn compare_optimism(data: &BacktestData) -> Result<OptimismComparison, OutOf
         data,
         &BacktestOptions {
             as_of_mode: Some(AsOfMode::IssueTime),
-            restrict_origins_ms: None,
+            ..BacktestOptions::default()
         },
     )?;
     let leaked = run_backtest(
@@ -796,6 +842,7 @@ pub fn compare_optimism(data: &BacktestData) -> Result<OptimismComparison, OutOf
         &BacktestOptions {
             as_of_mode: Some(AsOfMode::Latest),
             restrict_origins_ms: Some(honest.scored_origins_ms.clone()),
+            ..BacktestOptions::default()
         },
     )?;
     let delta_by_horizon = std::array::from_fn(|h| HorizonDelta {
@@ -825,5 +872,83 @@ pub fn compare_optimism(data: &BacktestData) -> Result<OptimismComparison, OutOf
         ladder_diagnostic,
         leaked,
         honest,
+    })
+}
+
+/// Deltas of one horizon, B − A. A positive rank delta means B ranks
+/// better; a negative MAE delta means B is more accurate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HorizonVariantDelta {
+    pub delta_spearman: Option<f64>,
+    pub delta_precision_at_n_cheap: Option<f64>,
+    pub delta_precision_at_n_peak: Option<f64>,
+    pub delta_mae: Option<f64>,
+}
+
+/// Arm A and arm B scored on the same issue-time origins.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariantComparison {
+    pub variant_a: ForecastVariant,
+    pub variant_b: ForecastVariant,
+    pub a: BacktestSummary,
+    pub b: BacktestSummary,
+    /// The origins that A scored. B runs only on these origins.
+    pub shared_origins: usize,
+    /// True when B scored exactly the origins of A, with equal pair counts
+    /// per horizon. Otherwise the deltas do not compare the same targets and
+    /// are not a verdict.
+    pub origins_match: bool,
+    /// Indexed like [`HORIZON_LABELS`].
+    pub delta_by_horizon: [HorizonVariantDelta; 3],
+}
+
+/// Runs the honest issue-time backtest for arm `a`, then for arm `b` on the
+/// origins that `a` scored. Delta = B − A.
+///
+/// # Errors
+/// [`OutOfRange`] when a forecast window leaves the `Timestamp` range.
+pub fn compare_variants(
+    data: &BacktestData,
+    a: ForecastVariant,
+    b: ForecastVariant,
+) -> Result<VariantComparison, OutOfRange> {
+    let run_a = run_backtest(
+        data,
+        &BacktestOptions {
+            as_of_mode: Some(AsOfMode::IssueTime),
+            restrict_origins_ms: None,
+            variant: a,
+        },
+    )?;
+    let run_b = run_backtest(
+        data,
+        &BacktestOptions {
+            as_of_mode: Some(AsOfMode::IssueTime),
+            restrict_origins_ms: Some(run_a.scored_origins_ms.clone()),
+            variant: b,
+        },
+    )?;
+    let delta_by_horizon = std::array::from_fn(|h| {
+        let (ma, mb) = (&run_a.by_horizon[h], &run_b.by_horizon[h]);
+        HorizonVariantDelta {
+            delta_spearman: sub(mb.spearman, ma.spearman),
+            delta_precision_at_n_cheap: sub(mb.precision_at_n_cheap, ma.precision_at_n_cheap),
+            delta_precision_at_n_peak: sub(mb.precision_at_n_peak, ma.precision_at_n_peak),
+            delta_mae: sub(mb.mae, ma.mae),
+        }
+    });
+    Ok(VariantComparison {
+        variant_a: a,
+        variant_b: b,
+        shared_origins: run_a.scored_origins_ms.len(),
+        origins_match: run_a.scored_origins_ms == run_b.scored_origins_ms
+            && run_a
+                .by_horizon
+                .iter()
+                .zip(&run_b.by_horizon)
+                .all(|(ma, mb)| ma.pairs == mb.pairs),
+        delta_by_horizon,
+        a: run_a,
+        b: run_b,
     })
 }

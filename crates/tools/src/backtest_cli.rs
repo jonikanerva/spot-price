@@ -1,19 +1,22 @@
 //! `spot-price-tools backtest`: replay a fixture (`--data`) or score the
 //! database (`--db`). With `--db`, `--export` writes a fixture snapshot and
-//! `--compare` measures the vintage-leak optimism. Exit codes: 0 for a
-//! verdict, 1 for thin data or an error, 2 for usage.
+//! `--compare` measures the vintage-leak optimism. With either source, `--ab`
+//! scores the production model (A) and a variant (B) on the same origins.
+//! Exit codes: 0 for a verdict, 1 for thin data or an error, 2 for usage.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use jiff::Timestamp;
-use spot_price_domain::forecast::{DeriveOptions, derive_band_offsets, observed_coverage_of};
+use spot_price_domain::forecast::{
+    DeriveOptions, FLOOR_HISTORY_DAYS, derive_band_offsets, observed_coverage_of,
+};
 use spot_price_domain::js::string_to_number;
 use spot_price_domain::price::eur_mwh_to_cents_kwh;
 
 use crate::backtest::{
-    BacktestOptions, HORIZON_LABELS, OptimismComparison, PRECISION_N_QUARTERS, compare_optimism,
-    run_backtest,
+    BacktestOptions, ForecastVariant, HORIZON_LABELS, OptimismComparison, PRECISION_N_QUARTERS,
+    VariantComparison, compare_optimism, compare_variants, run_backtest,
 };
 use crate::cli::{Context, Output, flag_value, has_flag};
 use crate::data::{BacktestData, DatasetId, GridActual, PricePoint, Vintage, load_fixture};
@@ -33,7 +36,19 @@ pub const SCORED_AREAS: [&str; 4] = ["FI", "SE1", "SE3", "EE"];
 /// Above this sparse-ladder fraction the leak delta is likely understated.
 const SPARSE_WARN: f64 = 0.2;
 
-const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>] [--compare] [--db-url <url>]";
+/// The largest extension window that `--ab` accepts. The served forecast
+/// reads Fingrid actuals only from [`FLOOR_HISTORY_DAYS`] before the series
+/// start, but the backtest passes all earlier actuals. A longer window would
+/// score data that production never sees.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "FLOOR_HISTORY_DAYS / 7 is a small positive number"
+)]
+pub const MAX_EXTENSION_WEEKS: u32 = (FLOOR_HISTORY_DAYS / 7) as u32;
+
+const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>] [--compare] [--db-url <url>] [--ab <key=value[,key=value]>]
+  --ab  paired A/B: A = production model, B = production with these overrides, scored on the same origins.
+        keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks. Not with --compare.";
 
 /// One stored day-ahead price in EUR/MWh.
 #[derive(Debug, Clone, PartialEq)]
@@ -103,6 +118,74 @@ pub fn parse_window_days(raw: Option<&str>) -> Result<i64, ToolError> {
         reason = "value is a whole number in 1..=1e9"
     )]
     Ok(value as i64)
+}
+
+/// `--ab <key=value[,key=value]>`: the production options with overrides.
+/// `ridge_lambda` is a finite number ≥ 0. The `*_extension_weeks` keys are
+/// whole numbers in `0..=MAX_EXTENSION_WEEKS`. A key may appear once.
+///
+/// # Errors
+/// [`ToolError::Argument`] for an unknown or repeated key, or a bad value.
+pub fn parse_variant(raw: &str) -> Result<ForecastVariant, ToolError> {
+    let mut variant = ForecastVariant::default();
+    let mut seen: Vec<&str> = Vec::new();
+    for item in raw.split(',') {
+        let Some((key, value)) = item.split_once('=') else {
+            return Err(ToolError::Argument(format!(
+                "--ab expects key=value pairs separated by commas, got \"{raw}\""
+            )));
+        };
+        let (key, value) = (key.trim(), value.trim());
+        if seen.contains(&key) {
+            return Err(ToolError::Argument(format!(
+                "--ab sets {key} more than once"
+            )));
+        }
+        match key {
+            "ridge_lambda" => variant.ridge_lambda = parse_ridge_lambda(value)?,
+            "wind_extension_weeks" => variant.wind_extension_weeks = parse_weeks(key, value)?,
+            "consumption_extension_weeks" => {
+                variant.consumption_extension_weeks = parse_weeks(key, value)?;
+            }
+            _ => {
+                return Err(ToolError::Argument(format!(
+                    "--ab key must be ridge_lambda, wind_extension_weeks, or consumption_extension_weeks, got \"{key}\""
+                )));
+            }
+        }
+        seen.push(key);
+    }
+    Ok(variant)
+}
+
+fn parse_ridge_lambda(value: &str) -> Result<f64, ToolError> {
+    let lambda = string_to_number(value);
+    if value.is_empty() || !lambda.is_finite() || lambda < 0.0 {
+        return Err(ToolError::Argument(format!(
+            "--ab ridge_lambda must be a finite number >= 0, got \"{value}\""
+        )));
+    }
+    Ok(lambda)
+}
+
+fn parse_weeks(key: &str, value: &str) -> Result<u32, ToolError> {
+    let weeks = string_to_number(value);
+    if value.is_empty()
+        || !weeks.is_finite()
+        || weeks.fract() != 0.0
+        || weeks < 0.0
+        || weeks > f64::from(MAX_EXTENSION_WEEKS)
+    {
+        return Err(ToolError::Argument(format!(
+            "--ab {key} must be a whole number from 0 to {MAX_EXTENSION_WEEKS}, got \"{value}\""
+        )));
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "weeks is a whole number in 0..=MAX_EXTENSION_WEEKS"
+    )]
+    Ok(weeks as u32)
 }
 
 /// `v.toFixed(digits)`, or `n/a`.
@@ -295,6 +378,154 @@ fn print_compare_table(cmp: &OptimismComparison, out: &mut Output) {
     out.log("");
 }
 
+/// Prints the paired A/B comparison of the production model (A) and
+/// `variant` (B); returns false for thin data or unpaired origins.
+///
+/// # Errors
+/// [`ToolError`] when a forecast window leaves the `Timestamp` range.
+pub fn print_variant_compare(
+    data: &BacktestData,
+    variant: ForecastVariant,
+    out: &mut Output,
+) -> Result<bool, ToolError> {
+    let cmp = compare_variants(data, ForecastVariant::default(), variant)?;
+    let thin = is_thin_data(cmp.shared_origins);
+    if thin {
+        out.warn(&format!(
+            "WARNING: only {} shared origins (need {MIN_SCOREABLE_ORIGINS}) — the delta is not yet a verdict.",
+            cmp.shared_origins
+        ));
+    }
+    if !cmp.origins_match {
+        out.warn("WARNING: arm B did not score the same origins and targets as arm A — the deltas are not a verdict.");
+    }
+    if cmp.a.fallback_origins != cmp.b.fallback_origins {
+        out.warn(&format!(
+            "WARNING: fallback origins differ (A {}, B {}) — the rank means cover different origins.",
+            cmp.a.fallback_origins, cmp.b.fallback_origins
+        ));
+    }
+    print_variant_header(&cmp, out);
+    print_variant_table(&cmp, out);
+    Ok(!thin && cmp.origins_match)
+}
+
+fn variant_label(v: ForecastVariant) -> String {
+    format!(
+        "ridge_lambda={} wind_extension_weeks={} consumption_extension_weeks={}",
+        v.ridge_lambda, v.wind_extension_weeks, v.consumption_extension_weeks
+    )
+}
+
+fn print_variant_header(cmp: &VariantComparison, out: &mut Output) {
+    let (a, b) = (&cmp.a, &cmp.b);
+    out.log("\nPaired A/B backtest (issue-time keyed; A = production, B = variant)");
+    out.log(&format!(
+        "  arm A:               {}",
+        variant_label(cmp.variant_a)
+    ));
+    out.log(&format!(
+        "  arm B:               {}",
+        variant_label(cmp.variant_b)
+    ));
+    out.log(&format!(
+        "  shared origins:      {}  (pre-vintage skipped: {})",
+        cmp.shared_origins, a.pre_vintage_origins
+    ));
+    out.log(&format!(
+        "  scored window:       {} … {}  ({} days)",
+        iso_or_na(a.scored_window_start_ms),
+        iso_or_na(a.scored_window_end_ms),
+        to_fixed(a.scored_window_span_days, 1)
+    ));
+    out.log(&format!("  origins paired:      {}", cmp.origins_match));
+    out.log(&format!(
+        "  leak-free:           A {}  B {}",
+        a.leak_free, b.leak_free
+    ));
+    out.log(&format!(
+        "  fallback origins:    A {}  B {}",
+        a.fallback_origins, b.fallback_origins
+    ));
+
+    out.log("\n  CAVEATS (read before quoting any number):");
+    out.log("   - SIGN: delta = B − A. Rank metrics: positive ⇒ B ranks better. MAE: negative ⇒ B is more accurate.");
+    out.log(&format!(
+        "   - N={} DAILY origins, strongly autocorrelated → treat as DIRECTIONAL, not a precise interval (no CI is reported).",
+        cmp.shared_origins
+    ));
+    out.log("   - This report gives deltas, not a verdict. Fix the per-horizon threshold in the issue BEFORE the run.");
+}
+
+fn print_variant_table(cmp: &VariantComparison, out: &mut Output) {
+    let (a, b) = (&cmp.a, &cmp.b);
+    out.log(&format!(
+        "\n  {:<20}  {:>8}  {:>8}  {:>8}",
+        "overall", "A", "B", "delta"
+    ));
+    let mut overall = |name: &str, va: Option<f64>, vb: Option<f64>| {
+        out.log(&format!(
+            "  {name:<20}  {:>8}  {:>8}  {:>8}",
+            fmt(va, 3),
+            fmt(vb, 3),
+            fmt(sub(vb, va), 3)
+        ));
+    };
+    overall("MAE (c/kWh)", a.model_mae, b.model_mae);
+    overall("sMAPE", a.model_smape, b.model_smape);
+    overall("rMAE last_week", a.r_mae.last_week, b.r_mae.last_week);
+    overall(
+        "rMAE last_pub_day",
+        a.r_mae.last_published_day,
+        b.r_mae.last_published_day,
+    );
+
+    out.log(&format!(
+        "\n  per horizon (precision@N over the cheapest/peak {PRECISION_N_QUARTERS} quarters = {}h; delta = B − A):",
+        PRECISION_N_QUARTERS / 4
+    ));
+    out.log(&format!(
+        "    {:<7}  {:>5}  {:<16}  {:>8}  {:>8}  {:>8}",
+        "horizon", "pairs", "metric", "A", "B", "delta"
+    ));
+    let rows = HORIZON_LABELS
+        .iter()
+        .zip(cmp.a.by_horizon.iter().zip(&cmp.b.by_horizon))
+        .zip(&cmp.delta_by_horizon);
+    for ((label, (a, b)), d) in rows {
+        let metrics = [
+            ("Spearman", a.spearman, b.spearman, d.delta_spearman),
+            (
+                "P@N-cheap",
+                a.precision_at_n_cheap,
+                b.precision_at_n_cheap,
+                d.delta_precision_at_n_cheap,
+            ),
+            (
+                "P@N-peak",
+                a.precision_at_n_peak,
+                b.precision_at_n_peak,
+                d.delta_precision_at_n_peak,
+            ),
+            ("MAE (c/kWh, ref)", a.mae, b.mae, d.delta_mae),
+        ];
+        for (i, (name, va, vb, delta)) in metrics.into_iter().enumerate() {
+            let (horizon, pairs) = if i == 0 {
+                ((*label).to_owned(), a.pairs.to_string())
+            } else {
+                (String::new(), String::new())
+            };
+            out.log(&format!(
+                "    {horizon:<7}  {pairs:>5}  {name:<16}  {:>8}  {:>8}  {:>8}",
+                fmt(va, 3),
+                fmt(vb, 3),
+                fmt(delta, 3)
+            ));
+        }
+    }
+    out.log("");
+}
+
 /// `Date.prototype.toISOString` of a UTC ms instant, or `n/a`.
 pub(crate) fn iso_or_na(ms: Option<i64>) -> String {
     ms.and_then(|ms| Timestamp::from_millisecond(ms).ok())
@@ -319,10 +550,26 @@ pub(crate) fn database_url(
 /// # Errors
 /// [`ToolError`] for an unreadable fixture, a bad flag, or a database error.
 pub fn run(args: &[String], ctx: &Context<'_>, out: &mut Output) -> Result<i32, ToolError> {
-    // `--data` wins over every other flag, like the TypeScript CLI.
+    let variant = if has_flag(args, "--ab") {
+        let raw = flag_value(args, "--ab")
+            .ok_or_else(|| ToolError::Argument("--ab needs a key=value list".to_owned()))?;
+        if has_flag(args, "--compare") {
+            return Err(ToolError::Argument(
+                "--ab and --compare cannot be used together".to_owned(),
+            ));
+        }
+        Some(parse_variant(raw)?)
+    } else {
+        None
+    };
+
+    // `--data` wins over every other flag except `--ab`, like the TypeScript CLI.
     if let Some(file) = flag_value(args, "--data") {
         let data = load_fixture(Path::new(file))?;
-        let ok = print_report(&data, out)?;
+        let ok = match variant {
+            Some(variant) => print_variant_compare(&data, variant, out)?,
+            None => print_report(&data, out)?,
+        };
         return Ok(i32::from(!ok));
     }
     if !has_flag(args, "--db") {
@@ -344,7 +591,9 @@ pub fn run(args: &[String], ctx: &Context<'_>, out: &mut Output) -> Result<i32, 
         out.log(&format!("Exported {} prices → {file}", data.prices.len()));
     }
 
-    let ok = if has_flag(args, "--compare") {
+    let ok = if let Some(variant) = variant {
+        print_variant_compare(&data, variant, out)?
+    } else if has_flag(args, "--compare") {
         print_compare(&data, out)?
     } else {
         print_report(&data, out)?
