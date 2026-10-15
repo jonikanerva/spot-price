@@ -220,6 +220,16 @@ on the blocking pool behind a semaphore of two.
   at the first failed step. The Playwright journeys are part of `verify`.
 - **Other tasks:** `db:start` / `db:stop`, `sqlx:prepare` (regenerate
   `.sqlx` after a query or migration change), and `setup`.
+- **Dependency freshness check** (`DOCTRINE.md` P7, read-only): run
+  `cargo update --dry-run --verbose`, `pnpm outdated --recursive`, and
+  `mise outdated --bump`. Each crate pin in `Cargo.toml` is exact, so also
+  compare each direct crate with its latest stable release on crates.io.
+  Compare `rust-toolchain.toml` with the latest stable Rust release. Compare
+  each infrastructure version in §15 with its latest stable release. Record
+  the release date of each candidate version (§15, Dependencies). The checks
+  need network access to crates.io, npm, GitHub, and the mise version
+  service. A sandbox that blocks them gives no result; that is a gap, not a
+  pass.
 
 **Test database isolation.** `scripts/test-db.sh` runs the pinned PostgreSQL
 18.6 on `127.0.0.1:55436` with trust authentication and data in
@@ -305,10 +315,10 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | Dependency                   | Version            | Why it earns its place                                                             |
 | ---------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
 | axum                         | 0.8.9              | HTTP routing and extraction                                                        |
-| tokio                        | 1.53.2             | Async runtime, timers, signals, blocking pool                                      |
+| tokio                        | 1.53.3             | Async runtime, timers, signals, blocking pool                                      |
 | tower-http                   | 0.6.11             | `CatchPanicLayer`, header layers. 0.6, not 0.7: reqwest already depends on 0.6.11. |
 | tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                              |
-| serde / serde_json           | 1.0.229 / 1.0.151  | Wire types. `float_roundtrip` parses numbers like JavaScript.                      |
+| serde / serde_json           | 1.0.229 / 1.0.154  | Wire types. `float_roundtrip` parses numbers like JavaScript.                      |
 | thiserror                    | 2.0.21             | Error enums with fixed text                                                        |
 | jiff / jiff-sqlx             | 0.2.38 / 0.2.0     | Time values with the bundled tzdb, and their SQLx encoding                         |
 | croner                       | 4.0.1              | Cron schedules with Jiff types                                                     |
@@ -591,6 +601,26 @@ and an API key.
 - **Database loss:** restore a Railway PostgreSQL backup.
 
 ### Maintenance
+
+- **Infrastructure:**
+
+  | Component      | Production                                                                                        | Test and local                         | How to read the version                                                        |
+  | -------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------ |
+  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | 18.6 (`mise.toml`, `conda:postgresql`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise.toml`. |
+  | Source builder | Railpack; Railway selects the version                                                             | Not used                               | The Railway build log                                                          |
+  | Runtime image  | Railpack runtime image; Railway selects the version                                               | Not used                               | The Railway build log                                                          |
+  | Rust toolchain | 1.99.0 (`rust-toolchain.toml`)                                                                    | 1.99.0                                 | `rust-toolchain.toml`                                                          |
+
+  Keep test and production PostgreSQL on the same major version (§5).
+
+- **Dependencies:** apply `DOCTRINE.md` P7. The minimum release age is 1440
+  minutes. `pnpm-workspace.yaml` enforces it for npm packages. For crates and
+  mise tools, check the release date by hand during the freshness check.
+  Exclude a version from the age rule only for a security fix. These pins
+  change together: Node in `mise.toml`, `.nvmrc`, and `package.json`
+  `engines`, with `@types/node` on the same major version; pnpm in
+  `mise.toml` and `packageManager`; `sqlx`, `sqlx-cli`, and `jiff-sqlx`. A
+  new Node major version follows the Node LTS line.
 
 Review toolchain and dependency upgrades with the same evidence. After a
 query or migration change, run `mise run sqlx:prepare` and commit `.sqlx`.
