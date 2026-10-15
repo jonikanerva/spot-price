@@ -1,7 +1,5 @@
 # STACK.md — Spot-price: Rust / Axum service with PostgreSQL
 
-Policy revision: 2
-
 > One Rust service serves the spot-price REST API, a small server-rendered
 > setup page, and the OpenAPI document. It runs the scheduled Nord Pool,
 > Fingrid, and OpenWeatherMap fetch jobs in the same process. Axum, Tokio,
