@@ -611,6 +611,13 @@ and an API key.
 
   Keep test and production PostgreSQL on the same major version (§5).
 
+  Do not pin Railpack or its runtime image. Do not set `RAILPACK_VERSION`
+  on the service. Each build uses the latest Railpack release. A failed build
+  leaves the active deployment in service. When a new Railpack release breaks
+  the build, fix the repository in a `fix/` PR. When the new image breaks the
+  running service, roll back first (Rollback and recovery), then fix the
+  repository.
+
 - **Dependencies:** apply `DOCTRINE.md` P7. The minimum release age is 1440
   minutes. `pnpm-workspace.yaml` enforces it for npm packages. For crates and
   mise tools, check the release date by hand during the freshness check.
