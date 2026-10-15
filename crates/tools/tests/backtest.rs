@@ -6,12 +6,12 @@ mod backtest {
     use std::collections::BTreeMap;
 
     use jiff::Timestamp;
-    use spot_price_domain::forecast::QuarterStart;
+    use spot_price_domain::forecast::{ForecastOptions, QuarterStart};
     use spot_price_tools::backtest::{
-        AsOfMode, BacktestOptions, HORIZON_LABELS, MIN_CALIBRATION_WINDOW_DAYS,
-        collect_input_timestamps, compare_optimism, derive_bands_from_backtest,
-        find_leaking_inputs, forecast_at_issue_time, mae, reconstruct_issue_time, rmae,
-        run_backtest, select_vintages_as_of, smape,
+        AsOfMode, BacktestOptions, ForecastVariant, HORIZON_LABELS, MIN_CALIBRATION_WINDOW_DAYS,
+        collect_input_timestamps, compare_optimism, compare_variants, derive_bands_from_backtest,
+        find_leaking_inputs, forecast_at_issue_time, forecast_at_issue_time_with, mae,
+        reconstruct_issue_time, rmae, run_backtest, select_vintages_as_of, smape,
     };
     use spot_price_tools::data::{BacktestData, GridActual, PricePoint, Vintage};
 
@@ -190,7 +190,7 @@ mod backtest {
     fn latest_mode_leaks_by_design() {
         let options = BacktestOptions {
             as_of_mode: Some(AsOfMode::Latest),
-            restrict_origins_ms: None,
+            ..BacktestOptions::default()
         };
         assert!(!run_backtest(&build_data(0.0), &options).unwrap().leak_free);
     }
@@ -267,9 +267,10 @@ mod backtest {
         assert!(summary.r_mae.last_week.unwrap() < 1.0);
     }
 
-    #[test]
+    /// 24 days whose vintages are all issued on day 19, so the earlier
+    /// origins have no knowable wind forecast.
     #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
-    fn skips_and_counts_pre_vintage_origins() {
+    fn build_late_vintage_data() -> BacktestData {
         let start = ms("2026-02-01T00:00:00Z");
         let issued_all = ms("2026-02-20T00:00:00Z");
         let mut data = BacktestData::default();
@@ -288,6 +289,12 @@ mod backtest {
         }
         data.actuals = BTreeMap::from([(75, wind75), (124, cons124)]);
         data.vintages = BTreeMap::from([(245, wind245), (165, cons165)]);
+        data
+    }
+
+    #[test]
+    fn skips_and_counts_pre_vintage_origins() {
+        let data = build_late_vintage_data();
         let summary = run_backtest(&data, &BacktestOptions::default()).unwrap();
         assert!(summary.pre_vintage_origins > 0);
         assert!(summary.origins > 0);
@@ -375,5 +382,128 @@ mod backtest {
             assert!(m.precision_at_n_peak.is_some());
         }
         assert_eq!(total, summary.residuals.len());
+    }
+
+    // Paired A/B comparison
+
+    /// A ridge penalty far above the production value, so the fit shrinks
+    /// and the predictions move.
+    fn strong_ridge() -> ForecastVariant {
+        ForecastVariant {
+            ridge_lambda: 1e6,
+            ..ForecastVariant::default()
+        }
+    }
+
+    #[test]
+    fn the_default_variant_is_the_production_model() {
+        let variant = ForecastVariant::default();
+        let production = ForecastOptions::default();
+        let options = variant.forecast_options();
+        assert_eq!(
+            options.ridge_lambda.to_bits(),
+            production.ridge_lambda.to_bits()
+        );
+        assert_eq!(
+            options.wind_extension_weeks,
+            production.wind_extension_weeks
+        );
+        assert_eq!(
+            options.consumption_extension_weeks,
+            production.consumption_extension_weeks
+        );
+        assert!(options.sanity_bound.is_none());
+        assert_eq!(BacktestOptions::default().variant, variant);
+
+        let data = build_data(0.0);
+        let inputs = reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime);
+        assert_eq!(
+            forecast_at_issue_time(&inputs).unwrap(),
+            forecast_at_issue_time_with(&inputs, variant).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_variant_reaches_the_forecast() {
+        let data = build_data(0.0);
+        let inputs = reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime);
+        let a = forecast_at_issue_time(&inputs).unwrap();
+        let b = forecast_at_issue_time_with(&inputs, strong_ridge()).unwrap();
+        assert_eq!(a.series_start_ms, b.series_start_ms);
+        assert_eq!(a.predicted.len(), b.predicted.len());
+        assert_ne!(a.predicted, b.predicted);
+    }
+
+    #[test]
+    fn a_against_itself_gives_zero_deltas_on_paired_origins() {
+        let data = build_data(0.0);
+        let cmp = compare_variants(
+            &data,
+            ForecastVariant::default(),
+            ForecastVariant::default(),
+        )
+        .unwrap();
+        assert!(cmp.origins_match);
+        assert_eq!(cmp.a, cmp.b);
+        assert_eq!(
+            cmp.shared_origins,
+            run_backtest(&data, &BacktestOptions::default())
+                .unwrap()
+                .origins
+        );
+        for (label, d) in HORIZON_LABELS.iter().zip(&cmp.delta_by_horizon) {
+            assert_eq!(d.delta_spearman, Some(0.0), "{label}");
+            assert_eq!(d.delta_precision_at_n_cheap, Some(0.0), "{label}");
+            assert_eq!(d.delta_precision_at_n_peak, Some(0.0), "{label}");
+            assert_eq!(d.delta_mae, Some(0.0), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_different_variant_is_scored_on_the_same_origins_and_targets() {
+        let data = build_data(0.0);
+        let cmp = compare_variants(&data, ForecastVariant::default(), strong_ridge()).unwrap();
+        assert!(cmp.origins_match);
+        assert!(cmp.shared_origins > 5);
+        assert_eq!(cmp.a.scored_origins_ms, cmp.b.scored_origins_ms);
+        assert_eq!(cmp.variant_b, strong_ridge());
+        assert!(cmp.a.leak_free && cmp.b.leak_free);
+        for (h, label) in HORIZON_LABELS.iter().enumerate() {
+            let (a, b, d) = (
+                &cmp.a.by_horizon[h],
+                &cmp.b.by_horizon[h],
+                &cmp.delta_by_horizon[h],
+            );
+            assert_eq!(a.pairs, b.pairs, "{label}");
+            assert!(a.pairs > 0, "{label}");
+            let delta_mae = d.delta_mae.unwrap();
+            assert!(
+                (delta_mae - (b.mae.unwrap() - a.mae.unwrap())).abs() < 1e-12,
+                "{label}"
+            );
+            let delta_spearman = d.delta_spearman.unwrap();
+            assert!(
+                (delta_spearman - (b.spearman.unwrap() - a.spearman.unwrap())).abs() < 1e-12,
+                "{label}"
+            );
+            assert!(d.delta_precision_at_n_cheap.is_some(), "{label}");
+            assert!(d.delta_precision_at_n_peak.is_some(), "{label}");
+        }
+        assert!(
+            cmp.delta_by_horizon
+                .iter()
+                .any(|d| d.delta_mae.is_some_and(|m| m.abs() > 1e-9))
+        );
+    }
+
+    #[test]
+    fn arm_b_never_scores_an_origin_that_arm_a_skipped() {
+        let data = build_late_vintage_data();
+        let cmp = compare_variants(&data, ForecastVariant::default(), strong_ridge()).unwrap();
+        assert!(cmp.a.pre_vintage_origins > 0);
+        assert!(cmp.shared_origins > 0);
+        assert_eq!(cmp.b.scored_origins_ms, cmp.a.scored_origins_ms);
+        assert_eq!(cmp.b.pre_vintage_origins, 0);
+        assert!(cmp.origins_match);
     }
 }

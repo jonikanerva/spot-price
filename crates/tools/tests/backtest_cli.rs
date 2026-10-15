@@ -7,12 +7,16 @@ mod backtest_cli {
     use std::path::PathBuf;
 
     use jiff::Timestamp;
+    use spot_price_domain::forecast::FLOOR_HISTORY_DAYS;
     use spot_price_domain::price::eur_mwh_to_cents_kwh;
-    use spot_price_tools::backtest::{BacktestOptions, compare_optimism, run_backtest};
-    use spot_price_tools::backtest_cli::{
-        DEFAULT_WINDOW_DAYS, MIN_SCOREABLE_ORIGINS, StoredPrice, assemble_backtest_data,
-        is_thin_data, parse_window_days,
+    use spot_price_tools::backtest::{
+        BacktestOptions, ForecastVariant, HORIZON_LABELS, compare_optimism, run_backtest,
     };
+    use spot_price_tools::backtest_cli::{
+        DEFAULT_WINDOW_DAYS, MAX_EXTENSION_WEEKS, MIN_SCOREABLE_ORIGINS, StoredPrice,
+        assemble_backtest_data, is_thin_data, parse_variant, parse_window_days,
+    };
+    use spot_price_tools::cli::{Context, Output, Stream, run};
     use spot_price_tools::data::{
         BacktestData, DatasetId, GridActual, Vintage, load_fixture, to_fixture_json,
     };
@@ -69,15 +73,20 @@ mod backtest_cli {
     type Vintages = BTreeMap<DatasetId, Vec<Vintage>>;
 
     /// Database-shaped rows for 14 days with a 2-deep vintage ladder.
-    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
     fn build_db_shaped() -> (Prices, Actuals, Vintages) {
+        build_db_shaped_days(14)
+    }
+
+    /// Database-shaped rows for `days` days with a 2-deep vintage ladder.
+    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
+    fn build_db_shaped_days(days: i64) -> (Prices, Actuals, Vintages) {
         let mut by_area: Vec<(String, Vec<StoredPrice>)> = ["FI", "SE1", "SE3", "EE"]
             .iter()
             .map(|a| ((*a).to_owned(), Vec::new()))
             .collect();
         let (mut wind75, mut cons124, mut wind245, mut cons165) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        for q in 0..14 * 96 {
+        for q in 0..days * 96 {
             let at = start_ms() + q * QUARTER_MS;
             let consumption = 8000.0 + (q % 96) as f64 * 15.0;
             let wind = 2000.0 + ((q * 131) % 1800) as f64;
@@ -228,5 +237,198 @@ mod backtest_cli {
     fn the_minimum_and_more_origins_are_a_verdict() {
         assert!(!is_thin_data(MIN_SCOREABLE_ORIGINS));
         assert!(!is_thin_data(MIN_SCOREABLE_ORIGINS + 50));
+    }
+
+    // --ab
+
+    fn run_cli(args: &[&str]) -> Output {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let env = |_: &str| None;
+        let ctx = Context {
+            env: &env,
+            now: "2026-10-14T00:00:00Z".parse().unwrap(),
+            workspace_root: &root,
+        };
+        let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        run(&args, &ctx)
+    }
+
+    /// A fixture with enough origins for a verdict.
+    fn verdict_fixture(name: &str) -> PathBuf {
+        let (prices, actuals, vintages) = build_db_shaped_days(24);
+        let data = assemble_backtest_data(&prices, actuals, vintages);
+        let file = temp_file(name);
+        std::fs::write(&file, to_fixture_json(&data)).unwrap();
+        file
+    }
+
+    #[test]
+    fn ab_parses_overrides_onto_the_production_options() {
+        let production = ForecastVariant::default();
+        assert_eq!(
+            parse_variant("ridge_lambda=2.5").unwrap(),
+            ForecastVariant {
+                ridge_lambda: 2.5,
+                ..production
+            }
+        );
+        assert_eq!(
+            parse_variant("wind_extension_weeks=2, consumption_extension_weeks=0").unwrap(),
+            ForecastVariant {
+                wind_extension_weeks: 2,
+                consumption_extension_weeks: 0,
+                ..production
+            }
+        );
+        assert_eq!(parse_variant("ridge_lambda=0").unwrap().ridge_lambda, 0.0);
+        assert_eq!(
+            parse_variant(&format!("wind_extension_weeks={MAX_EXTENSION_WEEKS}"))
+                .unwrap()
+                .wind_extension_weeks,
+            MAX_EXTENSION_WEEKS
+        );
+    }
+
+    #[test]
+    fn ab_extension_weeks_stay_inside_the_served_history_window() {
+        assert_eq!(MAX_EXTENSION_WEEKS, 4);
+        assert!(i64::from(MAX_EXTENSION_WEEKS) * 7 <= FLOOR_HISTORY_DAYS);
+        assert!(i64::from(MAX_EXTENSION_WEEKS + 1) * 7 > FLOOR_HISTORY_DAYS);
+        let production = ForecastVariant::default();
+        assert!(production.wind_extension_weeks <= MAX_EXTENSION_WEEKS);
+        assert!(production.consumption_extension_weeks <= MAX_EXTENSION_WEEKS);
+        let err = parse_variant("wind_extension_weeks=8").unwrap_err();
+        assert!(err.to_string().contains("from 0 to 4"), "{err}");
+    }
+
+    #[test]
+    fn ab_rejects_bad_keys_and_values() {
+        for raw in [
+            "",
+            "ridge_lambda",
+            "foo=1",
+            "ridge_lambda=-1",
+            "ridge_lambda=abc",
+            "ridge_lambda=",
+            "ridge_lambda=Infinity",
+            "wind_extension_weeks=1.5",
+            "wind_extension_weeks=-1",
+            "consumption_extension_weeks=53",
+            "wind_extension_weeks=5",
+            "wind_extension_weeks=8",
+            "ridge_lambda=1,ridge_lambda=2",
+        ] {
+            assert!(parse_variant(raw).is_err(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn ab_against_the_production_options_prints_zero_deltas() {
+        let file = verdict_fixture("ab-self.json");
+        let got = run_cli(&[
+            "backtest",
+            "--data",
+            file.to_str().unwrap(),
+            "--ab",
+            "ridge_lambda=1",
+        ]);
+        let stdout = got.text(Stream::Stdout);
+        assert_eq!(got.code, 0, "{stdout}{}", got.text(Stream::Stderr));
+        assert_eq!(got.text(Stream::Stderr), "");
+        assert!(stdout.contains("Paired A/B backtest"));
+        assert!(stdout.contains("origins paired:      true"));
+        assert!(stdout.contains("delta = B − A"));
+        for name in [
+            "MAE (c/kWh)",
+            "sMAPE",
+            "rMAE last_week",
+            "rMAE last_pub_day",
+        ] {
+            let row = stdout
+                .lines()
+                .find(|l| l.starts_with(&format!("  {name:<20}")))
+                .unwrap_or_else(|| panic!("{name}"));
+            assert!(row.trim_end().ends_with("0.000"), "{row}");
+        }
+        for label in HORIZON_LABELS {
+            assert!(stdout.contains(&format!("    {label:<7}  ")), "{label}");
+        }
+        let delta_rows: Vec<&str> = stdout
+            .lines()
+            .filter(|l| {
+                ["Spearman", "P@N-cheap", "P@N-peak", "MAE (c/kWh, ref)"]
+                    .iter()
+                    .any(|m| l.contains(m))
+                    && !l.contains("horizon")
+            })
+            .collect();
+        assert_eq!(delta_rows.len(), 4 * HORIZON_LABELS.len());
+        for row in delta_rows {
+            assert!(row.trim_end().ends_with("0.000"), "{row}");
+        }
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn ab_with_a_variant_prints_the_variant_and_a_verdict_exit_code() {
+        let file = verdict_fixture("ab-ridge.json");
+        let got = run_cli(&[
+            "backtest",
+            "--ab",
+            "ridge_lambda=1000000",
+            "--data",
+            file.to_str().unwrap(),
+        ]);
+        let stdout = got.text(Stream::Stdout);
+        assert_eq!(got.code, 0, "{stdout}{}", got.text(Stream::Stderr));
+        assert!(stdout.contains(
+            "arm B:               ridge_lambda=1000000 wind_extension_weeks=4 consumption_extension_weeks=1"
+        ));
+        assert!(stdout.contains("origins paired:      true"));
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn ab_marks_thin_data_as_not_a_verdict() {
+        let data = assembled();
+        let file = temp_file("ab-thin.json");
+        std::fs::write(&file, to_fixture_json(&data)).unwrap();
+        let got = run_cli(&[
+            "backtest",
+            "--data",
+            file.to_str().unwrap(),
+            "--ab",
+            "ridge_lambda=2",
+        ]);
+        assert_eq!(got.code, 1);
+        assert!(got.text(Stream::Stderr).contains("shared origins"));
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn ab_errors_are_reported_before_any_data_is_read() {
+        let bad = run_cli(&["backtest", "--data", "missing.json", "--ab", "foo=1"]);
+        assert_eq!(bad.code, 1);
+        assert!(bad.text(Stream::Stderr).contains("--ab key must be"));
+
+        let no_value = run_cli(&["backtest", "--data", "missing.json", "--ab"]);
+        assert_eq!(no_value.code, 1);
+        assert!(no_value.text(Stream::Stderr).contains("--ab needs"));
+
+        let both = run_cli(&["backtest", "--db", "--compare", "--ab", "ridge_lambda=2"]);
+        assert_eq!(both.code, 1);
+        assert!(
+            both.text(Stream::Stderr)
+                .contains("cannot be used together")
+        );
+    }
+
+    #[test]
+    fn the_usage_documents_ab() {
+        let usage = run_cli(&["backtest"]);
+        assert_eq!(usage.code, 2);
+        let text = usage.text(Stream::Stderr);
+        assert!(text.contains("[--ab <key=value[,key=value]>]"));
+        assert!(text.contains("ridge_lambda, wind_extension_weeks, consumption_extension_weeks"));
     }
 }
