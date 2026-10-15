@@ -106,7 +106,7 @@ STACK.md  VISION.md  DOCTRINE.md  CLAUDE.md
 "forbid"`, Clippy pedantic, and the deny list) plus
   `missing_debug_implementations`. `clippy.toml` allows unwrap, expect,
   panic, and print in tests.
-- **Node.js:** Node 24 and pnpm 10 run only Playwright and Prettier. They
+- **Node.js:** Node 24 and pnpm 12 run only Playwright and Prettier. They
   are not in the production image.
 
 ### Provisioning
