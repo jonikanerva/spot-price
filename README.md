@@ -16,16 +16,18 @@ Supports all 21 Nord Pool delivery areas across the Nordics, Baltics, and Centra
 
 ## Tech stack
 
-| Component  | Choice                                                               |
-| ---------- | -------------------------------------------------------------------- |
-| Runtime    | Node.js 24 LTS                                                       |
-| Language   | TypeScript (strict mode)                                             |
-| Framework  | [Hono](https://hono.dev) + @hono/node-server                         |
-| Database   | PostgreSQL via the raw `pg` driver (no ORM; numbered SQL migrations) |
-| Auth       | [Better Auth](https://better-auth.com) (self-hosted)                 |
-| Scheduling | node-cron (in-process price fetch + hourly Fingrid grid-data fetch)  |
-| Testing    | Vitest (unit) + Playwright (E2E)                                     |
-| Hosting    | Railway                                                              |
+| Component  | Choice                                                                 |
+| ---------- | ---------------------------------------------------------------------- |
+| Language   | Rust 1.99 (edition 2024)                                               |
+| Framework  | [Axum](https://docs.rs/axum) + Tokio                                   |
+| Database   | PostgreSQL via [SQLx](https://docs.rs/sqlx) (checked queries, no ORM)  |
+| Time       | [Jiff](https://docs.rs/jiff) with the bundled time zone database       |
+| Auth       | Username and password (Better Auth-compatible scrypt hashes), API keys |
+| Scheduling | In-process jobs (croner): Nord Pool, Fingrid, OpenWeatherMap           |
+| Testing    | nextest, golden files from the former TypeScript service, Playwright   |
+| Hosting    | Railway (Railpack, `railpack.json`)                                    |
+
+`STACK.md` holds the full technical contract.
 
 ## API endpoints
 
@@ -125,87 +127,76 @@ Finland (FI), Sweden (SE1-SE4), Norway (NO1-NO5), Denmark (DK1-DK2), Estonia (EE
 
 ### Prerequisites
 
-This project requires [mise](https://mise.jdx.dev). `mise install` provisions the pinned Node 24.15.0 + pnpm 10 (and Python for the smoke script); `mise run setup` installs dependencies + Playwright browsers. The same versions are pinned in `.nvmrc` and `package.json` (`engines` / `packageManager`).
-
-Docker is also required for the local PostgreSQL 17 used by `pnpm db:up`.
+Install [mise](https://mise.jdx.dev) and [rustup](https://rustup.rs). `rust-toolchain.toml` pins Rust. `mise.toml` pins the other tools: Node and pnpm (Playwright and Prettier only), PostgreSQL 18.6, sqlx-cli, cargo-deny, cargo-nextest, cargo-shear, and Gitleaks. Docker is not needed.
 
 ### Setup
 
 ```bash
-git clone https://github.com/calmdonut/spot-price.git
+git clone https://github.com/jonikanerva/spot-price.git
 cd spot-price
-mise install      # provision Node 24 + pnpm 10 + Python (mise.toml [tools])
-mise run setup    # install dependencies + Playwright browsers
-pnpm db:up        # start local PostgreSQL 17 (waits until ready)
-pnpm dev          # dev server → http://localhost:3000
+mise trust && mise run setup   # tools, locked dependencies, Playwright browser
+mise run db:start              # isolated PostgreSQL 18.6 on 127.0.0.1:55436
 ```
 
-`pnpm db:up` brings up the Docker Postgres and blocks until it is accepting
-connections, so `pnpm dev`, `pnpm seed`, and the tests are non-racy. `pnpm db:down`
-stops it (the data volume is kept).
+Keep local settings in `.env.local`, not `.env`: the SQLx query macros read every `.env` file at compile time.
 
-### Available scripts
+### Tasks
 
-| Script              | Description                                                           |
-| ------------------- | --------------------------------------------------------------------- |
-| `pnpm dev`          | Start dev server with hot reload                                      |
-| `pnpm build`        | Production build via tsup                                             |
-| `pnpm start`        | Run production build                                                  |
-| `pnpm test`         | Run unit tests (Vitest)                                               |
-| `pnpm test:watch`   | Run unit tests in watch mode                                          |
-| `pnpm test:e2e`     | Run E2E tests (Playwright) — needs `pnpm db:up`; see End-to-end tests |
-| `pnpm test:all`     | Run all checks (typecheck + lint + test + build)                      |
-| `pnpm typecheck`    | TypeScript type checking                                              |
-| `pnpm lint`         | ESLint                                                                |
-| `pnpm format`       | Prettier format (write)                                               |
-| `pnpm format:check` | Prettier format check (no writes)                                     |
-| `pnpm db:up`        | Start local PostgreSQL 17 via docker compose, waits for readiness     |
-| `pnpm db:down`      | Stop local PostgreSQL (data volume kept)                              |
-| `pnpm seed`         | Seed database with sample prices                                      |
-| `pnpm backtest`     | Run the forecast backtest (fixture or `--db`) — see Backtesting       |
-| `pnpm smoke`        | Run the local smoke-test script                                       |
+| Task                            | Description                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------- |
+| `mise run format`               | Format Rust and the other files (rustfmt, Prettier)                             |
+| `mise run lint`                 | Clippy on every target; warnings are errors                                     |
+| `mise run build`                | Release build of the server                                                     |
+| `mise run test`                 | All Rust tests against the isolated database                                    |
+| `mise run e2e`                  | Playwright journeys against the Rust binary                                     |
+| `mise run verify`               | The full gate: format, lint, query metadata, contract, scans, build, tests, e2e |
+| `mise run dev`                  | Migrate and run the service with `.env.local` and readable logs                 |
+| `mise run sqlx:prepare`         | Regenerate `.sqlx` after a query or migration change                            |
+| `mise run db:start` / `db:stop` | Start or stop the isolated test database                                        |
 
-### End-to-end tests
-
-`pnpm test:e2e` runs Playwright against a local server backed by a dedicated `spot_price_e2e` database. Requires `pnpm db:up` first; each run resets the e2e database's schema (drop + recreate `public`, repopulated by the server's startup migration) and never touches your dev `spot_price` data — the e2e connection string is a hard-coded literal, and a `current_database()` guard aborts loudly if it ever points anywhere else.
+The server binary has three commands: `spot-price migrate`, `spot-price serve`, and `spot-price export-openapi <path>`.
 
 ### Verification & governance
 
-There is no CI. Verification is local: run `pnpm test:all` and `pnpm test:e2e` before pushing. `pnpm test:all` checks formatting, types, lint, and production dependency advisories (`pnpm audit:deps`, which needs network access), then runs the tests and the build. A material change also gets an independent `/codereview`, and the reviewer runs both commands again on the integrated result. `STACK.md → Applicability and evidence` lists the full gate. The repo hooks block destructive pushes; they do not run the tests.
+There is no CI. Run `mise run verify` before pushing. A material change also gets an independent `/codereview`, and the reviewer runs `mise run verify` again on the integrated result. `STACK.md → Applicability and evidence` lists the full gate.
 
 ### Environment variables
 
-| Variable              | Default | Description                                                                                                                                                                                                      |
-| --------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                | `3000`  | Server port                                                                                                                                                                                                      |
-| `DATABASE_URL`        | —       | PostgreSQL connection string (required outside test mode)                                                                                                                                                        |
-| `DATABASE_PUBLIC_URL` | —       | Optional. Used only by the offline backtest CLI (`pnpm backtest --db`) to reach the Railway DB from a dev machine. Never required at runtime — the server uses `DATABASE_URL`.                                   |
-| `TEST_DATABASE_URL`   | —       | PostgreSQL connection string for tests (falls back to `DATABASE_URL`)                                                                                                                                            |
-| `BETTER_AUTH_SECRET`  | —       | Auth secret (required in prod)                                                                                                                                                                                   |
-| `BETTER_AUTH_URL`     | —       | Public URL (required in prod)                                                                                                                                                                                    |
-| `FINGRID_API_KEY`     | —       | Fingrid Open Data API key for the FI forecast. Optional: when absent the forecast cron does not run and `/api/v1/price/forecast` returns `available: false`. A one-time startup warning is logged in production. |
+| Variable                 | Default                 | Description                                                                                                |
+| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `PORT`                   | `3000`                  | Server port                                                                                                |
+| `DATABASE_URL`           | —                       | PostgreSQL connection string (required)                                                                    |
+| `NODE_ENV`               | `development`           | `production` makes `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET` required                                     |
+| `BETTER_AUTH_URL`        | `http://localhost:3000` | Public origin. It sets the cookie security and the allowed `Origin` of session requests                    |
+| `BETTER_AUTH_SECRET`     | —                       | Required in production. The Rust service does not use it; it stays for the revert path                     |
+| `FINGRID_API_KEY`        | —                       | Fingrid Open Data key. Without it the Fingrid job does not run and the forecast returns `available: false` |
+| `OPENWEATHERMAP_API_KEY` | —                       | OpenWeatherMap One Call 3.0 key. Without it the weather job does not run                                   |
+| `LOG_FORMAT`             | `json`                  | `text` gives readable logs                                                                                 |
+| `DATABASE_PUBLIC_URL`    | —                       | Only for `spot-price-tools --db` from a dev machine                                                        |
 
 ## How it works
 
-1. An in-process **cron** fetches day-ahead prices from the [Nord Pool Data Portal API](https://dataportal-api.nordpoolgroup.com) for all 21 delivery areas: every 2 hours as a baseline, plus a 10-minute burst during the publication window (12:00–13:59 CET) that pauses once tomorrow's prices are captured. A fetch also runs on startup.
+1. An in-process **scheduled job** fetches day-ahead prices from the [Nord Pool Data Portal API](https://dataportal-api.nordpoolgroup.com) for all 21 delivery areas: every 2 hours as a baseline, plus a 10-minute burst during the publication window (12:00–13:59 CET) that pauses once tomorrow's prices are captured. A fetch also runs on startup.
 2. Prices are stored in PostgreSQL as raw spot prices in EUR/MWh; Nord Pool's current granularity is 15-minute, and the calculator handles variable interval lengths.
 3. When a user calls the API, their contract settings are applied: `total = (spot + margin + transfer + tax) * (1 + VAT%)`.
 4. The cheapest window algorithm finds the optimal contiguous time slot using a weighted sliding window over variable-length intervals.
-5. When `FINGRID_API_KEY` is set, a separate **hourly** cron fetches public Fingrid grid series (wind/consumption) into PostgreSQL. The FI forecast endpoint combines those with stored price history using simple closed-form math to produce a clearly-labelled estimate for days Nord Pool has not published yet. This path is fully isolated from the authoritative price crons — a Fingrid failure can never affect published prices, and the forecast degrades rather than guessing.
+5. When `FINGRID_API_KEY` is set, a separate **hourly** job fetches public Fingrid grid series (wind/consumption) into PostgreSQL. The FI forecast endpoint combines those with stored price history using simple closed-form math to produce a clearly-labelled estimate for days Nord Pool has not published yet. This path is fully isolated from the authoritative price job — a Fingrid failure can never affect published prices, and the forecast degrades rather than guessing.
 
 ## Backtesting
 
-The forecast's accuracy is measured on demand with an offline dev CLI under `tools/` (excluded from the production bundle; never runs in the server process). It replays the existing issue-time, leakage-guarded rolling-origin backtest and prints MAE / rMAE-vs-naive / sMAPE plus, per horizon (d+1/d+2/d+3), Spearman and precision@N (over the cheapest/peak 4-hour window) and empirical band coverage.
+The forecast's accuracy is measured on demand with the offline `spot-price-tools` binary (`crates/tools`). The release build does not include it, and it never runs in the server process. It replays the issue-time, leakage-guarded rolling-origin backtest and prints MAE / rMAE-vs-naive / sMAPE plus, per horizon (d+1/d+2/d+3), Spearman and precision@N and empirical band coverage.
 
+```bash
+cargo run -p spot-price-tools -- backtest --data crates/tools/data/fixture.json
+cargo run -p spot-price-tools -- backtest --db [--window <days>] [--export <file>] [--compare]
+cargo run -p spot-price-tools -- revision-magnitude --db [--window <days>]
+cargo run -p spot-price-tools -- regenerate-bands --data <file>
 ```
-pnpm backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>]
-```
 
-- `--data <fixture.json>` replays a committed fixture **file** (not a directory), e.g. `pnpm backtest --data tools/backtest-data/fixture.json`.
-- `--db` scores against the live database over the last `--window` days (default 90). It connects via `DATABASE_PUBLIC_URL ?? DATABASE_URL`, so a local `--db` run needs `DATABASE_PUBLIC_URL` set to the Railway public Postgres URL (egress for one window is sub-cent).
-- `--db --export <fixture.json>` snapshots the assembled window to a fixture; `--export X.json` ↔ `--data X.json` round-trips with no double-conversion.
+- `--db` reads `DATABASE_PUBLIC_URL` (or `--db-url`) from the process environment. No `.env` file is read.
+- `--db --export <file>` snapshots the assembled window; `--data <file>` replays it.
 
-Prediction bands ship **dark** (`calibrated: false`) — the forecast response carries no band/interval fields. To calibrate them, run `pnpm tsx tools/regenerate-bands.ts --data <fixture.json>` over accumulated real history; it rewrites `src/conformal-artifact.ts` only when the measured coverage gate clears. This is a periodic manual chore for a human to review and commit, not a background job; bands turn on purely by committing a calibrated artifact, no code change.
+Prediction bands ship **dark** (`calibrated: false`). `regenerate-bands` rewrites `crates/domain/src/forecast/conformal_artifact.rs` only when the coverage gate clears. A human reviews and commits the result; bands turn on by committing a calibrated artifact.
 
 ## Data source
 

@@ -1,0 +1,1478 @@
+{
+  "cheapest": [
+    {
+      "input": {},
+      "error": "duration: Invalid input: expected number, received NaN"
+    },
+    {
+      "input": { "duration": "" },
+      "error": "duration: Too small: expected number to be >=1"
+    },
+    {
+      "input": { "duration": " " },
+      "error": "duration: Too small: expected number to be >=1"
+    },
+    {
+      "input": { "duration": "0" },
+      "error": "duration: Too small: expected number to be >=1"
+    },
+    {
+      "input": { "duration": "1" },
+      "ok": {
+        "duration": 1,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "1440" },
+      "ok": {
+        "duration": 1440,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "1441" },
+      "error": "duration: Too big: expected number to be <=1440"
+    },
+    {
+      "input": { "duration": "-5" },
+      "error": "duration: Too small: expected number to be >=1"
+    },
+    {
+      "input": { "duration": "-0" },
+      "error": "duration: Too small: expected number to be >=1"
+    },
+    {
+      "input": { "duration": "0.5" },
+      "error": "duration: Invalid input: expected int, received number"
+    },
+    {
+      "input": { "duration": "1440.5" },
+      "error": "duration: Invalid input: expected int, received number"
+    },
+    {
+      "input": { "duration": "60.0" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "6e1" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": ".6e2" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60." },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": " 0x3C " },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "0b111100" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "0o74" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "-0x3C" },
+      "error": "duration: Invalid input: expected number, received NaN"
+    },
+    {
+      "input": { "duration": "abc" },
+      "error": "duration: Invalid input: expected number, received NaN"
+    },
+    {
+      "input": { "duration": "1_0" },
+      "error": "duration: Invalid input: expected number, received NaN"
+    },
+    {
+      "input": { "duration": "Infinity" },
+      "error": "duration: Invalid input: expected number, received number"
+    },
+    {
+      "input": { "duration": "-Infinity" },
+      "error": "duration: Invalid input: expected number, received number"
+    },
+    {
+      "input": { "duration": "1e400" },
+      "error": "duration: Invalid input: expected number, received number"
+    },
+    {
+      "input": { "duration": "9007199254740993" },
+      "error": "duration: Too big: expected int to be <=9007199254740991; duration: Too big: expected number to be <=1440"
+    },
+    {
+      "input": { "duration": "-9007199254740993" },
+      "error": "duration: Too small: expected int to be >=-9007199254740991; duration: Too small: expected number to be >=1"
+    },
+    {
+      "input": { "duration": "1e20" },
+      "error": "duration: Too big: expected int to be <=9007199254740991; duration: Too big: expected number to be <=1440"
+    },
+    {
+      "input": { "duration": "-1e20" },
+      "error": "duration: Too small: expected int to be >=-9007199254740991; duration: Too small: expected number to be >=1"
+    },
+    {
+      "input": { "duration": " 60﻿" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60" },
+      "error": "duration: Invalid input: expected number, received NaN"
+    },
+    {
+      "input": { "duration": "NaN" },
+      "error": "duration: Invalid input: expected number, received NaN"
+    },
+    {
+      "input": { "duration": "60" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "x" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "x" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772200800000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772200800000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00 02:00" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772193600000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00 02:00" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772193600000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00+02:00" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772193600000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00+02:00" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772193600000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00-05:30" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772220600000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00-05:30" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772220600000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772200800000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772200800000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00+02:00" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772193600000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00+02:00" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772193600000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00.1Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772200800100,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00.1Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772200800100,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": {
+        "duration": "60",
+        "startTime": "2026-02-27T14:00:00.1234567Z"
+      },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772200800123,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00.1234567Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772200800123,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": {
+        "duration": "60",
+        "startTime": "2026-02-27T14:00:00.9999+02:00"
+      },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772193600999,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": {
+        "duration": "60",
+        "endTime": "2026-02-27T14:00:00.9999+02:00"
+      },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772193600999,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00+0200" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00+0200" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00+02" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00+02" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27t14:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27t14:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T24:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T24:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T23:59:60Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T23:59:60Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-29T00:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-29T00:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2024-02-29T00:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": 1709164800000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2024-02-29T00:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1709164800000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2000-02-29T00:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": 951782400000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "2000-02-29T00:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 951782400000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "1900-02-29T00:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "1900-02-29T00:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "0000-02-29T00:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": -62162121600000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "0000-02-29T00:00:00Z" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": -62162121600000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": {
+        "duration": "60",
+        "startTime": "9999-12-31T23:59:59.999-23:59"
+      },
+      "ok": {
+        "duration": 60,
+        "startTime": 253402387139999,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "9999-12-31T23:59:59.999-23:59" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 253402387139999,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "0000-01-01T00:00:00+23:59" },
+      "ok": {
+        "duration": 60,
+        "startTime": -62167305540000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "endTime": "0000-01-01T00:00:00+23:59" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": -62167305540000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00+24:00" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00+24:00" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00+23:60" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00+23:60" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00.Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00.Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00,5Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00,5Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": " 2026-02-27T14:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": " 2026-02-27T14:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00Z " },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00Z " },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-02-27T14:00:00  02:00" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-02-27T14:00:00  02:00" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "+2026-02-27T14:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "+2026-02-27T14:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "startTime": "2026-2-27T14:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "2026-2-27T14:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": {
+        "duration": "60",
+        "startTime": "2026-02-27T14:00:00.000000000000001Z"
+      },
+      "ok": {
+        "duration": 60,
+        "startTime": 1772200800000,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": {
+        "duration": "60",
+        "endTime": "2026-02-27T14:00:00.000000000000001Z"
+      },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": 1772200800000,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "startTime": "２０２６-02-27T14:00:00Z" },
+      "error": "startTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60", "endTime": "２０２６-02-27T14:00:00Z" },
+      "error": "endTime: Invalid ISO datetime"
+    },
+    {
+      "input": { "duration": "60" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": null
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "" },
+      "error": "maxPrice: maxPrice is required when provided"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "  " },
+      "error": "maxPrice: maxPrice is required when provided"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "12" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "12"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": " 12 " },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "12"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "-1" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "-1"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "0" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "0"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "-0" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "-0"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "1e1" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "10"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "0x10" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "16"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": ".5" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "0.5"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "5." },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "5"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "Infinity" },
+      "error": "maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "-Infinity" },
+      "error": "maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "1e400" },
+      "error": "maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "abc" },
+      "error": "maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "1,5" },
+      "error": "maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": " 7﻿" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "7"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "7" },
+      "error": "maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "0.30000000000000004" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "0.30000000000000004"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "1e21" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "1e+21"
+      }
+    },
+    {
+      "input": { "duration": "60", "maxPrice": "1e-7" },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "1e-7"
+      }
+    },
+    {
+      "input": {
+        "duration": "60",
+        "maxPrice": "123456789012345678901234567890"
+      },
+      "ok": {
+        "duration": 60,
+        "startTime": null,
+        "endTime": null,
+        "maxPrice": "1.2345678901234568e+29"
+      }
+    },
+    {
+      "input": {
+        "duration": "x",
+        "startTime": "y",
+        "endTime": "z",
+        "maxPrice": "w"
+      },
+      "error": "duration: Invalid input: expected number, received NaN; startTime: Invalid ISO datetime; endTime: Invalid ISO datetime; maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": {
+        "duration": "0.5",
+        "startTime": "2026-02-27T14:00:00Z",
+        "maxPrice": " "
+      },
+      "error": "duration: Invalid input: expected int, received number; maxPrice: maxPrice is required when provided"
+    },
+    {
+      "input": { "startTime": "bad", "maxPrice": "Infinity" },
+      "error": "duration: Invalid input: expected number, received NaN; startTime: Invalid ISO datetime; maxPrice: maxPrice must be a valid number"
+    },
+    {
+      "input": { "duration": "1e20", "endTime": "bad" },
+      "error": "duration: Too big: expected int to be <=9007199254740991; duration: Too big: expected number to be <=1440; endTime: Invalid ISO datetime"
+    },
+    {
+      "input": {
+        "duration": "180",
+        "startTime": "2026-02-27T14:00:00 02:00",
+        "endTime": "2026-02-28T06:00:00 02:00",
+        "maxPrice": "12"
+      },
+      "ok": {
+        "duration": 180,
+        "startTime": 1772193600000,
+        "endTime": 1772251200000,
+        "maxPrice": "12"
+      }
+    }
+  ],
+  "history": [
+    {
+      "input": { "from": "2026-04-01", "to": "2026-04-15" },
+      "ok": { "from": "2026-04-01", "to": "2026-04-15" }
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "2026-04-01" },
+      "ok": { "from": "2026-04-01", "to": "2026-04-01" }
+    },
+    {
+      "input": { "from": "2026-05-02", "to": "2026-05-01" },
+      "error": "from: from must be on or before to"
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "2026-04-30" },
+      "ok": { "from": "2026-04-01", "to": "2026-04-30" }
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "2026-05-01" },
+      "ok": { "from": "2026-04-01", "to": "2026-05-01" }
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "2026-05-02" },
+      "error": "to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-04-01T00:00:00Z", "to": "2026-04-15" },
+      "error": "from: Invalid ISO date"
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "2026-04-15T12:00:00+02:00" },
+      "error": "to: Invalid ISO date"
+    },
+    {
+      "input": { "from": "not-a-date", "to": "2026-04-15" },
+      "error": "from: Invalid ISO date; from: from must be on or before to; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-13-40", "to": "2026-05-01" },
+      "error": "from: Invalid ISO date; from: from must be on or before to"
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "" },
+      "error": "to: Invalid ISO date; from: from must be on or before to"
+    },
+    {
+      "input": { "from": "2026-04-01" },
+      "error": "to: Invalid input: expected string, received undefined"
+    },
+    {
+      "input": { "to": "2026-04-01" },
+      "error": "from: Invalid input: expected string, received undefined"
+    },
+    {
+      "input": {},
+      "error": "from: Invalid input: expected string, received undefined; to: Invalid input: expected string, received undefined"
+    },
+    {
+      "input": { "from": "x", "to": "y" },
+      "error": "from: Invalid ISO date; to: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "", "to": "" },
+      "error": "from: Invalid ISO date; to: Invalid ISO date"
+    },
+    {
+      "input": { "from": "y", "to": "x" },
+      "error": "from: Invalid ISO date; to: Invalid ISO date; from: from must be on or before to; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "9", "to": "1" },
+      "error": "from: Invalid ISO date; to: Invalid ISO date; from: from must be on or before to"
+    },
+    {
+      "input": { "from": "2026-04-31", "to": "2026-06-01" },
+      "error": "from: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-02-30", "to": "2026-03-01" },
+      "error": "from: Invalid ISO date"
+    },
+    {
+      "input": { "from": "2026-02-29", "to": "2026-03-01" },
+      "error": "from: Invalid ISO date"
+    },
+    {
+      "input": { "from": "2024-02-29", "to": "2024-03-30" },
+      "ok": { "from": "2024-02-29", "to": "2024-03-30" }
+    },
+    {
+      "input": { "from": "2024-02-29", "to": "2024-03-31" },
+      "error": "to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2100-02-29", "to": "2100-03-01" },
+      "error": "from: Invalid ISO date"
+    },
+    {
+      "input": { "from": "2000-02-29", "to": "2000-03-01" },
+      "ok": { "from": "2000-02-29", "to": "2000-03-01" }
+    },
+    {
+      "input": { "from": "0001-01-01", "to": "0100-01-01" },
+      "ok": { "from": "0001-01-01", "to": "0100-01-01" }
+    },
+    {
+      "input": { "from": "0099-12-31", "to": "0100-01-01" },
+      "ok": { "from": "0099-12-31", "to": "0100-01-01" }
+    },
+    {
+      "input": { "from": "0000-01-01", "to": "0000-01-31" },
+      "ok": { "from": "0000-01-01", "to": "0000-01-31" }
+    },
+    {
+      "input": { "from": "0000-02-29", "to": "0000-03-01" },
+      "ok": { "from": "0000-02-29", "to": "0000-03-01" }
+    },
+    {
+      "input": { "from": "0050-01-01", "to": "0050-03-01" },
+      "error": "to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "9999-12-01", "to": "9999-12-31" },
+      "ok": { "from": "9999-12-01", "to": "9999-12-31" }
+    },
+    {
+      "input": { "from": "2026-12-31", "to": "2027-01-31" },
+      "error": "to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-12-31", "to": "2027-02-01" },
+      "error": "to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2025-10-01", "to": "2025-10-31" },
+      "ok": { "from": "2025-10-01", "to": "2025-10-31" }
+    },
+    {
+      "input": { "from": "2026-04-01 ", "to": "2026-04-02" },
+      "error": "from: Invalid ISO date"
+    },
+    {
+      "input": { "from": " 2026-04-01", "to": "2026-04-02" },
+      "error": "from: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-4-01", "to": "2026-04-02" },
+      "error": "from: Invalid ISO date; from: from must be on or before to; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "2026-04-0١" },
+      "error": "to: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": " 2026-04-01", "to": "2026-04-02" },
+      "error": "from: Invalid ISO date; from: from must be on or before to; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-04-01", "to": "2026-05-1x" },
+      "error": "to: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-0x-01", "to": "2026-04-02" },
+      "error": "from: Invalid ISO date; from: from must be on or before to; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "1e10-01-01", "to": "2026-01-01" },
+      "error": "from: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-01-01", "to": "2026-03-0😀" },
+      "error": "to: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "😀", "to": "😁" },
+      "error": "from: Invalid ISO date; to: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "", "to": "𐀀" },
+      "error": "from: Invalid ISO date; to: Invalid ISO date; from: from must be on or before to; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-1.-01", "to": "2026-03-01" },
+      "error": "from: Invalid ISO date; from: from must be on or before to; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-01-01", "to": "2026-01-.5" },
+      "error": "to: Invalid ISO date; from: from must be on or before to"
+    },
+    {
+      "input": { "from": "-202-01-01", "to": "2026-01-01" },
+      "error": "from: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "+202-01-01", "to": "2026-01-01" },
+      "error": "from: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026--1-01", "to": "2026-01-01" },
+      "error": "from: Invalid ISO date; to: date range must not exceed 31 days"
+    },
+    {
+      "input": { "from": "2026-01- 1", "to": "2026-01-31" },
+      "error": "from: Invalid ISO date"
+    }
+  ],
+  "settingsUpdate": [
+    { "field": "marginCentsKwh", "value": "0", "error": null },
+    { "field": "marginCentsKwh", "value": "-0", "error": null },
+    { "field": "marginCentsKwh", "value": "0.5", "error": null },
+    {
+      "field": "marginCentsKwh",
+      "value": "-0.0001",
+      "error": "marginCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "marginCentsKwh", "value": "2.79372", "error": null },
+    { "field": "marginCentsKwh", "value": "100", "error": null },
+    { "field": "marginCentsKwh", "value": "100.0001", "error": null },
+    { "field": "marginCentsKwh", "value": "1e+300", "error": null },
+    {
+      "field": "marginCentsKwh",
+      "value": "-1e+300",
+      "error": "marginCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "marginCentsKwh", "value": "22", "error": null },
+    { "field": "marginCentsKwh", "value": "23", "error": null },
+    { "field": "marginCentsKwh", "value": "24", "error": null },
+    {
+      "field": "marginCentsKwh",
+      "value": "-1",
+      "error": "marginCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "marginCentsKwh", "value": "7.5", "error": null },
+    { "field": "marginCentsKwh", "value": "9007199254740992", "error": null },
+    {
+      "field": "marginCentsKwh",
+      "value": "-9007199254740992",
+      "error": "marginCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferDayCentsKwh", "value": "0", "error": null },
+    { "field": "transferDayCentsKwh", "value": "-0", "error": null },
+    { "field": "transferDayCentsKwh", "value": "0.5", "error": null },
+    {
+      "field": "transferDayCentsKwh",
+      "value": "-0.0001",
+      "error": "transferDayCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferDayCentsKwh", "value": "2.79372", "error": null },
+    { "field": "transferDayCentsKwh", "value": "100", "error": null },
+    { "field": "transferDayCentsKwh", "value": "100.0001", "error": null },
+    { "field": "transferDayCentsKwh", "value": "1e+300", "error": null },
+    {
+      "field": "transferDayCentsKwh",
+      "value": "-1e+300",
+      "error": "transferDayCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferDayCentsKwh", "value": "22", "error": null },
+    { "field": "transferDayCentsKwh", "value": "23", "error": null },
+    { "field": "transferDayCentsKwh", "value": "24", "error": null },
+    {
+      "field": "transferDayCentsKwh",
+      "value": "-1",
+      "error": "transferDayCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferDayCentsKwh", "value": "7.5", "error": null },
+    {
+      "field": "transferDayCentsKwh",
+      "value": "9007199254740992",
+      "error": null
+    },
+    {
+      "field": "transferDayCentsKwh",
+      "value": "-9007199254740992",
+      "error": "transferDayCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferNightCentsKwh", "value": "0", "error": null },
+    { "field": "transferNightCentsKwh", "value": "-0", "error": null },
+    { "field": "transferNightCentsKwh", "value": "0.5", "error": null },
+    {
+      "field": "transferNightCentsKwh",
+      "value": "-0.0001",
+      "error": "transferNightCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferNightCentsKwh", "value": "2.79372", "error": null },
+    { "field": "transferNightCentsKwh", "value": "100", "error": null },
+    { "field": "transferNightCentsKwh", "value": "100.0001", "error": null },
+    { "field": "transferNightCentsKwh", "value": "1e+300", "error": null },
+    {
+      "field": "transferNightCentsKwh",
+      "value": "-1e+300",
+      "error": "transferNightCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferNightCentsKwh", "value": "22", "error": null },
+    { "field": "transferNightCentsKwh", "value": "23", "error": null },
+    { "field": "transferNightCentsKwh", "value": "24", "error": null },
+    {
+      "field": "transferNightCentsKwh",
+      "value": "-1",
+      "error": "transferNightCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "transferNightCentsKwh", "value": "7.5", "error": null },
+    {
+      "field": "transferNightCentsKwh",
+      "value": "9007199254740992",
+      "error": null
+    },
+    {
+      "field": "transferNightCentsKwh",
+      "value": "-9007199254740992",
+      "error": "transferNightCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "taxCentsKwh", "value": "0", "error": null },
+    { "field": "taxCentsKwh", "value": "-0", "error": null },
+    { "field": "taxCentsKwh", "value": "0.5", "error": null },
+    {
+      "field": "taxCentsKwh",
+      "value": "-0.0001",
+      "error": "taxCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "taxCentsKwh", "value": "2.79372", "error": null },
+    { "field": "taxCentsKwh", "value": "100", "error": null },
+    { "field": "taxCentsKwh", "value": "100.0001", "error": null },
+    { "field": "taxCentsKwh", "value": "1e+300", "error": null },
+    {
+      "field": "taxCentsKwh",
+      "value": "-1e+300",
+      "error": "taxCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "taxCentsKwh", "value": "22", "error": null },
+    { "field": "taxCentsKwh", "value": "23", "error": null },
+    { "field": "taxCentsKwh", "value": "24", "error": null },
+    {
+      "field": "taxCentsKwh",
+      "value": "-1",
+      "error": "taxCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "taxCentsKwh", "value": "7.5", "error": null },
+    { "field": "taxCentsKwh", "value": "9007199254740992", "error": null },
+    {
+      "field": "taxCentsKwh",
+      "value": "-9007199254740992",
+      "error": "taxCentsKwh: Too small: expected number to be >=0"
+    },
+    { "field": "vatPercent", "value": "0", "error": null },
+    { "field": "vatPercent", "value": "-0", "error": null },
+    { "field": "vatPercent", "value": "0.5", "error": null },
+    {
+      "field": "vatPercent",
+      "value": "-0.0001",
+      "error": "vatPercent: Too small: expected number to be >=0"
+    },
+    { "field": "vatPercent", "value": "2.79372", "error": null },
+    { "field": "vatPercent", "value": "100", "error": null },
+    {
+      "field": "vatPercent",
+      "value": "100.0001",
+      "error": "vatPercent: Too big: expected number to be <=100"
+    },
+    {
+      "field": "vatPercent",
+      "value": "1e+300",
+      "error": "vatPercent: Too big: expected number to be <=100"
+    },
+    {
+      "field": "vatPercent",
+      "value": "-1e+300",
+      "error": "vatPercent: Too small: expected number to be >=0"
+    },
+    { "field": "vatPercent", "value": "22", "error": null },
+    { "field": "vatPercent", "value": "23", "error": null },
+    { "field": "vatPercent", "value": "24", "error": null },
+    {
+      "field": "vatPercent",
+      "value": "-1",
+      "error": "vatPercent: Too small: expected number to be >=0"
+    },
+    { "field": "vatPercent", "value": "7.5", "error": null },
+    {
+      "field": "vatPercent",
+      "value": "9007199254740992",
+      "error": "vatPercent: Too big: expected number to be <=100"
+    },
+    {
+      "field": "vatPercent",
+      "value": "-9007199254740992",
+      "error": "vatPercent: Too small: expected number to be >=0"
+    },
+    { "field": "nightStartHour", "value": "0", "error": null },
+    { "field": "nightStartHour", "value": "-0", "error": null },
+    {
+      "field": "nightStartHour",
+      "value": "0.5",
+      "error": "nightStartHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "-0.0001",
+      "error": "nightStartHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "2.79372",
+      "error": "nightStartHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "100",
+      "error": "nightStartHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "100.0001",
+      "error": "nightStartHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "1e+300",
+      "error": "nightStartHour: Too big: expected int to be <=9007199254740991; nightStartHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "-1e+300",
+      "error": "nightStartHour: Too small: expected int to be >=-9007199254740991; nightStartHour: Too small: expected number to be >=0"
+    },
+    { "field": "nightStartHour", "value": "22", "error": null },
+    { "field": "nightStartHour", "value": "23", "error": null },
+    {
+      "field": "nightStartHour",
+      "value": "24",
+      "error": "nightStartHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "-1",
+      "error": "nightStartHour: Too small: expected number to be >=0"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "7.5",
+      "error": "nightStartHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "9007199254740992",
+      "error": "nightStartHour: Too big: expected int to be <=9007199254740991; nightStartHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightStartHour",
+      "value": "-9007199254740992",
+      "error": "nightStartHour: Too small: expected int to be >=-9007199254740991; nightStartHour: Too small: expected number to be >=0"
+    },
+    { "field": "nightEndHour", "value": "0", "error": null },
+    { "field": "nightEndHour", "value": "-0", "error": null },
+    {
+      "field": "nightEndHour",
+      "value": "0.5",
+      "error": "nightEndHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "-0.0001",
+      "error": "nightEndHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "2.79372",
+      "error": "nightEndHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "100",
+      "error": "nightEndHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "100.0001",
+      "error": "nightEndHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "1e+300",
+      "error": "nightEndHour: Too big: expected int to be <=9007199254740991; nightEndHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "-1e+300",
+      "error": "nightEndHour: Too small: expected int to be >=-9007199254740991; nightEndHour: Too small: expected number to be >=0"
+    },
+    { "field": "nightEndHour", "value": "22", "error": null },
+    { "field": "nightEndHour", "value": "23", "error": null },
+    {
+      "field": "nightEndHour",
+      "value": "24",
+      "error": "nightEndHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "-1",
+      "error": "nightEndHour: Too small: expected number to be >=0"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "7.5",
+      "error": "nightEndHour: Invalid input: expected int, received number"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "9007199254740992",
+      "error": "nightEndHour: Too big: expected int to be <=9007199254740991; nightEndHour: Too big: expected number to be <=23"
+    },
+    {
+      "field": "nightEndHour",
+      "value": "-9007199254740992",
+      "error": "nightEndHour: Too small: expected int to be >=-9007199254740991; nightEndHour: Too small: expected number to be >=0"
+    },
+    { "field": "timezone", "text": "Europe/Helsinki", "error": null },
+    {
+      "field": "timezone",
+      "text": "FI",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    {
+      "field": "timezone",
+      "text": "SE3",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    {
+      "field": "timezone",
+      "text": "UTC",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    {
+      "field": "timezone",
+      "text": "",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    {
+      "field": "timezone",
+      "text": "europe/helsinki",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    {
+      "field": "timezone",
+      "text": "fi",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    {
+      "field": "timezone",
+      "text": "GER",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    {
+      "field": "timezone",
+      "text": "DE",
+      "error": "timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\""
+    },
+    { "field": "timezone", "text": "Europe/Berlin", "error": null },
+    {
+      "field": "area",
+      "text": "Europe/Helsinki",
+      "error": "area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    },
+    { "field": "area", "text": "FI", "error": null },
+    { "field": "area", "text": "SE3", "error": null },
+    {
+      "field": "area",
+      "text": "UTC",
+      "error": "area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    },
+    {
+      "field": "area",
+      "text": "",
+      "error": "area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    },
+    {
+      "field": "area",
+      "text": "europe/helsinki",
+      "error": "area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    },
+    {
+      "field": "area",
+      "text": "fi",
+      "error": "area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    },
+    { "field": "area", "text": "GER", "error": null },
+    {
+      "field": "area",
+      "text": "DE",
+      "error": "area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    },
+    {
+      "field": "area",
+      "text": "Europe/Berlin",
+      "error": "area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    },
+    {
+      "field": "*",
+      "error": "marginCentsKwh: Too small: expected number to be >=0; vatPercent: Too big: expected number to be <=100; nightStartHour: Invalid input: expected int, received number; nightEndHour: Too big: expected number to be <=23; timezone: Invalid option: expected one of \"Europe/Amsterdam\"|\"Europe/Berlin\"|\"Europe/Brussels\"|\"Europe/Copenhagen\"|\"Europe/Helsinki\"|\"Europe/Oslo\"|\"Europe/Paris\"|\"Europe/Riga\"|\"Europe/Stockholm\"|\"Europe/Tallinn\"|\"Europe/Vienna\"|\"Europe/Vilnius\"|\"Europe/Warsaw\"; area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+    }
+  ]
+}

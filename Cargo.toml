@@ -1,0 +1,99 @@
+# The Rust workspace: the pure domain crate, the server crate, and the offline
+# forecast tools.
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+# crates/server/Cargo.toml repeats these values for Railpack. Keep them equal.
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+publish = false
+license = "LicenseRef-Proprietary"
+
+# STACK.md §6 records the reason of each dependency. Pin each version exactly
+# and enable only the features that the code uses. Each crate inherits its
+# entries with `workspace = true`.
+[workspace.dependencies]
+# The path dependency has a version, so cargo-deny does not see a wildcard.
+spot-price-domain = { path = "crates/domain", version = "=0.1.0" }
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
+croner = { version = "=4.0.1", default-features = false, features = ["jiff"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+jiff = { version = "=0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
+jiff-sqlx = { version = "=0.2.0", default-features = false, features = ["postgres"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "gzip", "query"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+# `float_roundtrip` parses each number to the nearest double, like JavaScript.
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
+# `tls-rustls-aws-lc-rs`: TLS to PostgreSQL when the server offers it, with
+# the rustls provider of reqwest; a second provider makes `sslmode=verify-ca`
+# panic. With `prefer` or `require`, SQLx does not verify the certificate
+# (STACK.md §5). `sqlx-toml` reads crates/server/sqlx.toml, which maps
+# TIMESTAMPTZ to Jiff.
+sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "json", "sqlx-toml", "tls-rustls-aws-lc-rs"] }
+thiserror = "=2.0.21"
+tokio = { version = "=1.53.2", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal"] }
+tower = { version = "=0.5.3", default-features = false, features = ["util"] }
+# 0.6, not 0.7: reqwest already depends on 0.6.11, so the graph has one copy.
+tower-http = { version = "=0.6.11", default-features = false, features = ["catch-panic", "set-header"] }
+tracing = { version = "=0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["registry", "std"] }
+# http-server
+# Random bytes of session tokens, API keys, ids, and password salts. Already
+# in the graph through the RustCrypto crates.
+getrandom = { version = "=0.4.3", default-features = false, features = ["std"] }
+# The Better Auth password hash: scrypt N=16384, r=16, p=1, 64 bytes.
+scrypt = { version = "=0.12.0", default-features = false }
+# The SHA-256 hash of a stored session token. Already in the graph (scrypt).
+sha2 = { version = "=0.11.1", default-features = false }
+# Constant-time comparison of a password hash.
+subtle = { version = "=2.6.1", default-features = false, features = ["std"] }
+# NFKC normalization of a password, like `String.prototype.normalize`.
+# Already in the graph through SQLx.
+unicode-normalization = { version = "=0.1.25", default-features = false, features = ["std"] }
+# The OpenAPI 3.1 document of the API routes (contract/openapi.json).
+utoipa = { version = "=6.0.0", default-features = false, features = ["macros", "preserve_order"] }
+utoipa-axum = "=0.3.0"
+
+# The lints of the default Rust profile (STACK.md §1). Each crate inherits
+# them with `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+unfulfilled_lint_expectations = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+let_underscore_must_use = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
+
+# http-server
+# A debug build of scrypt takes seconds per password hash. The tests and
+# local development use the optimized code of these crates only.
+[profile.dev.package.scrypt]
+opt-level = 3
+
+[profile.dev.package.salsa20]
+opt-level = 3
+
+[profile.dev.package.pbkdf2]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3

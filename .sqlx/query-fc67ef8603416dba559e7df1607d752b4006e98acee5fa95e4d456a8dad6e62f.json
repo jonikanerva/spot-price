@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM fingrid_forecasts WHERE issued_at < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fc67ef8603416dba559e7df1607d752b4006e98acee5fa95e4d456a8dad6e62f"
+}

@@ -20,7 +20,7 @@ Help a single household shift its flexible loads to the cheapest electricity in 
 
 - **Users:** one household per instance, run by a Home Assistant enthusiast who can self-host a small service.
 - **Callers:** home automations and scripts that poll the REST API with an API key. A person uses the web UI only for setup.
-- **Environment:** one Node process and one PostgreSQL database on Railway. Prices cover the user's Nord Pool delivery area; the forecast covers Finland only.
+- **Environment:** one self-hosted service instance with its own database. Prices cover the user's Nord Pool delivery area; the forecast covers Finland only.
 - **Conditions that affect success:** Nord Pool publishes day-ahead prices once a day and can be late. Upstreams can fail. DST changes the length of a delivery day. An automation must get a clear answer in every case.
 
 ## Core Principles
@@ -30,7 +30,7 @@ Help a single household shift its flexible loads to the cheapest electricity in 
 - **Self-hosted and single-tenant.** One instance, one household. No multi-tenant machinery, no growth funnel — keep it simple to run.
 - **UTC inside, local time at the edge.** Store, schedule and calculate in UTC; convert to the user's timezone only in the response. This is what keeps night-rate and DST handling correct.
 - **Nord Pool is the price source.** Published prices come from the Nord Pool Data Portal. We don't blend in other price feeds or invent a price when Nord Pool is silent — the price endpoints just say "not published yet". The forecast is a clearly-labelled estimate, kept separate from real prices.
-- **Simple, typed, testable math.** Price and forecast calculations are pure, inspectable functions (incl. regularized linear regression), strictly typed, and testable without a database or network.
+- **Simple, inspectable math.** Price and forecast calculations are transparent rules (the forecast uses regularized linear regression at most) and are testable without live upstream data.
 
 ---
 
@@ -39,7 +39,7 @@ Help a single household shift its flexible loads to the cheapest electricity in 
 1. Register on the self-hosted instance (registration can be capped or closed).
 2. Configure contract settings: area, margin, day/night transfer, tax, VAT, night-rate window, timezone.
 3. Generate an API key in the web UI.
-4. A cron fetches Nord Pool day-ahead prices into PostgreSQL; a lighter job fetches Finnish grid data (Fingrid) for the forecast.
+4. A scheduled job fetches Nord Pool day-ahead prices and stores them; a lighter job fetches Finnish grid data (Fingrid) for the forecast.
 5. Home automation calls `/api/v1/price/now`, `/today`, `/tomorrow`, `/cheapest?duration=N`, or the forecast endpoint, and acts on the response.
 
 Caller-visible states: a typed success; "not published yet" (`available: false` or `404`) when Nord Pool has no price, never an estimate; a forecast that says the data is not good enough instead of guessing; and a typed error for bad input, a missing or wrong API key, or a rate limit.
@@ -91,19 +91,19 @@ It's working when the user can say:
 
 ## Persistence and Privacy Posture
 
-| Data or capability                                                     | Purpose                                                            | Storage or recipient                                        | Retention or expiry                                                                         |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| User account (username, hashed password), sessions                     | Sign in to the setup UI (Better Auth)                              | PostgreSQL                                                  | Until the account is removed; sessions expire. Session rows never keep the IP or user agent |
-| Contract settings, one row per user                                    | Turn spot price into total price                                   | PostgreSQL                                                  | Until the user changes them                                                                 |
-| API keys, plaintext                                                    | Authenticate automations; the setup UI re-displays the current key | PostgreSQL                                                  | Until the user regenerates the key, which deletes the old one                               |
-| Nord Pool day-ahead prices (public)                                    | Real prices and the cheapest window                                | PostgreSQL; fetched from `dataportal-api.nordpoolgroup.com` | Kept; no pruning                                                                            |
-| Fingrid wind and consumption actuals (public)                          | Forecast inputs                                                    | PostgreSQL; fetched from `data.fingrid.fi`                  | `RETENTION_DAYS` (730 days)                                                                 |
-| Fingrid forecast vintages (public)                                     | Forecast inputs without look-ahead                                 | PostgreSQL; fetched from `data.fingrid.fi`                  | `VINTAGE_RETENTION_DAYS` (180 days)                                                         |
-| OpenWeatherMap hourly and daily forecasts for fixed FI points (public) | Future forecast inputs                                             | PostgreSQL; fetched from `api.openweathermap.org`           | `WEATHER_RETENTION_DAYS` (400 days)                                                         |
-| Rate-limit counters                                                    | Abuse protection                                                   | Process memory only                                         | Lost on restart                                                                             |
+| Data or capability                                                     | Purpose                                                            | Storage or recipient                                              | Retention or expiry                                                                         |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| User account (username, hashed password), sessions                     | Sign in to the setup UI                                            | Service database                                                  | Until the account is removed; sessions expire. Session rows never keep the IP or user agent |
+| Contract settings, one row per user                                    | Turn spot price into total price                                   | Service database                                                  | Until the user changes them                                                                 |
+| API keys, plaintext                                                    | Authenticate automations; the setup UI re-displays the current key | Service database                                                  | Until the user regenerates the key, which deletes the old one                               |
+| Nord Pool day-ahead prices (public)                                    | Real prices and the cheapest window                                | Service database; fetched from `dataportal-api.nordpoolgroup.com` | Kept; no pruning                                                                            |
+| Fingrid wind and consumption actuals (public)                          | Forecast inputs                                                    | Service database; fetched from `data.fingrid.fi`                  | `RETENTION_DAYS` (730 days)                                                                 |
+| Fingrid forecast vintages (public)                                     | Forecast inputs without look-ahead                                 | Service database; fetched from `data.fingrid.fi`                  | `VINTAGE_RETENTION_DAYS` (180 days)                                                         |
+| OpenWeatherMap hourly and daily forecasts for fixed FI points (public) | Future forecast inputs                                             | Service database; fetched from `api.openweathermap.org`           | `WEATHER_RETENTION_DAYS` (400 days)                                                         |
+| Rate-limit counters                                                    | Abuse protection                                                   | Process memory only                                               | Lost on restart                                                                             |
 
 - **Forbidden data flows:** household consumption, meter readings, location beyond an area code, per-user request logs, request bodies, and IPs beyond what in-memory rate limiting needs. No data goes to any recipient other than the three upstreams above.
-- **Telemetry and diagnostics:** none. Process logs on Railway only; keep API keys, passwords, tokens, and personal data out of them.
+- **Telemetry and diagnostics:** none. Process logs of the hosting platform only; keep API keys, passwords, tokens, and personal data out of them.
 - **Approved deletion policies:** the scheduled jobs prune Fingrid actuals, Fingrid forecast vintages, and weather forecasts older than their retention constants in the table above. Regenerating an API key deletes the previous key. Any other deletion or rewrite of production data needs owner approval.
 
 ## Audience & Voice

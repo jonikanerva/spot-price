@@ -1,0 +1,321 @@
+{
+  "note": "Values come from the real Better Auth code with a seeded random source; ids, salts and tokens are examples of the format, not values the Rust service must reproduce.",
+  "passwordVectors": [
+    {
+      "label": "ascii",
+      "password": "password123",
+      "utf16Length": 11,
+      "codePoints": 11,
+      "nfkc": "password123",
+      "hash": "15d23c37ee2abc4375a5714293ac6a15:07a09137d933ff3fd2dbcdcb0ad5024860cc4103d76f41b9e65c9f828d840504168a6546f770c475da0783e718ba05008abc6ceab599a4ede8f6e6dfaed3ca0a",
+      "verify": [
+        { "candidate": "password123", "result": true },
+        { "candidate": "password124", "result": false },
+        { "candidate": "Password123", "result": false },
+        { "candidate": "", "result": false }
+      ]
+    },
+    {
+      "label": "ascii-8-min-length",
+      "password": "12345678",
+      "utf16Length": 8,
+      "codePoints": 8,
+      "nfkc": "12345678",
+      "hash": "08e310df28389a90425d3a32108f4968:700d4273cdbd2c57ddecc9cc76634fda55ead79d87932aa48300ecfa955cf009849e0af09d1a5760d65c4f7e1a661707b6327e1bbae4d422c192ae7b7ca2a219",
+      "verify": [
+        { "candidate": "12345678", "result": true },
+        { "candidate": "1234567", "result": false }
+      ]
+    },
+    {
+      "label": "ascii-128-max-length",
+      "password": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+      "utf16Length": 128,
+      "codePoints": 128,
+      "nfkc": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+      "hash": "deb9169866707dbd6423a69c1f7ad827:17d4cd030c85ad3cd902642ce49d2df953e2c3e6e1f6a45eafdb959f2e04d7338afcdc71d3143e1f9fb585c0e5cb6f6a37b505cca1a5e7b452ebccc98c955a1f",
+      "verify": [
+        {
+          "candidate": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "result": true
+        },
+        {
+          "candidate": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+          "result": false
+        }
+      ]
+    },
+    {
+      "label": "ascii-7-below-min",
+      "password": "1234567",
+      "utf16Length": 7,
+      "codePoints": 7,
+      "nfkc": "1234567",
+      "hash": "986d2b6231eee2aaa561ec849e7cef19:ffb1ad05cf8ec39c33dc0b8fd9966990771316ac381f1f0be9f513f18f95ffbd7b59d4a48539c71a6bd8e9a6527b1d62e1d8441c33af1bae869582d7aef50c2c",
+      "verify": [{ "candidate": "1234567", "result": true }]
+    },
+    {
+      "label": "fullwidth-nfkc",
+      "password": "ｐａｓｓｗｏｒｄ１２",
+      "utf16Length": 10,
+      "codePoints": 10,
+      "nfkc": "password12",
+      "hash": "13b491cb8a6506790574cecc7ca0bef0:039487d849fdec305262dd746c480d6cc8bf5871d3e84c1f6201196bdab8758467960a84ee8804f0cb8bd751e1daaba89980c579525509e04d2d2be1df93d41f",
+      "verify": [
+        { "candidate": "ｐａｓｓｗｏｒｄ１２", "result": true },
+        { "candidate": "password12", "result": true }
+      ]
+    },
+    {
+      "label": "composed-e-acute",
+      "password": "café-pass",
+      "utf16Length": 9,
+      "codePoints": 9,
+      "nfkc": "café-pass",
+      "hash": "d34d1a52d7a3c2e7b0368dddf4650cb7:2c1d4ccde97dd330998c46c923d360357c0284c72dfe8345b0f4fd78ec9ad46d9cd23b482e281b71639df9fefb3d9ac27259acef75adad1212b0aca452599fa3",
+      "verify": [
+        { "candidate": "café-pass", "result": true },
+        { "candidate": "café-pass", "result": true },
+        { "candidate": "cafe-pass", "result": false }
+      ]
+    },
+    {
+      "label": "decomposed-e-acute",
+      "password": "café-pass",
+      "utf16Length": 10,
+      "codePoints": 10,
+      "nfkc": "café-pass",
+      "hash": "8adbbc7dd7587c3c2a442beb9d1e774b:5a3b27be98829b3ad766b71ddb7aaea0c738c376eafe02967016c54bfe8c1894d27ca726d75fdc1532859f99167a42683d8520621ef0aef167483d2358a30bb5",
+      "verify": [
+        { "candidate": "café-pass", "result": true },
+        { "candidate": "café-pass", "result": true }
+      ]
+    },
+    {
+      "label": "ligature-fi-nfkc-changes-length",
+      "password": "ﬁﬁﬁﬁﬁﬁﬁﬁ",
+      "utf16Length": 8,
+      "codePoints": 8,
+      "nfkc": "fifififififififi",
+      "hash": "765c0a8b7e852a968caed7c2d50904ab:b5894d987810eedeba18b6de3612309dab1ca2031fe82fda825ad2ed34c3aa37371f0d56aaed7afd2481e741db145c8440e8887efe5229c7d18f0c32f072daa2",
+      "verify": [
+        { "candidate": "ﬁﬁﬁﬁﬁﬁﬁﬁ", "result": true },
+        { "candidate": "fifififififififi", "result": true }
+      ]
+    },
+    {
+      "label": "emoji-astral",
+      "password": "🔑🔑🔑🔑",
+      "utf16Length": 8,
+      "codePoints": 4,
+      "nfkc": "🔑🔑🔑🔑",
+      "hash": "9da514d8269bb5f2975dae7ce74f38bf:68f88712283ada970b563054a55023d932403a83e42f291e9a2410e564d7d4344deb52cda7e909ff6d88252f1c98a49e5ccf6ea67431d1e5ecb0366a283f30e1",
+      "verify": [
+        { "candidate": "🔑🔑🔑🔑", "result": true },
+        { "candidate": "🔑🔑🔑", "result": false }
+      ]
+    },
+    {
+      "label": "spaces-and-kana",
+      "password": " パスワード 1234 ",
+      "utf16Length": 12,
+      "codePoints": 12,
+      "nfkc": " パスワード 1234 ",
+      "hash": "329265530501ab398588208111ba67b5:8e14f4658a4fed60577aa188374582ebd5ecf0ae5b5a30d9960cbe7afee5dcdd8a34e79224057608503224d8922665b324027ad3c529ec4045ab00d539882294",
+      "verify": [
+        { "candidate": " パスワード 1234 ", "result": true },
+        { "candidate": "パスワード 1234", "result": false }
+      ]
+    }
+  ],
+  "signup": {
+    "clock": "2026-10-24T09:07:30.000Z",
+    "request": { "username": "vectoruser", "password": "vector-password-1" },
+    "response": {
+      "status": 200,
+      "setCookie": [
+        "better-auth.session_token=ZDZ0qMkoWfnm9nGt7L8nC1UcdHUmetJE.jAlhs4l3VIZiKrPf9F3NIyuSML9PALCTqg%2Fq6EwK9xk%3D; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax"
+      ],
+      "body": "{\"token\":\"ZDZ0qMkoWfnm9nGt7L8nC1UcdHUmetJE\",\"user\":{\"name\":\"vectoruser\",\"email\":\"vectoruser@local.spot\",\"emailVerified\":false,\"image\":null,\"createdAt\":\"2026-10-24T09:07:30.000Z\",\"updatedAt\":\"2026-10-24T09:07:30.000Z\",\"id\":\"cUkr92N1FI2kOtD8GPXjfDrNf7wdnMCV\"}}"
+    },
+    "rows": {
+      "user": [
+        {
+          "id": "cUkr92N1FI2kOtD8GPXjfDrNf7wdnMCV",
+          "name": "vectoruser",
+          "email": "vectoruser@local.spot",
+          "emailVerified": false,
+          "image": null,
+          "createdAt": "2026-10-24T09:07:30.000Z",
+          "updatedAt": "2026-10-24T09:07:30.000Z"
+        }
+      ],
+      "account": [
+        {
+          "id": "iP9ZXxuGtdIFY2vu3SwMv5G1aKIEuUia",
+          "accountId": "cUkr92N1FI2kOtD8GPXjfDrNf7wdnMCV",
+          "providerId": "credential",
+          "userId": "cUkr92N1FI2kOtD8GPXjfDrNf7wdnMCV",
+          "accessToken": null,
+          "refreshToken": null,
+          "idToken": null,
+          "accessTokenExpiresAt": null,
+          "refreshTokenExpiresAt": null,
+          "scope": null,
+          "password": "5465fa5547e68ea582aa972f86dbd156:11e91168c821a657e2a8814beee8f690db30b16e31b8279f9cd1616947808a55f604c9a03f4bc6d7a45b1b0aa31258e229a8ceff515874555a66d0876fd31777",
+          "createdAt": "2026-10-24T09:07:30.000Z",
+          "updatedAt": "2026-10-24T09:07:30.000Z"
+        }
+      ],
+      "session": [
+        {
+          "id": "IgkWw2z0RKMI3kaoJs5YmE0FPTkDLx6i",
+          "expiresAt": "2026-10-31T09:07:30.000Z",
+          "token": "ZDZ0qMkoWfnm9nGt7L8nC1UcdHUmetJE",
+          "createdAt": "2026-10-24T09:07:30.000Z",
+          "updatedAt": "2026-10-24T09:07:30.000Z",
+          "ipAddress": null,
+          "userAgent": null,
+          "userId": "cUkr92N1FI2kOtD8GPXjfDrNf7wdnMCV"
+        }
+      ],
+      "usernames": [
+        {
+          "user_id": "cUkr92N1FI2kOtD8GPXjfDrNf7wdnMCV",
+          "username": "vectoruser",
+          "created_at": "<volatile: database NOW()>"
+        }
+      ],
+      "user_settings": [
+        {
+          "user_id": "cUkr92N1FI2kOtD8GPXjfDrNf7wdnMCV",
+          "margin_cents_kwh": 0.49,
+          "transfer_day_cents_kwh": 2.92,
+          "transfer_night_cents_kwh": 1.37,
+          "tax_cents_kwh": 2.82752,
+          "vat_percent": 25.5,
+          "night_start_hour": 22,
+          "night_end_hour": 7,
+          "timezone": "Europe/Helsinki",
+          "area": "FI",
+          "updated_at": "2026-10-24T09:07:30.000Z"
+        }
+      ],
+      "api_keys": []
+    },
+    "sessionTokenFromDb": "ZDZ0qMkoWfnm9nGt7L8nC1UcdHUmetJE",
+    "cookieMatchesSignedToken": true
+  },
+  "direct": [
+    {
+      "label": "signUpEmail-too-short",
+      "status": 400,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [],
+      "body": "{\"message\":\"Password too short\",\"code\":\"PASSWORD_TOO_SHORT\"}"
+    },
+    {
+      "label": "signUpEmail-too-long",
+      "status": 400,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [],
+      "body": "{\"message\":\"Password too long\",\"code\":\"PASSWORD_TOO_LONG\"}"
+    },
+    {
+      "label": "signUpEmail-existing-email",
+      "status": 422,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [],
+      "body": "{\"message\":\"User already exists. Use another email.\",\"code\":\"USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL\"}"
+    },
+    {
+      "label": "signUpEmail-invalid-email",
+      "status": 400,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [],
+      "body": "{\"message\":\"[body.email] Invalid email address\",\"code\":\"VALIDATION_ERROR\"}"
+    },
+    {
+      "label": "signUpEmail-autoSignIn",
+      "status": 200,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [
+        "better-auth.session_token=8AI3LeexeqHQtIuCvUz4jvQ8apKyhgWO.xYzVi9zAXYwLt8jnAkLf3UCNh0e7tJLSMNoOeIRUgKY%3D; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax"
+      ],
+      "body": "{\"token\":\"8AI3LeexeqHQtIuCvUz4jvQ8apKyhgWO\",\"user\":{\"name\":\"auto\",\"email\":\"auto@local.spot\",\"emailVerified\":false,\"image\":null,\"createdAt\":\"2026-10-24T09:07:30.000Z\",\"updatedAt\":\"2026-10-24T09:07:30.000Z\",\"id\":\"aj9kKy23KzFKz3ke9c0bqk1ZShhI6XrS\"}}"
+    },
+    {
+      "label": "signInEmail-wrong-password",
+      "status": 401,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [],
+      "body": "{\"message\":\"Invalid email or password\",\"code\":\"INVALID_EMAIL_OR_PASSWORD\"}"
+    },
+    {
+      "label": "signInEmail-unknown-email",
+      "status": 401,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [],
+      "body": "{\"message\":\"Invalid email or password\",\"code\":\"INVALID_EMAIL_OR_PASSWORD\"}"
+    },
+    {
+      "label": "signInEmail-short-password",
+      "status": 401,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [],
+      "body": "{\"message\":\"Invalid email or password\",\"code\":\"INVALID_EMAIL_OR_PASSWORD\"}"
+    },
+    {
+      "label": "signInEmail-correct",
+      "status": 200,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [
+        "better-auth.session_token=kIVzbS90RCd1LUgKqcQZJ0EzclwymcDG.fsmRjyylvlCEj8hzPqODq19ZGCg6LhX%2FC6CVUgBAS2k%3D; Max-Age=604800; Path=/; HttpOnly; SameSite=Lax"
+      ],
+      "body": "{\"redirect\":false,\"token\":\"kIVzbS90RCd1LUgKqcQZJ0EzclwymcDG\",\"user\":{\"name\":\"alice\",\"email\":\"alice@local.spot\",\"emailVerified\":false,\"image\":null,\"createdAt\":\"2026-09-01T08:00:00.000Z\",\"updatedAt\":\"2026-09-01T08:00:00.000Z\",\"id\":\"goldenUserAlice00000000000000001\"}}"
+    },
+    {
+      "label": "signInEmail-rememberMe-false",
+      "status": 200,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [
+        "better-auth.session_token=XRsBkLJdmNEICFB6nW7pYiHh6dGxe1Ei.o8%2F7ef9zLWu1%2F58%2BpXRa772CCgI1lKmmRI4r8uMZzsY%3D; Path=/; HttpOnly; SameSite=Lax",
+        "better-auth.dont_remember=true.CwcUfMadTi2qL%2FwKc%2Fv4lrC0vAzla0l8kadN3zv60Mk%3D; Path=/; HttpOnly; SameSite=Lax"
+      ],
+      "body": "{\"redirect\":false,\"token\":\"XRsBkLJdmNEICFB6nW7pYiHh6dGxe1Ei\",\"user\":{\"name\":\"alice\",\"email\":\"alice@local.spot\",\"emailVerified\":false,\"image\":null,\"createdAt\":\"2026-09-01T08:00:00.000Z\",\"updatedAt\":\"2026-09-01T08:00:00.000Z\",\"id\":\"goldenUserAlice00000000000000001\"}}"
+    },
+    {
+      "label": "signOut-without-cookie",
+      "status": 200,
+      "headers": { "content-type": "application/json" },
+      "setCookie": [
+        "better-auth.session_token=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
+        "better-auth.session_data=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
+        "better-auth.dont_remember=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax"
+      ],
+      "body": "{\"success\":true}"
+    }
+  ],
+  "cookieVectors": [
+    {
+      "token": "goldenTokenAliceValid00000000001",
+      "secret": "golden-http-fixture-secret-0123456789abcdef",
+      "cookieValue": "goldenTokenAliceValid00000000001.dAAV8roS7lCjZsLZYxHeWwzYr6hz%2BR1mGKh%2FKrPwrJw%3D"
+    },
+    {
+      "token": "goldenTokenAliceExpired000000002",
+      "secret": "golden-http-fixture-secret-0123456789abcdef",
+      "cookieValue": "goldenTokenAliceExpired000000002.ipei%2BptxCxnTZN6LPliKVCRgUZKCsolOqz9u%2BgAREX4%3D"
+    },
+    {
+      "token": "goldenTokenGraceValid00000000003",
+      "secret": "golden-http-fixture-secret-0123456789abcdef",
+      "cookieValue": "goldenTokenGraceValid00000000003.4XpgJi2ndskwwVa2uPHQcpAg5gQjuFskIp40kVBzeeM%3D"
+    },
+    {
+      "token": "goldenTokenBobOld000000000000004",
+      "secret": "golden-http-fixture-secret-0123456789abcdef",
+      "cookieValue": "goldenTokenBobOld000000000000004.yA1jbJyrn9QX0PQ75Z9qmprPTKPLatUnbfu0OhYvnBQ%3D"
+    }
+  ]
+}

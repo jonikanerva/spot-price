@@ -1,0 +1,45 @@
+[package]
+name = "spot-price-server"
+version = "0.1.0"
+description = "Spot-price REST API, setup UI, and scheduled data fetch jobs"
+# Railpack cannot read inherited package fields in the binary crate
+# (STACK.md §15). Keep these values equal to the workspace values.
+edition = "2024"
+rust-version = "1.99"
+publish = false
+license = "LicenseRef-Proprietary"
+
+[[bin]]
+name = "spot-price"
+path = "src/main.rs"
+
+[dependencies]
+spot-price-domain.workspace = true
+axum.workspace = true
+croner.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+jiff.workspace = true
+jiff-sqlx.workspace = true
+subtle.workspace = true
+reqwest.workspace = true
+scrypt.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-normalization.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tower.workspace = true
+
+[lints]
+workspace = true

@@ -1,67 +1,17 @@
 {
   "name": "spot-price",
   "version": "0.1.0",
-  "description": "Finnish spot electricity price API with total price calculation and cheapest window finder",
+  "private": true,
+  "description": "Development tools of the spot-price Rust service: Playwright journeys and Prettier",
   "type": "module",
   "packageManager": "pnpm@10.30.0",
   "engines": {
     "node": ">=24.15.0"
   },
-  "scripts": {
-    "dev": "tsx watch --env-file=.env src/index.ts",
-    "build": "tsup && pnpm copy:migrations",
-    "start": "node dist/index.js",
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "audit:deps": "pnpm audit --prod --audit-level high",
-    "smoke": "bash ./scripts/smoke-local.sh",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "tsx e2e/global-setup.ts && playwright test",
-    "test:all": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm audit:deps && pnpm test && pnpm build",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tools/tsconfig.json",
-    "seed": "tsx --env-file=.env src/seed.ts",
-    "backtest": "tsx --env-file=.env tools/backtest-cli.ts",
-    "revision-magnitude": "tsx --env-file=.env tools/revision-magnitude-cli.ts",
-    "db:up": "docker compose up -d --wait postgres",
-    "db:down": "docker compose down",
-    "copy:migrations": "mkdir -p dist/migrations && cp src/migrations/*.sql dist/migrations/"
-  },
-  "dependencies": {
-    "@hono/node-server": "^2.1.3",
-    "@hono/zod-openapi": "^1.4.0",
-    "@scalar/hono-api-reference": "^0.10.20",
-    "better-auth": "^1.6.33",
-    "hono": "^4.13.13",
-    "hono-rate-limiter": "^0.5.3",
-    "node-cron": "^4.2.1",
-    "pg": "^8.20.0",
-    "zod": "^4.4.3"
-  },
   "devDependencies": {
-    "@better-auth/cli": "^1.4.21",
-    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@types/node": "^25.8.0",
-    "@types/node-cron": "^3.0.11",
-    "@types/pg": "^8.20.0",
-    "eslint": "^10.4.0",
     "prettier": "^3.8.3",
-    "tsup": "^8.5.1",
-    "tsx": "^4.22.1",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.59.3",
-    "vite": "^7.3.6",
-    "vitest": "^4.1.11"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ],
-    "overrides": {
-      "drizzle-orm@<0.45.2": "^0.45.2",
-      "nanoid@>=4.0.0 <5.1.16": "^5.1.16"
-    }
+    "typescript": "^5.9.3"
   }
 }

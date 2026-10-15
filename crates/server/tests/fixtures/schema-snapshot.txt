@@ -1,0 +1,185 @@
+column|account|001|id|text|not null||||
+column|account|002|accountId|text|not null||||
+column|account|003|providerId|text|not null||||
+column|account|004|userId|text|not null||||
+column|account|005|accessToken|text|null||||
+column|account|006|refreshToken|text|null||||
+column|account|007|idToken|text|null||||
+column|account|008|accessTokenExpiresAt|timestamp with time zone|null||||
+column|account|009|refreshTokenExpiresAt|timestamp with time zone|null||||
+column|account|010|scope|text|null||||
+column|account|011|password|text|null||||
+column|account|012|createdAt|timestamp with time zone|not null||||
+column|account|013|updatedAt|timestamp with time zone|not null||||
+column|api_keys|001|id|text|not null||||
+column|api_keys|002|user_id|text|not null||||
+column|api_keys|003|key_plaintext|text|not null||||
+column|api_keys|004|created_at|timestamp with time zone|not null|now()|||
+column|api_keys|005|last_used_at|timestamp with time zone|null||||
+column|fingrid_actuals|001|dataset_id|integer|not null||||
+column|fingrid_actuals|002|start_time|timestamp with time zone|not null||||
+column|fingrid_actuals|003|end_time|timestamp with time zone|not null||||
+column|fingrid_actuals|004|value|double precision|not null||||
+column|fingrid_actuals|005|fetched_at|timestamp with time zone|not null|now()|||
+column|fingrid_forecasts|001|dataset_id|integer|not null||||
+column|fingrid_forecasts|002|issued_at|timestamp with time zone|not null||||
+column|fingrid_forecasts|003|start_time|timestamp with time zone|not null||||
+column|fingrid_forecasts|004|end_time|timestamp with time zone|not null||||
+column|fingrid_forecasts|005|value|double precision|not null||||
+column|fingrid_forecasts|006|fetched_at|timestamp with time zone|not null|now()|||
+column|prices|001|id|integer|not null|nextval('prices_id_seq'::regclass)|||
+column|prices|002|delivery_start|timestamp with time zone|not null||||
+column|prices|003|delivery_end|timestamp with time zone|not null||||
+column|prices|004|price_eur_mwh|double precision|not null||||
+column|prices|005|area|text|not null|'FI'::text|||
+column|prices|006|fetched_at|timestamp with time zone|not null|now()|||
+column|session|001|id|text|not null||||
+column|session|002|expiresAt|timestamp with time zone|not null||||
+column|session|003|token|text|not null||||
+column|session|004|createdAt|timestamp with time zone|not null||||
+column|session|005|updatedAt|timestamp with time zone|not null||||
+column|session|006|ipAddress|text|null||||
+column|session|007|userAgent|text|null||||
+column|session|008|userId|text|not null||||
+column|user_settings|001|user_id|text|not null||||
+column|user_settings|002|margin_cents_kwh|double precision|not null|0.49|||
+column|user_settings|003|transfer_day_cents_kwh|double precision|not null|2.92|||
+column|user_settings|004|transfer_night_cents_kwh|double precision|not null|1.37|||
+column|user_settings|005|tax_cents_kwh|double precision|not null|2.82752|||
+column|user_settings|006|vat_percent|double precision|not null|25.5|||
+column|user_settings|007|night_start_hour|integer|not null|22|||
+column|user_settings|008|night_end_hour|integer|not null|7|||
+column|user_settings|009|timezone|text|not null|'Europe/Helsinki'::text|||
+column|user_settings|010|area|text|not null|'FI'::text|||
+column|user_settings|011|updated_at|timestamp with time zone|not null|now()|||
+column|usernames|001|user_id|text|not null||||
+column|usernames|002|username|text|not null||||
+column|usernames|003|created_at|timestamp with time zone|not null|now()|||
+column|user|001|id|text|not null||||
+column|user|002|name|text|not null||||
+column|user|003|email|text|not null||||
+column|user|004|emailVerified|boolean|not null||||
+column|user|005|image|text|null||||
+column|user|006|createdAt|timestamp with time zone|not null||||
+column|user|007|updatedAt|timestamp with time zone|not null||||
+column|verification|001|id|text|not null||||
+column|verification|002|identifier|text|not null||||
+column|verification|003|value|text|not null||||
+column|verification|004|expiresAt|timestamp with time zone|not null||||
+column|verification|005|createdAt|timestamp with time zone|not null||||
+column|verification|006|updatedAt|timestamp with time zone|not null||||
+column|weather_daily_forecasts|001|point_id|text|not null||||
+column|weather_daily_forecasts|002|issued_at|timestamp with time zone|not null||||
+column|weather_daily_forecasts|003|target_date|date|not null||||
+column|weather_daily_forecasts|004|target_dt|timestamp with time zone|not null||||
+column|weather_daily_forecasts|005|temp_morn|double precision|not null||||
+column|weather_daily_forecasts|006|temp_day|double precision|not null||||
+column|weather_daily_forecasts|007|temp_eve|double precision|not null||||
+column|weather_daily_forecasts|008|temp_night|double precision|not null||||
+column|weather_daily_forecasts|009|temp_min|double precision|not null||||
+column|weather_daily_forecasts|010|temp_max|double precision|not null||||
+column|weather_daily_forecasts|011|clouds|double precision|not null||||
+column|weather_daily_forecasts|012|uvi|double precision|not null||||
+column|weather_daily_forecasts|013|sunrise|timestamp with time zone|null||||
+column|weather_daily_forecasts|014|sunset|timestamp with time zone|null||||
+column|weather_daily_forecasts|015|fetched_at|timestamp with time zone|not null|now()|||
+column|weather_forecasts|001|point_id|text|not null||||
+column|weather_forecasts|002|issued_at|timestamp with time zone|not null||||
+column|weather_forecasts|003|target_time|timestamp with time zone|not null||||
+column|weather_forecasts|004|temp|double precision|not null||||
+column|weather_forecasts|005|clouds|double precision|not null||||
+column|weather_forecasts|006|uvi|double precision|not null||||
+column|weather_forecasts|007|wind_speed|double precision|not null||||
+column|weather_forecasts|008|wind_deg|double precision|not null||||
+column|weather_forecasts|009|fetched_at|timestamp with time zone|not null|now()|||
+constraint|account|account_pkey|p|PRIMARY KEY (id)
+constraint|account|account_userId_fkey|f|FOREIGN KEY ("userId") REFERENCES "user"(id) ON DELETE CASCADE
+constraint|api_keys|api_keys_pkey|p|PRIMARY KEY (id)
+constraint|fingrid_actuals|fingrid_actuals_pkey|p|PRIMARY KEY (dataset_id, start_time)
+constraint|fingrid_forecasts|fingrid_forecasts_pkey|p|PRIMARY KEY (dataset_id, issued_at, start_time)
+constraint|prices|prices_delivery_start_area_key|u|UNIQUE (delivery_start, area)
+constraint|prices|prices_pkey|p|PRIMARY KEY (id)
+constraint|session|session_pkey|p|PRIMARY KEY (id)
+constraint|session|session_token_key|u|UNIQUE (token)
+constraint|session|session_userId_fkey|f|FOREIGN KEY ("userId") REFERENCES "user"(id) ON DELETE CASCADE
+constraint|user_settings|user_settings_pkey|p|PRIMARY KEY (user_id)
+constraint|usernames|usernames_pkey|p|PRIMARY KEY (user_id)
+constraint|usernames|usernames_user_id_fkey|f|FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
+constraint|usernames|usernames_username_key|u|UNIQUE (username)
+constraint|user|user_email_key|u|UNIQUE (email)
+constraint|user|user_pkey|p|PRIMARY KEY (id)
+constraint|verification|verification_pkey|p|PRIMARY KEY (id)
+constraint|weather_daily_forecasts|weather_daily_forecasts_pkey|p|PRIMARY KEY (point_id, issued_at, target_date)
+constraint|weather_forecasts|weather_forecasts_pkey|p|PRIMARY KEY (point_id, issued_at, target_time)
+index|account|account_pkey|CREATE UNIQUE INDEX account_pkey ON public.account USING btree (id)
+index|account|account_userId_idx|CREATE INDEX "account_userId_idx" ON public.account USING btree ("userId")
+index|api_keys|api_keys_pkey|CREATE UNIQUE INDEX api_keys_pkey ON public.api_keys USING btree (id)
+index|api_keys|idx_api_keys_key_plaintext|CREATE UNIQUE INDEX idx_api_keys_key_plaintext ON public.api_keys USING btree (key_plaintext)
+index|api_keys|idx_api_keys_single_per_user|CREATE UNIQUE INDEX idx_api_keys_single_per_user ON public.api_keys USING btree (user_id)
+index|api_keys|idx_api_keys_user_id|CREATE INDEX idx_api_keys_user_id ON public.api_keys USING btree (user_id)
+index|fingrid_actuals|fingrid_actuals_pkey|CREATE UNIQUE INDEX fingrid_actuals_pkey ON public.fingrid_actuals USING btree (dataset_id, start_time)
+index|fingrid_actuals|idx_fingrid_actuals_dataset_start|CREATE INDEX idx_fingrid_actuals_dataset_start ON public.fingrid_actuals USING btree (dataset_id, start_time)
+index|fingrid_forecasts|fingrid_forecasts_pkey|CREATE UNIQUE INDEX fingrid_forecasts_pkey ON public.fingrid_forecasts USING btree (dataset_id, issued_at, start_time)
+index|fingrid_forecasts|idx_fingrid_forecasts_issued|CREATE INDEX idx_fingrid_forecasts_issued ON public.fingrid_forecasts USING btree (issued_at)
+index|fingrid_forecasts|idx_fingrid_forecasts_target_issued|CREATE INDEX idx_fingrid_forecasts_target_issued ON public.fingrid_forecasts USING btree (dataset_id, start_time, issued_at DESC)
+index|prices|idx_prices_area_delivery|CREATE INDEX idx_prices_area_delivery ON public.prices USING btree (area, delivery_start)
+index|prices|idx_prices_delivery_start|CREATE INDEX idx_prices_delivery_start ON public.prices USING btree (delivery_start)
+index|prices|prices_delivery_start_area_key|CREATE UNIQUE INDEX prices_delivery_start_area_key ON public.prices USING btree (delivery_start, area)
+index|prices|prices_pkey|CREATE UNIQUE INDEX prices_pkey ON public.prices USING btree (id)
+index|session|session_pkey|CREATE UNIQUE INDEX session_pkey ON public.session USING btree (id)
+index|session|session_token_key|CREATE UNIQUE INDEX session_token_key ON public.session USING btree (token)
+index|session|session_userId_idx|CREATE INDEX "session_userId_idx" ON public.session USING btree ("userId")
+index|user_settings|user_settings_pkey|CREATE UNIQUE INDEX user_settings_pkey ON public.user_settings USING btree (user_id)
+index|usernames|idx_usernames_username|CREATE UNIQUE INDEX idx_usernames_username ON public.usernames USING btree (username)
+index|usernames|usernames_pkey|CREATE UNIQUE INDEX usernames_pkey ON public.usernames USING btree (user_id)
+index|usernames|usernames_username_key|CREATE UNIQUE INDEX usernames_username_key ON public.usernames USING btree (username)
+index|user|user_email_key|CREATE UNIQUE INDEX user_email_key ON public."user" USING btree (email)
+index|user|user_pkey|CREATE UNIQUE INDEX user_pkey ON public."user" USING btree (id)
+index|verification|verification_identifier_idx|CREATE INDEX verification_identifier_idx ON public.verification USING btree (identifier)
+index|verification|verification_pkey|CREATE UNIQUE INDEX verification_pkey ON public.verification USING btree (id)
+index|weather_daily_forecasts|weather_daily_forecasts_pkey|CREATE UNIQUE INDEX weather_daily_forecasts_pkey ON public.weather_daily_forecasts USING btree (point_id, issued_at, target_date)
+index|weather_forecasts|idx_weather_forecasts_point_target|CREATE INDEX idx_weather_forecasts_point_target ON public.weather_forecasts USING btree (point_id, target_time)
+index|weather_forecasts|weather_forecasts_pkey|CREATE UNIQUE INDEX weather_forecasts_pkey ON public.weather_forecasts USING btree (point_id, issued_at, target_time)
+relation|S|p|prices_id_seq
+relation|i|p|account_pkey
+relation|i|p|account_userId_idx
+relation|i|p|api_keys_pkey
+relation|i|p|fingrid_actuals_pkey
+relation|i|p|fingrid_forecasts_pkey
+relation|i|p|idx_api_keys_key_plaintext
+relation|i|p|idx_api_keys_single_per_user
+relation|i|p|idx_api_keys_user_id
+relation|i|p|idx_fingrid_actuals_dataset_start
+relation|i|p|idx_fingrid_forecasts_issued
+relation|i|p|idx_fingrid_forecasts_target_issued
+relation|i|p|idx_prices_area_delivery
+relation|i|p|idx_prices_delivery_start
+relation|i|p|idx_usernames_username
+relation|i|p|idx_weather_forecasts_point_target
+relation|i|p|prices_delivery_start_area_key
+relation|i|p|prices_pkey
+relation|i|p|session_pkey
+relation|i|p|session_token_key
+relation|i|p|session_userId_idx
+relation|i|p|user_email_key
+relation|i|p|user_pkey
+relation|i|p|user_settings_pkey
+relation|i|p|usernames_pkey
+relation|i|p|usernames_username_key
+relation|i|p|verification_identifier_idx
+relation|i|p|verification_pkey
+relation|i|p|weather_daily_forecasts_pkey
+relation|i|p|weather_forecasts_pkey
+relation|r|p|account
+relation|r|p|api_keys
+relation|r|p|fingrid_actuals
+relation|r|p|fingrid_forecasts
+relation|r|p|prices
+relation|r|p|session
+relation|r|p|user
+relation|r|p|user_settings
+relation|r|p|usernames
+relation|r|p|verification
+relation|r|p|weather_daily_forecasts
+relation|r|p|weather_forecasts
+sequence|prices_id_seq|integer|1|1|1|2147483647|1|false|prices.id

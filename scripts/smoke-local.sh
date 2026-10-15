@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Smoke check of a locally running Rust service (`spot-price serve`).
+# It creates an account and an API key, so never run it against production.
+#
+# Usage: BASE_URL=http://localhost:3000 scripts/smoke-local.sh
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:3000}"
@@ -13,49 +17,38 @@ echo "[smoke] Health check"
 curl -fsS "$BASE_URL/health" >/dev/null
 
 echo "[smoke] Login or signup"
-curl -sS -D "$HEADERS_FILE" -o "$BODY_FILE" -X POST "$BASE_URL/api/session/login-or-signup" \
+STATUS_CODE=$(curl -sS -D "$HEADERS_FILE" -o "$BODY_FILE" -w '%{http_code}' \
+  -X POST "$BASE_URL/api/session/login-or-signup" \
   -H "content-type: application/json" \
-  -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}"
-
-STATUS_CODE=$(awk 'NR==1 { print $2 }' "$HEADERS_FILE")
+  -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}")
 if [[ "$STATUS_CODE" != "200" ]]; then
   echo "[smoke] Failed: auth status $STATUS_CODE"
   cat "$BODY_FILE"
   exit 1
 fi
 
-SESSION_COOKIE=$(python3 - "$HEADERS_FILE" <<'PY'
-import pathlib
-import re
-import sys
-
-headers_path = pathlib.Path(sys.argv[1])
-content = headers_path.read_text(encoding="utf-8")
-match = re.search(r"^set-cookie:\s*([^;\r\n]+)", content, flags=re.IGNORECASE | re.MULTILINE)
+# The first `name=value` pair of the Set-Cookie header.
+SESSION_COOKIE=$(python3 -c '
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r"^set-cookie:\s*([^;\r\n]+)", text, flags=re.IGNORECASE | re.MULTILINE)
 print(match.group(1) if match else "")
-PY
-)
-
+' "$HEADERS_FILE")
 if [[ -z "$SESSION_COOKIE" ]]; then
   echo "[smoke] Failed: session cookie missing"
-  cat "$BODY_FILE"
   exit 1
 fi
 
 echo "[smoke] Get API key via session"
-KEY_JSON=$(curl -fsS "$BASE_URL/api/keys" \
-  -H "Cookie: $SESSION_COOKIE")
-
-API_KEY=$(python3 - <<'PY'
-import json,sys
-obj=json.loads(sys.stdin.read())
-print(obj.get("apiKey",""))
-PY
-<<< "$KEY_JSON")
-
+KEY_JSON=$(curl -fsS "$BASE_URL/api/keys" -H "Cookie: $SESSION_COOKIE")
+API_KEY=$(python3 -c '
+import json, sys
+value = json.loads(sys.argv[1]).get("apiKey", "")
+print(value if isinstance(value, str) else "")
+' "$KEY_JSON")
 if [[ -z "$API_KEY" ]]; then
+  # The body can hold a key, so it is not printed.
   echo "[smoke] Failed: apiKey missing"
-  echo "$KEY_JSON"
   exit 1
 fi
 

@@ -1,3 +1,6 @@
+/target
+/.tmp
+/bin
 # Dependencies
 node_modules/
 .pnpm-store/
@@ -11,7 +14,7 @@ graphify-out/
 *.db
 *.db-wal
 *.db-shm
-data/
+/data/
 
 # Environment
 .env
@@ -41,5 +44,5 @@ playwright-report/
 avoindata-api.yaml
 
 # Backtest DB snapshots (operator exports via `backtest --db --export`); the
-# committed fixture is the small tools/backtest-data/fixture.json only.
+# committed fixture is the small crates/tools/data/fixture.json only.
 *.snapshot.json

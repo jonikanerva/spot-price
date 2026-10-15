@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO fingrid_forecasts (dataset_id, issued_at, start_time, end_time, value)\n            VALUES ($1, $2, $3, $4, $5)\n            ON CONFLICT (dataset_id, issued_at, start_time) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "98f798bb6f45d70bc425f7f166ad74a728398c8f84e76e70aa59b17d3a990c66"
+}

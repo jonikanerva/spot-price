@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "rust",
+  "exclude": ["mise.toml"],
+  "caches": {
+    "cargo_target": {
+      "directory": "target",
+      "type": "shared"
+    }
+  },
+  "steps": {
+    "install": {
+      "secrets": [],
+      "deployOutputs": []
+    },
+    "build": {
+      "secrets": [],
+      "commands": [
+        "mkdir -p bin",
+        "SQLX_OFFLINE=true cargo build --release --locked --package spot-price-server",
+        "cp target/release/spot-price bin"
+      ],
+      "caches": ["cargo_registry", "cargo_git", "cargo_target"]
+    }
+  },
+  "deploy": {
+    "startCommand": "./bin/spot-price migrate && exec ./bin/spot-price serve",
+    "inputs": [
+      {
+        "step": "build",
+        "include": ["bin"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,908 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spot Price</title>
+    <style>
+      :root {
+        --bg: #0b0f1a;
+        --panel: #141b2f;
+        --panel-2: #1a223a;
+        --text: #e6edf7;
+        --muted: #96a4c2;
+        --border: #2b3655;
+        --accent: #5dd5ff;
+        --accent-2: #7b6bff;
+        --ok: #41d39d;
+        --err: #ff6b8a;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: "JetBrains Mono", "IBM Plex Mono", "Fira Code", monospace;
+        color: var(--text);
+        background: radial-gradient(ellipse at 10% 0%, #1f2a49 0%, transparent 40%), radial-gradient(ellipse at 90% 0%, #23194a 0%, transparent 30%), var(--bg);
+        min-height: 100vh;
+      }
+
+      .page { max-width: 1120px; margin: 0 auto; padding: 32px 20px 48px; }
+      .card {
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 20px;
+        box-shadow: 0 16px 48px rgba(5, 8, 16, 0.5);
+      }
+      h1 { font-size: 1.65rem; }
+      h2 { font-size: 1rem; color: #d3def6; margin-bottom: 10px; }
+      p { color: var(--muted); font-size: 0.85rem; }
+      .muted { color: var(--muted); font-size: 12px; }
+
+      .landing { display: grid; gap: 18px; }
+      .dashboard { display: none; }
+      .auth-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+      .auth-row input { flex: 1; min-width: 140px; }
+
+      input, select {
+        border: 1px solid var(--border);
+        background: #0f1528;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-family: inherit;
+        font-size: 0.85rem;
+      }
+      .btn {
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 18px;
+        font-family: inherit;
+        font-size: 0.85rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #06101f; }
+      .btn-secondary { background: rgba(255,255,255,0.04); color: var(--text); border: 1px solid var(--border); }
+      .btn-secondary.active { border-color: var(--accent); color: var(--accent); }
+      .btn-danger { background: rgba(255,107,138,0.12); color: var(--err); border: 1px solid rgba(255,107,138,0.25); }
+
+      .status { min-height: 18px; font-size: 12px; margin-top: 8px; }
+      .status.ok { color: var(--ok); }
+      .status.err { color: var(--err); }
+      .inline-link {
+        color: var(--accent);
+        text-decoration-color: rgba(93, 213, 255, 0.55);
+      }
+      .inline-link:hover { color: #8ce6ff; }
+
+      .chart-container { position: relative; margin-top: 12px; }
+      .chart-box { border: 1px solid var(--border); border-radius: 10px; background: #0e1426; overflow: hidden; }
+      .chart-svg { display: block; width: 100%; height: 240px; }
+      .chart-tooltip {
+        display: none;
+        position: absolute;
+        top: 8px;
+        right: 12px;
+        background: rgba(11, 15, 26, 0.92);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--accent);
+      }
+      .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
+
+      .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
+      .nav { display: flex; gap: 6px; align-items: center; }
+      .nav .username { color: var(--muted); font-size: 13px; margin-left: 8px; }
+      .grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; }
+      .settings-grid { display: grid; gap: 8px; }
+      .settings-grid label { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); gap: 10px; }
+      .settings-grid label.stacked { flex-direction: column; align-items: stretch; gap: 4px; }
+      .settings-grid label input { width: 100px; text-align: right; }
+
+      .api-panel { display: none; }
+      .api-sections { display: grid; gap: 18px; }
+      .key-display-wrap { position: relative; margin: 10px 0; }
+      .key-display {
+        background: #0d1323;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 60px 12px 14px;
+        font-size: 0.82rem;
+        color: var(--accent);
+        word-break: break-all;
+      }
+      pre {
+        background: #0d1323;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+        color: #c8d6f4;
+        overflow: auto;
+        white-space: pre-wrap;
+        font-family: inherit;
+        font-size: 0.8rem;
+        line-height: 1.6;
+        margin-top: 12px;
+      }
+      pre .comment { color: #5a6a8a; }
+      .example-block { position: relative; margin-top: 12px; }
+      .example-block pre { margin-top: 0; padding-right: 70px; }
+      .copy-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-family: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .copy-btn.copied { color: var(--ok); border-color: var(--ok); }
+
+      @media (max-width: 980px) {
+        .grid-2 { grid-template-columns: 1fr; }
+        .auth-row { flex-direction: column; }
+        .auth-row input { min-width: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section id="landing" class="landing">
+        <article class="card">
+          <h1>Spot Price</h1>
+          <p>Finnish spot electricity prices + total cost calculator for Home Assistant.</p>
+          <div class="auth-row">
+            <input id="username" placeholder="username" autocomplete="username" />
+            <input id="password" type="password" placeholder="password" autocomplete="current-password" />
+            <button id="loginBtn" class="btn btn-primary">Login or Signup</button>
+          </div>
+          <div id="authStatus" class="status"></div>
+        </article>
+
+        <article class="card">
+          <h2>Spot price &mdash; today + tomorrow</h2>
+          <p>15-min intervals, c/kWh. Source: Nord Pool.</p>
+          <div class="chart-container">
+            <div class="chart-box">
+              <svg id="publicChart" class="chart-svg"></svg>
+              <div id="publicTooltip" class="chart-tooltip"></div>
+            </div>
+            <div class="legend">
+              <span><span class="dot" style="background:var(--accent)"></span>Today</span>
+              <span><span class="dot" style="background:var(--accent-2)"></span>Tomorrow</span>
+            </div>
+          </div>
+          <div id="publicStatus" class="status"></div>
+        </article>
+      </section>
+
+      <section id="dashboard" class="dashboard">
+        <div class="topbar">
+          <h1>Spot Price</h1>
+          <div class="nav">
+            <button id="navDash" class="btn btn-secondary active">Dashboard</button>
+            <button id="navApi" class="btn btn-secondary">API</button>
+            <button id="logoutBtn" class="btn btn-secondary">Logout</button>
+            <span id="usernameLabel" class="username"></span>
+          </div>
+        </div>
+
+        <div id="dashView" class="grid-2">
+          <article class="card">
+            <h2>Total price (your contract)</h2>
+            <p class="muted">15-min intervals, c/kWh incl. margin + transfer + tax + VAT</p>
+            <div class="chart-container">
+              <div class="chart-box">
+                <svg id="totalChart" class="chart-svg"></svg>
+                <div id="totalTooltip" class="chart-tooltip"></div>
+              </div>
+              <div class="legend">
+                <span><span class="dot" style="background:var(--accent)"></span>Today</span>
+                <span><span class="dot" style="background:var(--accent-2)"></span>Tomorrow</span>
+              </div>
+            </div>
+            <div id="totalStatus" class="status"></div>
+          </article>
+
+          <aside class="card">
+            <h2>Settings</h2>
+            <div class="settings-grid">
+              <label>Margin c/kWh <input id="margin" type="number" step="0.01" /></label>
+              <label>Day transfer c/kWh <input id="dayTransfer" type="number" step="0.01" /></label>
+              <label>Night transfer c/kWh <input id="nightTransfer" type="number" step="0.01" /></label>
+              <label>Tax c/kWh <input id="tax" type="number" step="0.01" /></label>
+              <label>VAT % <input id="vat" type="number" step="0.1" /></label>
+              <label>Night start hour <input id="nightStart" type="number" min="0" max="23" /></label>
+              <label>Night end hour <input id="nightEnd" type="number" min="0" max="23" /></label>
+              <label class="stacked">Delivery area
+                <select id="area">
+                  <option value="FI">Finland (FI)</option>
+<option value="SE1">Sweden — Luleå (SE1)</option>
+<option value="SE2">Sweden — Sundsvall (SE2)</option>
+<option value="SE3">Sweden — Stockholm (SE3)</option>
+<option value="SE4">Sweden — Malmö (SE4)</option>
+<option value="NO1">Norway — Oslo (NO1)</option>
+<option value="NO2">Norway — Kristiansand (NO2)</option>
+<option value="NO3">Norway — Trondheim (NO3)</option>
+<option value="NO4">Norway — Tromsø (NO4)</option>
+<option value="NO5">Norway — Bergen (NO5)</option>
+<option value="DK1">Denmark — West (DK1)</option>
+<option value="DK2">Denmark — East (DK2)</option>
+<option value="EE">Estonia (EE)</option>
+<option value="LT">Lithuania (LT)</option>
+<option value="LV">Latvia (LV)</option>
+<option value="AT">Austria (AT)</option>
+<option value="BE">Belgium (BE)</option>
+<option value="FR">France (FR)</option>
+<option value="GER">Germany (GER)</option>
+<option value="NL">Netherlands (NL)</option>
+<option value="PL">Poland (PL)</option>
+                </select>
+              </label>
+              <label class="stacked">Timezone
+                <select id="timezone">
+                  <option value="Europe/Amsterdam">Europe/Amsterdam</option>
+<option value="Europe/Berlin">Europe/Berlin</option>
+<option value="Europe/Brussels">Europe/Brussels</option>
+<option value="Europe/Copenhagen">Europe/Copenhagen</option>
+<option value="Europe/Helsinki">Europe/Helsinki</option>
+<option value="Europe/Oslo">Europe/Oslo</option>
+<option value="Europe/Paris">Europe/Paris</option>
+<option value="Europe/Riga">Europe/Riga</option>
+<option value="Europe/Stockholm">Europe/Stockholm</option>
+<option value="Europe/Tallinn">Europe/Tallinn</option>
+<option value="Europe/Vienna">Europe/Vienna</option>
+<option value="Europe/Vilnius">Europe/Vilnius</option>
+<option value="Europe/Warsaw">Europe/Warsaw</option>
+                </select>
+              </label>
+              <button id="saveBtn" class="btn btn-primary" style="margin-top:6px">Save settings</button>
+              <div id="settingsStatus" class="status"></div>
+            </div>
+          </aside>
+        </div>
+
+        <div id="apiView" class="api-panel">
+          <div class="api-sections">
+            <article class="card">
+              <h2>API</h2>
+              <p>Use this key to call the REST API from Home Assistant or scripts.</p>
+
+              <div class="key-display-wrap">
+                <div class="key-display" id="apiKeyDisplay">Loading...</div>
+                <button class="copy-btn" id="copyKeyBtn">Copy</button>
+              </div>
+              <button id="regenBtn" class="btn btn-danger">Regenerate API key</button>
+              <div id="apiStatus" class="status"></div>
+
+              <h2 style="margin-top:20px">Usage examples</h2>
+              <div id="apiExamples"></div>
+            </article>
+
+            <article class="card">
+              <h2>Home Assistant</h2>
+              <p style="margin-bottom:10px">Ensure you have the <a class="inline-link" href="https://www.home-assistant.io/integrations/rest_command" target="_blank" rel="noopener noreferrer">RESTful Command</a> integration installed in your Home Assistant.</p>
+
+              <p style="margin-bottom:4px">Create a <code>packages</code> directory if it does not already exist, and add this line to <code>configuration.yaml</code>:</p>
+              <div class="example-block">
+                <pre id="haPackagesContent">Loading...</pre>
+                <button class="copy-btn" id="copyHaPackagesBtn">Copy</button>
+              </div>
+
+              <p style="margin-top:14px;margin-bottom:4px">Then copy this into <code>packages/spot-price.yaml</code>, save it, and reload your YAML configurations (or reboot):</p>
+              <div id="haYamlBlock" class="example-block">
+                <pre id="haYamlContent">Loading...</pre>
+                <button class="copy-btn" id="copyHaYamlBtn">Copy</button>
+              </div>
+
+              <h2 style="margin-top:24px">Example usage</h2>
+              <div class="example-block">
+                <pre id="haUsageContent">Loading...</pre>
+                <button class="copy-btn" id="copyHaUsageBtn">Copy</button>
+              </div>
+            </article>
+
+            <article class="card">
+              <h2>API reference</h2>
+              <p style="margin-bottom:12px">Full request/response schemas with interactive examples:</p>
+              <a href="/api/docs" target="_blank" class="btn btn-secondary" style="display:inline-block;margin-top:8px;text-decoration:none">
+                Open interactive API docs &rarr;
+              </a>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id)
+
+      const state = { session: null, apiKey: '' }
+      const areaTimezoneMap = { "FI": "Europe/Helsinki", "SE1": "Europe/Stockholm", "SE2": "Europe/Stockholm", "SE3": "Europe/Stockholm", "SE4": "Europe/Stockholm", "NO1": "Europe/Oslo", "NO2": "Europe/Oslo", "NO3": "Europe/Oslo", "NO4": "Europe/Oslo", "NO5": "Europe/Oslo", "DK1": "Europe/Copenhagen", "DK2": "Europe/Copenhagen", "EE": "Europe/Tallinn", "LT": "Europe/Vilnius", "LV": "Europe/Riga", "AT": "Europe/Vienna", "BE": "Europe/Brussels", "FR": "Europe/Paris", "GER": "Europe/Berlin", "NL": "Europe/Amsterdam", "PL": "Europe/Warsaw" }
+
+      const setStatus = (id, type, msg) => {
+        const el = $(id)
+        if (!el) return
+        el.className = 'status ' + (type || '')
+        el.textContent = msg || ''
+      }
+
+      const json = async (url, opts = {}) => {
+        const res = await fetch(url, { credentials: 'include', ...opts })
+        let data = null
+        try {
+          data = await res.json()
+        } catch {
+          data = { error: 'Invalid response' }
+        }
+        return { ok: res.ok, status: res.status, data }
+      }
+
+      const withLoading = async (buttonId, run) => {
+        const button = $(buttonId)
+        if (!button) return
+        const initialText = button.textContent
+        button.disabled = true
+        button.textContent = 'Working...'
+        try {
+          await run()
+        } finally {
+          button.disabled = false
+          button.textContent = initialText
+        }
+      }
+
+      const markCopied = (button) => {
+        button.textContent = 'Copied!'
+        button.classList.add('copied')
+        setTimeout(() => {
+          button.textContent = 'Copy'
+          button.classList.remove('copied')
+        }, 1500)
+      }
+
+      const copyWithFeedback = async (button, text) => {
+        await navigator.clipboard.writeText(text)
+        markCopied(button)
+      }
+
+      const toChartData = (prices, valueKey) =>
+        prices.map((price) => ({
+          value: Number(price[valueKey]),
+          label: new Date(price.deliveryStart).toLocaleTimeString('fi-FI', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          }),
+        }))
+
+      const drawChart = (svgId, tooltipId, todayData, tomorrowData) => {
+        const svg = $(svgId)
+        const tooltip = $(tooltipId)
+        if (!svg) return
+
+        const points = [...todayData, ...tomorrowData]
+        if (points.length === 0) {
+          svg.innerHTML = '<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#96a4c2" font-size="12">No data</text>'
+          return
+        }
+
+        const width = svg.clientWidth || 760
+        const height = 240
+        const paddingLeft = 44
+        const paddingRight = 10
+        const paddingTop = 10
+        const paddingBottom = 24
+        const chartWidth = width - paddingLeft - paddingRight
+        const chartHeight = height - paddingTop - paddingBottom
+
+        const values = points.map((point) => point.value)
+        const minValue = Math.min(...values)
+        const maxValue = Math.max(...values)
+        const span = Math.max(maxValue - minValue, 0.001)
+        const yMin = Math.floor((minValue - span * 0.08) * 10) / 10
+        const yMax = Math.ceil((maxValue + span * 0.12) * 10) / 10
+        const ySpan = Math.max(yMax - yMin, 0.001)
+
+        const toX = (index) =>
+          paddingLeft +
+          (points.length <= 1 ? 0 : (index / (points.length - 1)) * chartWidth)
+        const toY = (value) =>
+          paddingTop + (1 - (value - yMin) / ySpan) * chartHeight
+
+        const pathFor = (series, offset, color) => {
+          if (series.length === 0) return ''
+          const d = series
+            .map((point, i) => {
+              const cmd = i === 0 ? 'M' : 'L'
+              return cmd + toX(offset + i).toFixed(1) + ' ' + toY(point.value).toFixed(1)
+            })
+            .join(' ')
+          return '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" />'
+        }
+
+        const yTicks = 4
+        const yGrid = Array.from({ length: yTicks + 1 }, (_, i) => {
+          const value = yMin + (i / yTicks) * ySpan
+          const y = toY(value)
+          return {
+            line: '<line x1="' + paddingLeft + '" y1="' + y.toFixed(1) + '" x2="' + (width - paddingRight) + '" y2="' + y.toFixed(1) + '" stroke="#243151" stroke-width="1" />',
+            label: '<text x="' + (paddingLeft - 6) + '" y="' + (y + 4).toFixed(1) + '" text-anchor="end" fill="#96a4c2" font-size="11">' + value.toFixed(1) + '</text>',
+          }
+        })
+
+        const xTicks = ['00', '06', '12', '18', '00']
+        const xGrid = [0, 0.25, 0.5, 0.75, 1].map((factor, i) => {
+          const x = paddingLeft + factor * chartWidth
+          return {
+            line: '<line x1="' + x.toFixed(1) + '" y1="' + paddingTop + '" x2="' + x.toFixed(1) + '" y2="' + (height - paddingBottom) + '" stroke="#1f2a45" stroke-width="1" />',
+            label: '<text x="' + x.toFixed(1) + '" y="' + (height - 6) + '" text-anchor="middle" fill="#96a4c2" font-size="11">' + xTicks[i] + '</text>',
+          }
+        })
+
+        const crosshairId = svgId + '_crosshair'
+        svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height)
+        svg.innerHTML =
+          '<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#0e1426" />' +
+          yGrid.map((tick) => tick.line).join('') +
+          xGrid.map((tick) => tick.line).join('') +
+          '<line x1="' + paddingLeft + '" y1="' + (height - paddingBottom) + '" x2="' + (width - paddingRight) + '" y2="' + (height - paddingBottom) + '" stroke="#2b3655" stroke-width="1" />' +
+          '<line x1="' + paddingLeft + '" y1="' + paddingTop + '" x2="' + paddingLeft + '" y2="' + (height - paddingBottom) + '" stroke="#2b3655" stroke-width="1" />' +
+          yGrid.map((tick) => tick.label).join('') +
+          xGrid.map((tick) => tick.label).join('') +
+          pathFor(todayData, 0, '#5dd5ff') +
+          pathFor(tomorrowData, todayData.length, '#7b6bff') +
+          '<line id="' + crosshairId + '" x1="0" y1="' + paddingTop + '" x2="0" y2="' + (height - paddingBottom) + '" stroke="#7f8fb6" stroke-dasharray="3 3" stroke-width="1" visibility="hidden" />'
+
+        const crosshair = document.getElementById(crosshairId)
+        const handleHover = (clientX) => {
+          const rect = svg.getBoundingClientRect()
+          const x = clientX - rect.left
+          const index = Math.round(((x - paddingLeft) / chartWidth) * (points.length - 1))
+          if (index < 0 || index >= points.length) {
+            if (tooltip) tooltip.style.display = 'none'
+            if (crosshair) crosshair.setAttribute('visibility', 'hidden')
+            return
+          }
+
+          const point = points[index]
+          const xPos = toX(index)
+          if (crosshair) {
+            crosshair.setAttribute('x1', xPos.toFixed(1))
+            crosshair.setAttribute('x2', xPos.toFixed(1))
+            crosshair.setAttribute('visibility', 'visible')
+          }
+          if (tooltip) {
+            tooltip.textContent = point.label + ' - ' + point.value.toFixed(2) + ' c/kWh'
+            tooltip.style.display = 'block'
+          }
+        }
+
+        svg.onmousemove = (event) => handleHover(event.clientX)
+        svg.ontouchmove = (event) => {
+          const touch = event.touches[0]
+          if (touch) {
+            handleHover(touch.clientX)
+          }
+        }
+        svg.onmouseleave = () => {
+          if (tooltip) tooltip.style.display = 'none'
+          if (crosshair) crosshair.setAttribute('visibility', 'hidden')
+        }
+      }
+
+      const buildHaYaml = (apiKey, baseUrl) => {
+        const auth = 'Bearer ' + apiKey
+        return [
+          '# Spot Price API - Home Assistant REST Commands',
+          '',
+          'rest_command:',
+          '',
+          '  spot_price_now:',
+          '    url: "' + baseUrl + '/api/v1/price/now"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_today:',
+          '    url: "' + baseUrl + '/api/v1/price/today"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_tomorrow:',
+          '    url: "' + baseUrl + '/api/v1/price/tomorrow"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_all:',
+          '    url: "' + baseUrl + '/api/v1/price/all"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_cheapest:',
+          '    url: >-',
+          '      ' + baseUrl + '/api/v1/price/cheapest?duration={{ duration }}{% if start is defined %}&startTime={{ start | urlencode }}{% endif %}{% if end is defined %}&endTime={{ end | urlencode }}{% endif %}{% if max_price is defined %}&maxPrice={{ max_price }}{% endif %}',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_history:',
+          '    url: "' + baseUrl + '/api/v1/price/history?from={{ from }}&to={{ to }}"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+          '',
+          '  spot_price_forecast:',
+          '    url: "' + baseUrl + '/api/v1/price/forecast"',
+          '    method: GET',
+          '    headers:',
+          '      Authorization: "' + auth + '"',
+          '    content_type: "application/json"',
+        ].join('\n')
+      }
+
+      const buildHaPackagesInclude = () => [
+        'homeassistant:',
+        '  packages: !include_dir_named packages',
+      ].join('\n')
+
+      const buildHaUsageExample = () => [
+        'action: rest_command.spot_price_cheapest',
+        'data:',
+        '  duration: "210"',
+        `  start: '{{  today_at("22:00").isoformat() }}'`,
+        `  end:   '{{ (today_at("7:00") + timedelta(days=1)).isoformat() }}'`,
+        '  max_price: "20"',
+        'response_variable: result',
+      ].join('\n')
+
+      const toUtcIsoSeconds = (date) => {
+        const iso = date.toISOString()
+        return iso.endsWith('.000Z') ? iso.slice(0, -5) + 'Z' : iso
+      }
+
+      const buildUtcIsoForTodayHour = (hour) => {
+        const now = new Date()
+        const timestamp = new Date(
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate(),
+            hour,
+            0,
+            0,
+            0,
+          ),
+        )
+        return toUtcIsoSeconds(timestamp)
+      }
+
+      const renderExamples = () => {
+        if (!state.apiKey) return
+        const base = location.origin
+        const apiKeyHeader = '-H "Authorization: Bearer ' + state.apiKey + '"'
+        const windowStartUtc = buildUtcIsoForTodayHour(8)
+        const windowEndUtc = buildUtcIsoForTodayHour(17)
+        const nowMs = Date.now()
+        // Display-only UTC calendar dates for a valid <=31-day history span.
+        const historyTo = new Date(nowMs).toISOString().slice(0, 10)
+        const historyFrom = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+        const examples = [
+          {
+            title: 'Current total price',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/now',
+          },
+          {
+            title: 'Cheapest 3-hour window',
+            command: 'curl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/cheapest?duration=180"',
+          },
+          {
+            title: 'Cheapest 1-hour window under 20 c/kWh',
+            command:
+              'curl -sS ' +
+              apiKeyHeader +
+              ' "' +
+              base +
+              '/api/v1/price/cheapest?duration=60&maxPrice=20"',
+          },
+          {
+            title: 'Cheapest 2-hour window today between 08:00-17:00 UTC',
+            command:
+              'curl -sS ' +
+              apiKeyHeader +
+              ' "' +
+              base +
+              '/api/v1/price/cheapest?duration=120&startTime=' +
+              windowStartUtc +
+              '&endTime=' +
+              windowEndUtc +
+              '"',
+          },
+          {
+            title: 'Today prices',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/today',
+          },
+          {
+            title: 'Tomorrow prices',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/tomorrow',
+          },
+          {
+            title: 'All published prices in one list',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/all',
+          },
+          {
+            title: 'Price history for a date range',
+            command: 'curl -sS ' + apiKeyHeader + ' "' + base + '/api/v1/price/history?from=' + historyFrom + '&to=' + historyTo + '"',
+          },
+          {
+            title: 'Price forecast (estimate, FI only)',
+            command: 'curl -sS ' + apiKeyHeader + ' ' + base + '/api/v1/price/forecast',
+          },
+        ]
+
+        $('apiExamples').innerHTML = examples.map((example, index) => (
+          '<div class="example-block">' +
+            '<pre><span class="comment"># ' + example.title + '</span>\n' + example.command + '</pre>' +
+            '<button class="copy-btn" data-index="' + String(index) + '">Copy</button>' +
+          '</div>'
+        )).join('')
+
+        const copyButtons = $('apiExamples').querySelectorAll('.copy-btn')
+        copyButtons.forEach((button) => {
+          button.onclick = async () => {
+            const indexText = button.getAttribute('data-index')
+            const index = Number(indexText)
+            if (!Number.isInteger(index) || index < 0 || index >= examples.length) {
+              return
+            }
+            await copyWithFeedback(button, examples[index].command)
+          }
+        })
+
+        const copyKeyButton = $('copyKeyBtn')
+        if (copyKeyButton) {
+          copyKeyButton.onclick = async () => {
+            await copyWithFeedback(copyKeyButton, state.apiKey)
+          }
+        }
+
+        const haPackagesInclude = buildHaPackagesInclude()
+        $('haPackagesContent').textContent = haPackagesInclude
+        const copyPackagesButton = $('copyHaPackagesBtn')
+        if (copyPackagesButton) {
+          copyPackagesButton.onclick = async () => {
+            await copyWithFeedback(copyPackagesButton, haPackagesInclude)
+          }
+        }
+
+        const haYaml = buildHaYaml(state.apiKey, base)
+        $('haYamlContent').textContent = haYaml
+        const copyYamlButton = $('copyHaYamlBtn')
+        if (copyYamlButton) {
+          copyYamlButton.onclick = async () => {
+            await copyWithFeedback(copyYamlButton, haYaml)
+          }
+        }
+
+        const haUsageExample = buildHaUsageExample()
+        $('haUsageContent').textContent = haUsageExample
+        const copyUsageButton = $('copyHaUsageBtn')
+        if (copyUsageButton) {
+          copyUsageButton.onclick = async () => {
+            await copyWithFeedback(copyUsageButton, haUsageExample)
+          }
+        }
+      }
+
+      const loadPublicChart = async () => {
+        const response = await json('/api/public/spot')
+        if (!response.ok) {
+          setStatus('publicStatus', 'err', response.data.error || 'Failed')
+          return
+        }
+
+        const today = toChartData(response.data.today || [], 'spotCentsKwh')
+        const tomorrow = toChartData(response.data.tomorrow || [], 'spotCentsKwh')
+        drawChart('publicChart', 'publicTooltip', today, tomorrow)
+        setStatus(
+          'publicStatus',
+          'ok',
+          response.data.tomorrowAvailable
+            ? 'Today + tomorrow loaded'
+            : 'Tomorrow not yet available (published ~12:00 UTC)',
+        )
+      }
+
+      const loadSession = async () => {
+        const response = await json('/api/session')
+        if (!response.ok || !response.data.session) {
+          state.session = null
+          return false
+        }
+
+        state.session = response.data.session
+        const username = response.data.username || response.data.session.user.name || 'user'
+        $('usernameLabel').textContent = username
+        return true
+      }
+
+      const loadSettings = async () => {
+        const response = await json('/api/v1/me/settings')
+        if (!response.ok) {
+          setStatus('settingsStatus', 'err', response.data.error || 'Failed')
+          return
+        }
+
+        const settings = response.data
+        $('margin').value = settings.marginCentsKwh
+        $('dayTransfer').value = settings.transferDayCentsKwh
+        $('nightTransfer').value = settings.transferNightCentsKwh
+        $('tax').value = settings.taxCentsKwh
+        $('vat').value = settings.vatPercent
+        $('nightStart').value = settings.nightStartHour
+        $('nightEnd').value = settings.nightEndHour
+        $('area').value = settings.area
+        $('timezone').value = settings.timezone
+        setStatus('settingsStatus', 'ok', 'Settings loaded')
+      }
+
+      const loadTotalChart = async () => {
+        const response = await json('/api/v1/me/chart')
+        if (!response.ok) {
+          setStatus('totalStatus', 'err', response.data.error || 'Failed')
+          return
+        }
+
+        const today = toChartData(response.data.today || [], 'totalCentsKwh')
+        const tomorrow = toChartData(response.data.tomorrow || [], 'totalCentsKwh')
+        drawChart('totalChart', 'totalTooltip', today, tomorrow)
+        setStatus('totalStatus', 'ok', response.data.tomorrowAvailable ? 'Today + tomorrow loaded' : 'Tomorrow not yet available')
+      }
+
+      const loadApiKey = async () => {
+        const response = await json('/api/keys')
+        if (!response.ok) {
+          setStatus('apiStatus', 'err', response.data.error || 'Failed')
+          return
+        }
+
+        state.apiKey = response.data.apiKey
+        $('apiKeyDisplay').textContent = state.apiKey
+        renderExamples()
+      }
+
+      const switchView = (view) => {
+        const isDashboard = view === 'dash'
+        $('dashView').style.display = isDashboard ? 'grid' : 'none'
+        $('apiView').style.display = isDashboard ? 'none' : 'block'
+        $('navDash').className = 'btn btn-secondary' + (isDashboard ? ' active' : '')
+        $('navApi').className = 'btn btn-secondary' + (isDashboard ? '' : ' active')
+        if (!isDashboard) {
+          void loadApiKey()
+        }
+      }
+
+      const showDashboard = async () => {
+        $('landing').style.display = 'none'
+        $('dashboard').style.display = 'block'
+        switchView('dash')
+        await Promise.all([loadSettings(), loadTotalChart()])
+      }
+
+      $('area').onchange = () => {
+        const selectedArea = $('area').value
+        const nextTimezone = areaTimezoneMap[selectedArea]
+        if (nextTimezone) {
+          $('timezone').value = nextTimezone
+        }
+      }
+
+      $('loginBtn').onclick = () => withLoading('loginBtn', async () => {
+        const username = $('username').value.trim().toLowerCase()
+        const password = $('password').value
+        if (!username || !password) {
+          setStatus('authStatus', 'err', 'Username and password required')
+          return
+        }
+
+        if (password.length < 8 || password.length > 128) {
+          setStatus('authStatus', 'err', 'Password must be 8-128 characters.')
+          return
+        }
+
+        const response = await json('/api/session/login-or-signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        })
+
+        if (!response.ok) {
+          const message = response.data.message || response.data.error || 'Login failed'
+          setStatus('authStatus', 'err', message)
+          return
+        }
+
+        setStatus('authStatus', 'ok', 'Authenticated')
+        await loadSession()
+        await showDashboard()
+      })
+
+      $('logoutBtn').onclick = () => withLoading('logoutBtn', async () => {
+        await json('/api/session/sign-out', { method: 'POST' })
+        state.session = null
+        state.apiKey = ''
+        $('dashboard').style.display = 'none'
+        $('landing').style.display = 'grid'
+      })
+
+      $('saveBtn').onclick = () => withLoading('saveBtn', async () => {
+        const payload = {
+          marginCentsKwh: Number($('margin').value),
+          transferDayCentsKwh: Number($('dayTransfer').value),
+          transferNightCentsKwh: Number($('nightTransfer').value),
+          taxCentsKwh: Number($('tax').value),
+          vatPercent: Number($('vat').value),
+          nightStartHour: Number($('nightStart').value),
+          nightEndHour: Number($('nightEnd').value),
+          area: $('area').value,
+          timezone: $('timezone').value,
+        }
+
+        const response = await json('/api/v1/me/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+          setStatus('settingsStatus', 'err', response.data.error || 'Save failed')
+          return
+        }
+
+        setStatus('settingsStatus', 'ok', 'Settings saved')
+        await loadTotalChart()
+      })
+
+      $('navDash').onclick = () => switchView('dash')
+      $('navApi').onclick = () => switchView('api')
+
+      $('regenBtn').onclick = () => withLoading('regenBtn', async () => {
+        const response = await json('/api/keys/regenerate', { method: 'POST' })
+        if (!response.ok) {
+          setStatus('apiStatus', 'err', response.data.error || 'Failed')
+          return
+        }
+
+        state.apiKey = response.data.apiKey
+        $('apiKeyDisplay').textContent = state.apiKey
+        renderExamples()
+        setStatus('apiStatus', 'ok', 'New API key generated. Old key is now invalid.')
+      })
+
+      ;(async () => {
+        await loadPublicChart()
+        const hasSession = await loadSession()
+        if (hasSession) {
+          await showDashboard()
+        }
+      })()
+</script>
+  </body>
+</html>
