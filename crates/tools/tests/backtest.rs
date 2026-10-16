@@ -3,15 +3,17 @@
 
 #[cfg(test)]
 mod backtest {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use jiff::Timestamp;
-    use spot_price_domain::forecast::{ForecastOptions, QuarterStart};
+    use spot_price_domain::forecast::{ForecastOptions, ForecastWindow, QuarterStart};
     use spot_price_tools::backtest::{
-        AsOfMode, BacktestOptions, ForecastVariant, HORIZON_LABELS, MIN_CALIBRATION_WINDOW_DAYS,
-        collect_input_timestamps, compare_optimism, compare_variants, derive_bands_from_backtest,
-        find_leaking_inputs, forecast_at_issue_time, forecast_at_issue_time_with, mae,
-        reconstruct_issue_time, rmae, run_backtest, select_vintages_as_of, smape,
+        AsOfMode, BacktestOptions, Better, ForecastVariant, HORIZON_LABELS, HorizonMetrics,
+        HorizonPairedDelta, IssueTimeInputs, MIN_CALIBRATION_WINDOW_DAYS, OriginMetrics,
+        PairedDelta, collect_input_timestamps, compare_optimism, compare_variants,
+        derive_bands_from_backtest, find_leaking_inputs, forecast_at_issue_time,
+        forecast_at_issue_time_with, mae, paired_delta, paired_horizon, reconstruct_issue_time,
+        rmae, run_backtest, select_vintages_as_of, smape,
     };
     use spot_price_tools::data::{BacktestData, GridActual, PricePoint, Vintage};
 
@@ -494,6 +496,492 @@ mod backtest {
                 .iter()
                 .any(|d| d.delta_mae.is_some_and(|m| m.abs() > 1e-9))
         );
+    }
+
+    // Paired (origin-by-origin) deltas
+
+    fn values(pairs: &[(i64, Option<f64>)]) -> BTreeMap<i64, Option<f64>> {
+        pairs.iter().copied().collect()
+    }
+
+    fn assert_counts_add_up(d: &PairedDelta) {
+        assert_eq!(d.wins + d.losses + d.ties, d.paired, "{d:?}");
+    }
+
+    type Metric = fn(&OriginMetrics) -> Option<f64>;
+
+    const METRICS: [(&str, Metric); 4] = [
+        ("mae", |r| r.mae),
+        ("spearman", |r| r.spearman),
+        ("cheap", |r| r.precision_at_n_cheap),
+        ("peak", |r| r.precision_at_n_peak),
+    ];
+
+    fn by_metric(p: &HorizonPairedDelta) -> [PairedDelta; 4] {
+        [
+            p.mae,
+            p.spearman,
+            p.precision_at_n_cheap,
+            p.precision_at_n_peak,
+        ]
+    }
+
+    #[test]
+    fn a_against_itself_pairs_every_origin_as_a_tie_for_mae_and_ranks() {
+        let data = build_data(0.0);
+        let cmp = compare_variants(
+            &data,
+            ForecastVariant::default(),
+            ForecastVariant::default(),
+        )
+        .unwrap();
+        assert!(cmp.shared_origins > 5);
+        // Every scored origin has a d+1 pair; the last origins have no
+        // realised price for the later horizons.
+        assert_eq!(
+            cmp.a.by_horizon[0]
+                .by_origin
+                .keys()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            cmp.a.scored_origins_ms
+        );
+        for (h, label) in HORIZON_LABELS.iter().enumerate() {
+            let by_origin = &cmp.a.by_horizon[h].by_origin;
+            let paired = by_metric(&cmp.paired_by_horizon[h]);
+            // Every origin with a pair in this horizon has an MAE.
+            assert!(by_origin.values().all(|r| r.mae.is_some()), "{label}");
+            for ((name, metric), d) in METRICS.iter().zip(paired) {
+                let with_value = by_origin.values().filter(|r| metric(r).is_some()).count();
+                assert!(with_value > 0, "{label} {name}");
+                assert_counts_add_up(&d);
+                assert_eq!(d.paired, with_value, "{label} {name}");
+                assert_eq!(d.ties, d.paired, "{label} {name}");
+                assert_eq!((d.wins, d.losses, d.excluded), (0, 0, 0), "{label} {name}");
+                assert_eq!(d.mean_delta, Some(0.0), "{label} {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_origin_with_a_value_in_one_arm_only_is_excluded_and_counted() {
+        // Origin 2 has no value in arm B, origin 3 has none in either arm.
+        let a = values(&[(1, Some(0.5)), (2, Some(0.9)), (3, None)]);
+        let b = values(&[(1, Some(0.6)), (2, None), (3, None)]);
+        let d = paired_delta(&a, &b, Better::Higher);
+        assert_counts_add_up(&d);
+        assert_eq!(d.paired, 1);
+        assert_eq!(d.excluded, 1);
+        assert_eq!((d.wins, d.losses, d.ties), (1, 0, 0));
+        let paired_mean = d.mean_delta.unwrap();
+        assert!((paired_mean - 0.1).abs() < 1e-12, "{paired_mean}");
+
+        // The delta of the arm means mixes origins: B covers origin 1 only,
+        // A covers origins 1 and 2, so it reports a loss of 0.1 for B.
+        let delta_of_means = 0.6 - f64::midpoint(0.5, 0.9);
+        assert!((delta_of_means + 0.1).abs() < 1e-12, "{delta_of_means}");
+        assert!(paired_mean > 0.0 && delta_of_means < 0.0);
+
+        // An origin that arm B never scored counts like a `None` value.
+        let missing_origin = paired_delta(&a, &values(&[(1, Some(0.6))]), Better::Higher);
+        assert_eq!(missing_origin, d);
+    }
+
+    #[test]
+    fn counts_wins_losses_and_exact_ties_on_known_values() {
+        let a = values(&[
+            (1, Some(0.2)),
+            (2, Some(0.5)),
+            (3, Some(0.7)),
+            (4, Some(0.4)),
+            (5, Some(0.3)),
+        ]);
+        let b = values(&[
+            (1, Some(0.3)),
+            (2, Some(0.5)),
+            (3, Some(0.6)),
+            (4, Some(0.9)),
+            (5, Some(0.3)),
+        ]);
+        let d = paired_delta(&a, &b, Better::Higher);
+        assert_counts_add_up(&d);
+        assert_eq!(d.paired, 5);
+        assert_eq!((d.wins, d.losses, d.ties, d.excluded), (2, 1, 2, 0));
+        let mean = d.mean_delta.unwrap();
+        assert!((mean - 0.1).abs() < 1e-12, "{mean}");
+
+        let empty = paired_delta(&BTreeMap::new(), &BTreeMap::new(), Better::Higher);
+        assert_eq!(empty.paired, 0);
+        assert_eq!(empty.mean_delta, None);
+    }
+
+    #[test]
+    fn a_lower_value_wins_when_lower_is_better() {
+        // MAE: B is more accurate on origins 1 and 3, less on 2, equal on 4.
+        let a = values(&[
+            (1, Some(1.0)),
+            (2, Some(1.0)),
+            (3, Some(2.0)),
+            (4, Some(0.5)),
+        ]);
+        let b = values(&[
+            (1, Some(0.5)),
+            (2, Some(1.5)),
+            (3, Some(1.0)),
+            (4, Some(0.5)),
+        ]);
+        let d = paired_delta(&a, &b, Better::Lower);
+        assert_counts_add_up(&d);
+        assert_eq!(
+            (d.paired, d.wins, d.losses, d.ties, d.excluded),
+            (4, 2, 1, 1, 0)
+        );
+        // The mean delta keeps the B − A sign: negative = B more accurate.
+        let mean = d.mean_delta.unwrap();
+        assert!((mean + 0.25).abs() < 1e-12, "{mean}");
+        let higher = paired_delta(&a, &b, Better::Higher);
+        assert_eq!((higher.wins, higher.losses), (1, 2));
+        assert_eq!(higher.mean_delta, d.mean_delta);
+    }
+
+    fn horizon_with(by_origin: &[(i64, OriginMetrics)]) -> HorizonMetrics {
+        HorizonMetrics {
+            mae: None,
+            smape: None,
+            spearman: None,
+            precision_at_n_cheap: None,
+            precision_at_n_peak: None,
+            band_coverage: None,
+            pairs: 0,
+            by_origin: by_origin.iter().copied().collect(),
+        }
+    }
+
+    fn metrics(mae: f64, spearman: f64, cheap: f64, peak: Option<f64>) -> OriginMetrics {
+        OriginMetrics {
+            mae: Some(mae),
+            spearman: Some(spearman),
+            precision_at_n_cheap: Some(cheap),
+            precision_at_n_peak: peak,
+        }
+    }
+
+    /// `(paired, wins, losses, ties, excluded)` and the mean delta.
+    fn assert_paired(d: &PairedDelta, counts: (usize, usize, usize, usize, usize), mean: f64) {
+        assert_counts_add_up(d);
+        assert_eq!(
+            (d.paired, d.wins, d.losses, d.ties, d.excluded),
+            counts,
+            "{d:?}"
+        );
+        assert!((d.mean_delta.unwrap() - mean).abs() < 1e-12, "{d:?}");
+    }
+
+    #[test]
+    fn paired_horizon_reads_each_metric_as_b_minus_a_in_its_direction() {
+        // Each metric has its own outcome, so a swapped arm or metric fails.
+        let a = horizon_with(&[
+            (1, metrics(1.0, 0.1, 0.5, Some(0.9))),
+            (2, metrics(1.0, 0.1, 0.5, Some(0.9))),
+            (3, metrics(1.0, 0.1, 0.5, Some(0.9))),
+        ]);
+        let b = horizon_with(&[
+            (1, metrics(0.5, 0.3, 0.25, Some(1.0))),
+            (2, metrics(1.5, 0.3, 0.25, Some(0.9))),
+            (3, metrics(0.5, 0.3, 0.25, None)),
+        ]);
+        let d = paired_horizon(&a, &b);
+        // MAE: a lower value wins, and the mean keeps the B − A sign.
+        assert_paired(&d.mae, (3, 2, 1, 0, 0), -1.0 / 6.0);
+        assert_paired(&d.spearman, (3, 3, 0, 0, 0), 0.2);
+        assert_paired(&d.precision_at_n_cheap, (3, 0, 3, 0, 0), -0.25);
+        assert_paired(&d.precision_at_n_peak, (2, 1, 0, 1, 1), 0.05);
+    }
+
+    #[test]
+    fn a_delta_that_is_not_finite_is_excluded() {
+        let a = values(&[(1, Some(0.5)), (2, Some(0.5)), (3, Some(0.5))]);
+        let b = values(&[
+            (1, Some(f64::NAN)),
+            (2, Some(0.4)),
+            (3, Some(f64::INFINITY)),
+        ]);
+        for better in [Better::Higher, Better::Lower] {
+            let d = paired_delta(&a, &b, better);
+            assert_counts_add_up(&d);
+            assert_eq!((d.paired, d.excluded), (1, 2), "{better:?}");
+            assert_eq!(d.wins + d.losses, 1, "{better:?}");
+            assert!(d.mean_delta.unwrap().is_finite(), "{better:?}");
+        }
+    }
+
+    #[test]
+    fn a_different_variant_gets_consistent_paired_counts() {
+        let data = build_data(0.0);
+        let cmp = compare_variants(&data, ForecastVariant::default(), strong_ridge()).unwrap();
+        for (h, label) in HORIZON_LABELS.iter().enumerate() {
+            let (a, b) = (
+                &cmp.a.by_horizon[h].by_origin,
+                &cmp.b.by_horizon[h].by_origin,
+            );
+            let paired = by_metric(&cmp.paired_by_horizon[h]);
+            for ((name, metric), d) in METRICS.iter().zip(paired) {
+                assert_counts_add_up(&d);
+                let either_has_value = a
+                    .keys()
+                    .chain(b.keys())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .filter(|t| {
+                        a.get(t).and_then(metric).is_some() || b.get(t).and_then(metric).is_some()
+                    })
+                    .count();
+                assert_eq!(d.paired + d.excluded, either_has_value, "{label} {name}");
+            }
+        }
+        // The arms differ in level (MAE), not in rank: inside one UTC day the
+        // forecast is the day mean plus the persistence shape.
+        for (h, label) in HORIZON_LABELS.iter().enumerate() {
+            let mae = cmp.paired_by_horizon[h].mae;
+            assert!(mae.paired > 0, "{label}");
+            assert_eq!(mae.excluded, 0, "{label}");
+            assert!(mae.ties < mae.paired, "{label} {mae:?}");
+            // Each origin of a horizon has the same 96 pairs in both arms,
+            // so the paired mean equals the delta of the pooled MAE.
+            let pooled = cmp.delta_by_horizon[h].delta_mae.unwrap();
+            let paired_mean = mae.mean_delta.unwrap();
+            assert!(
+                (paired_mean - pooled).abs() < 1e-9,
+                "{label} {paired_mean} {pooled}"
+            );
+        }
+        // Day by day, B is more accurate on some d+1 days and less on others.
+        let d1 = cmp.paired_by_horizon[0].mae;
+        assert!(d1.wins > 0 && d1.losses > 0, "{d1:?}");
+    }
+
+    #[test]
+    fn each_origin_mae_comes_from_the_pairs_of_that_origin_and_day() {
+        let data = build_data(0.0);
+        let realized: BTreeMap<i64, f64> = data
+            .prices
+            .iter()
+            .filter(|p| p.area == "FI")
+            .map(|p| (p.start.as_millisecond(), p.spot_cents_kwh))
+            .collect();
+        let cmp = compare_variants(&data, ForecastVariant::default(), strong_ridge()).unwrap();
+        for (variant, summary) in [(cmp.variant_a, &cmp.a), (cmp.variant_b, &cmp.b)] {
+            let mut checked = 0;
+            for &t in &summary.scored_origins_ms {
+                let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+                let fc = forecast_at_issue_time_with(&inputs, variant).unwrap();
+                for (h, label) in HORIZON_LABELS.iter().enumerate() {
+                    let day_start = fc.series_start_ms + i64::try_from(h).unwrap() * DAY_MS;
+                    let errors: Vec<f64> = fc
+                        .predicted
+                        .iter()
+                        .map(|(key, p)| (key.as_millisecond(), p))
+                        .filter(|(ms, _)| (day_start..day_start + DAY_MS).contains(ms))
+                        .filter_map(|(ms, p)| realized.get(&ms).map(|a| (p - a).abs()))
+                        .collect();
+                    let got = summary.by_horizon[h].by_origin.get(&t);
+                    if errors.is_empty() {
+                        assert_eq!(got, None, "{label} {t}");
+                        continue;
+                    }
+                    #[expect(clippy::cast_precision_loss, reason = "at most 96 errors")]
+                    let want = errors.iter().sum::<f64>() / errors.len() as f64;
+                    let got = got.and_then(|m| m.mae).unwrap();
+                    assert!((got - want).abs() < 1e-12, "{label} {t} {got} {want}");
+                    checked += 1;
+                }
+            }
+            assert!(checked > 2 * summary.scored_origins_ms.len());
+        }
+    }
+
+    // Served Fingrid window
+
+    /// The issue time of the wind-forecast-gap fixture.
+    const GAP_ISSUE: &str = "2026-02-10T13:00:00Z";
+
+    /// 46 days. The wind forecast stops on 2026-02-07, 3.5 days before the
+    /// issue time, so the 4-week tail extension looks back past the 30-day
+    /// served history. Wind actuals before 2026-01-13 sit on a much higher
+    /// level, so any read of them moves the forecast.
+    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
+    fn build_wind_gap_data() -> BacktestData {
+        let start = ms("2026-01-01T00:00:00Z");
+        let old_until = ms("2026-01-13T00:00:00Z");
+        let wind_forecast_until = ms("2026-02-07T00:00:00Z");
+        let mut data = BacktestData::default();
+        let (mut wind75, mut cons124, mut wind245, mut cons165) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for q in 0..46 * 96 {
+            let at = start + q * QUARTER_MS;
+            let consumption = 8000.0 + (q % 96) as f64 * 15.0;
+            let wind = 2000.0 + ((q * 131) % 1800) as f64;
+            let fi = 0.0012 * (consumption - wind) + 2.0;
+            data.prices.push(price("FI", at, fi));
+            data.prices.push(price("SE1", at, fi - 0.5));
+            data.prices.push(price("SE3", at, fi + 0.3));
+            data.prices.push(price("EE", at, fi + 0.1));
+            cons124.push(actual(at, consumption, 124));
+            let recorded_wind = if at < old_until { wind + 4000.0 } else { wind };
+            wind75.push(actual(at, recorded_wind, 75));
+            cons165.push(vintage(at, consumption, 165, at - STALE_LEAD_H * HOUR_MS));
+            if at < wind_forecast_until {
+                wind245.push(vintage(at, wind, 245, at - 2 * HOUR_MS));
+            }
+        }
+        data.actuals = BTreeMap::from([(75, wind75), (124, cons124)]);
+        data.vintages = BTreeMap::from([(245, wind245), (165, cons165)]);
+        data
+    }
+
+    /// The window of the served forecast, from the domain rule that the
+    /// server reads with: `(history_start, series_end)` in UTC ms.
+    fn served_window(inputs: &IssueTimeInputs) -> (i64, i64) {
+        let window =
+            ForecastWindow::new(inputs.last_published_ms.map(ts), ts(inputs.t_ms)).unwrap();
+        assert_eq!(window.series_start.as_millisecond(), inputs.origin_ms);
+        (
+            window.history_start.as_millisecond(),
+            window.series_end.as_millisecond(),
+        )
+    }
+
+    /// The issue-time inputs with Fingrid data read like the served
+    /// forecast: actuals in `[history_start, min(t, series_end))`, the
+    /// selected vintages with targets in `[history_start, series_end)`.
+    /// Prices stay as the backtest reads them; this oracle covers Fingrid
+    /// data only.
+    fn with_served_fingrid(data: &BacktestData, inputs: &IssueTimeInputs) -> IssueTimeInputs {
+        let (history_start, series_end) = served_window(inputs);
+        let actual_end = inputs.t_ms.min(series_end);
+        let actual = data
+            .actuals
+            .iter()
+            .map(|(id, rows)| {
+                let kept = rows
+                    .iter()
+                    .filter(|r| (history_start..actual_end).contains(&r.start.as_millisecond()))
+                    .copied()
+                    .collect();
+                (*id, kept)
+            })
+            .collect();
+        let forecast = data
+            .vintages
+            .iter()
+            .map(|(id, rows)| {
+                let kept = select_vintages_as_of(rows, Some(inputs.t_ms))
+                    .into_iter()
+                    .filter(|v| (history_start..series_end).contains(&v.start.as_millisecond()))
+                    .collect();
+                (*id, kept)
+            })
+            .collect();
+        IssueTimeInputs {
+            actual,
+            forecast,
+            ..inputs.clone()
+        }
+    }
+
+    #[test]
+    fn the_gap_fixture_reaches_actuals_older_than_the_served_history() {
+        let data = build_wind_gap_data();
+        let t = ms(GAP_ISSUE);
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let (history_start, _) = served_window(&inputs);
+        assert!(
+            data.actuals[&75]
+                .iter()
+                .any(|r| r.start.as_millisecond() < history_start)
+        );
+        let last_wind_target = select_vintages_as_of(&data.vintages[&245], Some(t))
+            .iter()
+            .map(|v| v.start.as_millisecond())
+            .max()
+            .unwrap();
+        assert!(t - last_wind_target >= 2 * DAY_MS);
+        let first_extended = last_wind_target + QUARTER_MS;
+        let weeks = i64::from(ForecastVariant::default().wind_extension_weeks);
+        assert!(first_extended - weeks * 7 * DAY_MS < history_start);
+    }
+
+    #[test]
+    fn issue_time_fingrid_inputs_stay_inside_the_served_window() {
+        let data = build_wind_gap_data();
+        for mode in [AsOfMode::IssueTime, AsOfMode::Latest] {
+            let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), mode);
+            let (history_start, series_end) = served_window(&inputs);
+            let actual_end = inputs.t_ms.min(series_end);
+            for (id, rows) in &inputs.actual {
+                assert!(!rows.is_empty(), "{id}");
+                for r in rows {
+                    let start = r.start.as_millisecond();
+                    assert!((history_start..actual_end).contains(&start), "{id} {start}");
+                }
+            }
+            for (id, rows) in &inputs.forecast {
+                assert!(!rows.is_empty(), "{id}");
+                for v in rows {
+                    let start = v.start.as_millisecond();
+                    assert!((history_start..series_end).contains(&start), "{id} {start}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn after_a_wind_forecast_gap_the_backtest_forecasts_like_the_served_window() {
+        let data = build_wind_gap_data();
+        let t = ms(GAP_ISSUE);
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let served = with_served_fingrid(&data, &inputs);
+        let every_earlier_actual = IssueTimeInputs {
+            actual: data
+                .actuals
+                .iter()
+                .map(|(id, rows)| {
+                    let known = rows
+                        .iter()
+                        .filter(|r| r.start.as_millisecond() < t)
+                        .copied()
+                        .collect();
+                    (*id, known)
+                })
+                .collect(),
+            ..served.clone()
+        };
+        let served_fc = forecast_at_issue_time(&served).unwrap();
+        // The fixture is sensitive: the older actuals change the forecast.
+        assert_ne!(
+            forecast_at_issue_time(&every_earlier_actual)
+                .unwrap()
+                .predicted,
+            served_fc.predicted
+        );
+        assert_eq!(forecast_at_issue_time(&inputs).unwrap(), served_fc);
+        assert_eq!(inputs.actual, served.actual);
+        assert_eq!(inputs.forecast, served.forecast);
+    }
+
+    #[test]
+    fn extension_weeks_above_the_cap_add_nothing_inside_the_served_window() {
+        let data = build_wind_gap_data();
+        let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), AsOfMode::IssueTime);
+        let weeks = |n: u32| ForecastVariant {
+            wind_extension_weeks: n,
+            ..ForecastVariant::default()
+        };
+        let at = |n: u32| forecast_at_issue_time_with(&inputs, weeks(n)).unwrap();
+        assert_eq!(ForecastVariant::default().wind_extension_weeks, 4);
+        assert_ne!(at(3).predicted, at(4).predicted);
+        assert_eq!(at(5), at(4));
+        assert_eq!(at(8), at(4));
     }
 
     #[test]
