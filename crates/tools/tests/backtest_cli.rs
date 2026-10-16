@@ -10,11 +10,12 @@ mod backtest_cli {
     use spot_price_domain::forecast::FLOOR_HISTORY_DAYS;
     use spot_price_domain::price::eur_mwh_to_cents_kwh;
     use spot_price_tools::backtest::{
-        BacktestOptions, ForecastVariant, HORIZON_LABELS, compare_optimism, run_backtest,
+        BacktestOptions, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta, PairedDelta,
+        compare_optimism, run_backtest,
     };
     use spot_price_tools::backtest_cli::{
         DEFAULT_WINDOW_DAYS, MAX_EXTENSION_WEEKS, MIN_SCOREABLE_ORIGINS, StoredPrice,
-        assemble_backtest_data, is_thin_data, parse_variant, parse_window_days,
+        assemble_backtest_data, is_thin_data, parse_variant, parse_window_days, print_paired_table,
     };
     use spot_price_tools::cli::{Context, Output, Stream, run};
     use spot_price_tools::data::{
@@ -353,7 +354,8 @@ mod backtest_cli {
         for label in HORIZON_LABELS {
             assert!(stdout.contains(&format!("    {label:<7}  ")), "{label}");
         }
-        let delta_rows: Vec<&str> = stdout
+        let (unpaired, paired) = stdout.split_once("  PAIRED MAE per horizon").unwrap();
+        let delta_rows: Vec<&str> = unpaired
             .lines()
             .filter(|l| {
                 ["Spearman", "P@N-cheap", "P@N-peak", "MAE (c/kWh, ref)"]
@@ -366,7 +368,99 @@ mod backtest_cli {
         for row in delta_rows {
             assert!(row.trim_end().ends_with("0.000"), "{row}");
         }
+        assert!(stdout.contains("REFERENCE ONLY"));
+        // Paired rows: paired, meanDelta, W, L, T, excluded.
+        let paired_rows: Vec<Vec<&str>> = paired
+            .lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>())
+            .filter(|cells| {
+                cells
+                    .iter()
+                    .any(|c| ["MAE", "Spearman", "P@N-cheap", "P@N-peak"].contains(c))
+                    && cells.last().is_some_and(|c| c.parse::<usize>().is_ok())
+            })
+            .map(|cells| cells.into_iter().rev().take(6).collect())
+            .collect();
+        assert_eq!(paired_rows.len(), 4 * HORIZON_LABELS.len());
+        for row in paired_rows {
+            let [excluded, ties, losses, wins, mean, n] = row[..] else {
+                panic!("{row:?}");
+            };
+            assert_eq!((mean, wins, losses, excluded), ("0.000", "0", "0", "0"));
+            assert_eq!(ties, n);
+            assert!(n.parse::<usize>().unwrap() >= MIN_SCOREABLE_ORIGINS);
+        }
         std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn the_paired_table_prints_each_metric_on_its_own_row() {
+        // Metric m (0 MAE, 1 Spearman, 2 cheap, 3 peak) of horizon h is
+        // value k = 4h + m + 1: k wins, k + 10 excluded, mean k / 1000.
+        let delta = |k: usize| PairedDelta {
+            paired: 50,
+            mean_delta: Some(f64::from(u32::try_from(k).unwrap()) / 1000.0),
+            wins: k,
+            losses: 0,
+            ties: 50 - k,
+            excluded: k + 10,
+        };
+        let paired: [HorizonPairedDelta; 3] = std::array::from_fn(|h| HorizonPairedDelta {
+            mae: delta(4 * h + 1),
+            spearman: delta(4 * h + 2),
+            precision_at_n_cheap: delta(4 * h + 3),
+            precision_at_n_peak: delta(4 * h + 4),
+        });
+        let mut out = Output::default();
+        print_paired_table(&paired, &mut out);
+        let text = out.text(Stream::Stdout);
+        let verdict = text
+            .find("PAIRED MAE per horizon (the A/B verdict lines")
+            .unwrap();
+        let info = text
+            .find("PAIRED rank metrics per horizon (information, not the verdict")
+            .unwrap();
+        assert!(verdict < info);
+        assert!(text.contains("W = B more accurate (delta < 0)"));
+        assert!(text.contains("W = B ranks better (delta > 0)"));
+        assert!(text.contains("do not react to model options"));
+        assert_eq!(text.matches("or the delta is not finite").count(), 2);
+        let rows: Vec<Vec<&str>> = text
+            .lines()
+            .map(|l| l.split_whitespace().collect::<Vec<_>>())
+            .filter(|cells| {
+                cells
+                    .iter()
+                    .any(|c| ["MAE", "Spearman", "P@N-cheap", "P@N-peak"].contains(c))
+                    && cells.last().is_some_and(|c| c.parse::<usize>().is_ok())
+            })
+            .collect();
+        // The MAE table first (one row per horizon), then the rank table.
+        let order: Vec<(usize, usize)> = (0..3)
+            .map(|h| (h, 0))
+            .chain((0..3).flat_map(|h| (1..4).map(move |m| (h, m))))
+            .collect();
+        assert_eq!(rows.len(), order.len());
+        for (cells, &(h, m)) in rows.iter().zip(&order) {
+            let k = 4 * h + m + 1;
+            let first_of_horizon = m <= 1;
+            let cells = if first_of_horizon {
+                assert_eq!(cells[0], HORIZON_LABELS[h], "{cells:?}");
+                &cells[1..]
+            } else {
+                &cells[..]
+            };
+            let want = [
+                ["MAE", "Spearman", "P@N-cheap", "P@N-peak"][m].to_owned(),
+                "50".to_owned(),
+                format!("0.{k:03}"),
+                k.to_string(),
+                "0".to_owned(),
+                (50 - k).to_string(),
+                (k + 10).to_string(),
+            ];
+            assert_eq!(cells, want, "{cells:?}");
+        }
     }
 
     #[test]

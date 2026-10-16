@@ -474,8 +474,20 @@ fn baseline_for(baseline: Baseline, target_ms: i64, inputs: &IssueTimeInputs) ->
         .copied()
 }
 
+/// The metrics of one origin in one horizon. A rank metric is `None` with
+/// fewer than two scored quarters or a constant series (Spearman), or a
+/// constant prediction (precision@N).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct OriginMetrics {
+    /// Mean absolute error (c/kWh) over the pairs of this origin.
+    pub mae: Option<f64>,
+    pub spearman: Option<f64>,
+    pub precision_at_n_cheap: Option<f64>,
+    pub precision_at_n_peak: Option<f64>,
+}
+
 /// Metrics of one horizon. Rank metrics are per origin, then averaged.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HorizonMetrics {
     pub mae: Option<f64>,
     pub smape: Option<f64>,
@@ -484,6 +496,9 @@ pub struct HorizonMetrics {
     pub precision_at_n_peak: Option<f64>,
     pub band_coverage: Option<f64>,
     pub pairs: usize,
+    /// The metrics of each origin with a scored pair in this horizon, keyed
+    /// by the issue time (UTC ms).
+    pub by_origin: BTreeMap<i64, OriginMetrics>,
 }
 
 /// The result of one backtest run.
@@ -522,6 +537,7 @@ pub struct BacktestOptions {
 
 #[derive(Debug, Default)]
 struct OriginSeries {
+    t_ms: i64,
     preds: Vec<f64>,
     acts: Vec<f64>,
 }
@@ -562,7 +578,10 @@ impl Scoring {
         fc: &IssueForecast,
         realized: &BTreeMap<QuarterStart, f64>,
     ) {
-        let mut origin_by_horizon: [OriginSeries; 3] = Default::default();
+        let mut origin_by_horizon: [OriginSeries; 3] = std::array::from_fn(|_| OriginSeries {
+            t_ms: inputs.t_ms,
+            ..OriginSeries::default()
+        });
         let mut scored = false;
         for &(key, pred) in &fc.predicted {
             let Some(&actual) = realized.get(&key) else {
@@ -719,36 +738,52 @@ fn self_coverage(residuals: &[HorizonResidual]) -> Option<f64> {
     ))
 }
 
-fn horizon_metrics(acc: &HorizonAcc) -> HorizonMetrics {
-    let mut spearmans = Vec::new();
-    let mut cheaps = Vec::new();
-    let mut peaks = Vec::new();
-    for s in &acc.origin_series {
-        if s.preds.len() < 2 {
-            continue;
-        }
-        // The two series have equal lengths of at least 2, and N > 0, so the
-        // metrics cannot return an error.
-        spearmans.push(spearman(&s.preds, &s.acts).ok().flatten());
-        cheaps.push(
-            precision_at_n(&s.preds, &s.acts, PRECISION_N_QUARTERS, RankMode::Cheap)
-                .ok()
-                .flatten(),
-        );
-        peaks.push(
-            precision_at_n(&s.preds, &s.acts, PRECISION_N_QUARTERS, RankMode::Peak)
-                .ok()
-                .flatten(),
-        );
+fn origin_metrics(s: &OriginSeries) -> OriginMetrics {
+    let pairs: Vec<(f64, f64)> = s
+        .preds
+        .iter()
+        .copied()
+        .zip(s.acts.iter().copied())
+        .collect();
+    if s.preds.len() < 2 {
+        return OriginMetrics {
+            mae: mae(&pairs),
+            ..OriginMetrics::default()
+        };
     }
+    // The two series have equal lengths of at least 2, and N > 0, so the
+    // metrics cannot return an error.
+    let precision = |mode| {
+        precision_at_n(&s.preds, &s.acts, PRECISION_N_QUARTERS, mode)
+            .ok()
+            .flatten()
+    };
+    OriginMetrics {
+        mae: mae(&pairs),
+        spearman: spearman(&s.preds, &s.acts).ok().flatten(),
+        precision_at_n_cheap: precision(RankMode::Cheap),
+        precision_at_n_peak: precision(RankMode::Peak),
+    }
+}
+
+fn horizon_metrics(acc: &HorizonAcc) -> HorizonMetrics {
+    let by_origin: BTreeMap<i64, OriginMetrics> = acc
+        .origin_series
+        .iter()
+        .map(|s| (s.t_ms, origin_metrics(s)))
+        .collect();
+    let mean_of = |metric: fn(&OriginMetrics) -> Option<f64>| {
+        mean_of_present(&by_origin.values().map(metric).collect::<Vec<_>>())
+    };
     HorizonMetrics {
         mae: mae(&acc.pairs),
         smape: smape(&acc.pairs),
-        spearman: mean_of_present(&spearmans),
-        precision_at_n_cheap: mean_of_present(&cheaps),
-        precision_at_n_peak: mean_of_present(&peaks),
+        spearman: mean_of(|r| r.spearman),
+        precision_at_n_cheap: mean_of(|r| r.precision_at_n_cheap),
+        precision_at_n_peak: mean_of(|r| r.precision_at_n_peak),
         band_coverage: self_coverage(&acc.residuals),
         pairs: acc.pairs.len(),
+        by_origin,
     }
 }
 
@@ -900,8 +935,10 @@ pub fn compare_optimism(data: &BacktestData) -> Result<OptimismComparison, OutOf
     })
 }
 
-/// Deltas of one horizon, B − A. A positive rank delta means B ranks
-/// better; a negative MAE delta means B is more accurate.
+/// Deltas of the arm means of one horizon, B − A. A positive rank delta
+/// means B ranks better; a negative MAE delta means B is more accurate. The
+/// rank means of the two arms can cover different origins; the paired
+/// deltas are the comparison on the same origins.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HorizonVariantDelta {
     pub delta_spearman: Option<f64>,
@@ -925,6 +962,114 @@ pub struct VariantComparison {
     pub origins_match: bool,
     /// Indexed like [`HORIZON_LABELS`].
     pub delta_by_horizon: [HorizonVariantDelta; 3],
+    /// Origin-by-origin MAE and rank deltas. Indexed like [`HORIZON_LABELS`].
+    pub paired_by_horizon: [HorizonPairedDelta; 3],
+}
+
+/// Which direction of a metric is better.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Better {
+    /// Rank metrics: a win for B is a delta B − A above 0.
+    Higher,
+    /// MAE: a win for B (more accurate) is a delta B − A below 0.
+    Lower,
+}
+
+/// One metric of arm B against arm A, origin by origin. A win is a delta
+/// B − A in the [`Better`] direction, a loss is the other sign, and a tie is
+/// an exactly equal value (delta == 0.0). An origin where only one arm has
+/// a value, or where the delta is not finite, is excluded and counted. An
+/// origin where neither arm has a value is not counted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairedDelta {
+    /// Origins where both arms have a value; `wins + losses + ties`.
+    pub paired: usize,
+    /// The mean delta B − A over the paired origins; `None` when none.
+    pub mean_delta: Option<f64>,
+    pub wins: usize,
+    pub losses: usize,
+    pub ties: usize,
+    pub excluded: usize,
+}
+
+/// The paired deltas of one horizon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HorizonPairedDelta {
+    /// Lower is better: a win is a negative delta (B more accurate).
+    pub mae: PairedDelta,
+    /// Rank metrics: higher is better, a win is a positive delta.
+    pub spearman: PairedDelta,
+    pub precision_at_n_cheap: PairedDelta,
+    pub precision_at_n_peak: PairedDelta,
+}
+
+/// Pairs the per-origin values of one metric by origin key. See
+/// [`PairedDelta`] for the counting rules.
+#[must_use]
+pub fn paired_delta(
+    a: &BTreeMap<i64, Option<f64>>,
+    b: &BTreeMap<i64, Option<f64>>,
+    better: Better,
+) -> PairedDelta {
+    let origins: BTreeSet<i64> = a.keys().chain(b.keys()).copied().collect();
+    let mut deltas = Vec::new();
+    let (mut wins, mut losses, mut ties, mut excluded) = (0, 0, 0, 0);
+    for origin in origins {
+        let va = a.get(&origin).copied().flatten();
+        let vb = b.get(&origin).copied().flatten();
+        let (va, vb) = match (va, vb) {
+            (Some(va), Some(vb)) => (va, vb),
+            (None, None) => continue,
+            _ => {
+                excluded += 1;
+                continue;
+            }
+        };
+        let delta = vb - va;
+        if !delta.is_finite() {
+            excluded += 1;
+            continue;
+        }
+        let gain = match better {
+            Better::Higher => delta,
+            Better::Lower => -delta,
+        };
+        if gain > 0.0 {
+            wins += 1;
+        } else if gain < 0.0 {
+            losses += 1;
+        } else {
+            ties += 1;
+        }
+        deltas.push(delta);
+    }
+    PairedDelta {
+        paired: deltas.len(),
+        mean_delta: (!deltas.is_empty())
+            .then(|| js_sum(deltas.iter().copied()) / count_f64(deltas.len())),
+        wins,
+        losses,
+        ties,
+        excluded,
+    }
+}
+
+/// The paired deltas of arm `b` against arm `a` in one horizon, one
+/// [`paired_delta`] per metric over [`HorizonMetrics::by_origin`].
+#[must_use]
+pub fn paired_horizon(a: &HorizonMetrics, b: &HorizonMetrics) -> HorizonPairedDelta {
+    let pair = |metric: fn(&OriginMetrics) -> Option<f64>, better: Better| {
+        let values = |m: &HorizonMetrics| -> BTreeMap<i64, Option<f64>> {
+            m.by_origin.iter().map(|(t, r)| (*t, metric(r))).collect()
+        };
+        paired_delta(&values(a), &values(b), better)
+    };
+    HorizonPairedDelta {
+        mae: pair(|r| r.mae, Better::Lower),
+        spearman: pair(|r| r.spearman, Better::Higher),
+        precision_at_n_cheap: pair(|r| r.precision_at_n_cheap, Better::Higher),
+        precision_at_n_peak: pair(|r| r.precision_at_n_peak, Better::Higher),
+    }
 }
 
 /// Runs the honest issue-time backtest for arm `a`, then for arm `b` on the
@@ -962,6 +1107,8 @@ pub fn compare_variants(
             delta_mae: sub(mb.mae, ma.mae),
         }
     });
+    let paired_by_horizon =
+        std::array::from_fn(|h| paired_horizon(&run_a.by_horizon[h], &run_b.by_horizon[h]));
     Ok(VariantComparison {
         variant_a: a,
         variant_b: b,
@@ -973,6 +1120,7 @@ pub fn compare_variants(
                 .zip(&run_b.by_horizon)
                 .all(|(ma, mb)| ma.pairs == mb.pairs),
         delta_by_horizon,
+        paired_by_horizon,
         a: run_a,
         b: run_b,
     })

@@ -15,8 +15,9 @@ use spot_price_domain::js::string_to_number;
 use spot_price_domain::price::eur_mwh_to_cents_kwh;
 
 use crate::backtest::{
-    BacktestOptions, ForecastVariant, HORIZON_LABELS, OptimismComparison, PRECISION_N_QUARTERS,
-    VariantComparison, compare_optimism, compare_variants, run_backtest,
+    BacktestOptions, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta, OptimismComparison,
+    PRECISION_N_QUARTERS, PairedDelta, VariantComparison, compare_optimism, compare_variants,
+    run_backtest,
 };
 use crate::cli::{Context, Output, flag_value, has_flag};
 use crate::data::{BacktestData, DatasetId, GridActual, PricePoint, Vintage, load_fixture};
@@ -455,6 +456,7 @@ fn print_variant_header(cmp: &VariantComparison, out: &mut Output) {
         cmp.shared_origins
     ));
     out.log("   - This report gives deltas, not a verdict. Fix the per-horizon threshold in the issue BEFORE the run.");
+    out.log("   - Judge that threshold on the PAIRED MAE table: the same origins in both arms. The tool applies no threshold.");
 }
 
 fn print_variant_table(cmp: &VariantComparison, out: &mut Output) {
@@ -480,8 +482,11 @@ fn print_variant_table(cmp: &VariantComparison, out: &mut Output) {
         b.r_mae.last_published_day,
     );
 
+    out.log(
+        "\n  REFERENCE ONLY: the next table compares arm means, which can cover different origins.",
+    );
     out.log(&format!(
-        "\n  per horizon (precision@N over the cheapest/peak {PRECISION_N_QUARTERS} quarters = {}h; delta = B − A):",
+        "  per horizon (precision@N over the cheapest/peak {PRECISION_N_QUARTERS} quarters = {}h; delta = B − A):",
         PRECISION_N_QUARTERS / 4
     ));
     out.log(&format!(
@@ -523,7 +528,57 @@ fn print_variant_table(cmp: &VariantComparison, out: &mut Output) {
             ));
         }
     }
+    print_paired_table(&cmp.paired_by_horizon, out);
     out.log("");
+}
+
+/// Prints the paired deltas: the MAE table, which is the verdict, then the
+/// rank metrics as information. One row per horizon and metric.
+pub fn print_paired_table(paired: &[HorizonPairedDelta; 3], out: &mut Output) {
+    out.log("\n  PAIRED MAE per horizon (the A/B verdict lines; delta = B − A in c/kWh per origin where both arms have a value):");
+    out.log("    W = B more accurate (delta < 0), L = B less accurate, T = exactly equal; excluded = only one arm has a value, or the delta is not finite.");
+    print_paired_rows(paired, &[("MAE", |p| p.mae)], out);
+
+    out.log("\n  PAIRED rank metrics per horizon (information, not the verdict; delta = B − A per origin where both arms have a value):");
+    out.log("    At the 00:00 UTC backtest origin the within-UTC-day ranks do not react to model options, apart from rounding (see #116).");
+    out.log("    W = B ranks better (delta > 0), L = B ranks worse, T = exactly equal; excluded = only one arm has a value, or the delta is not finite.");
+    print_paired_rows(
+        paired,
+        &[
+            ("Spearman", |p| p.spearman),
+            ("P@N-cheap", |p| p.precision_at_n_cheap),
+            ("P@N-peak", |p| p.precision_at_n_peak),
+        ],
+        out,
+    );
+}
+
+type PairedMetric = fn(&HorizonPairedDelta) -> PairedDelta;
+
+fn print_paired_rows(
+    paired: &[HorizonPairedDelta; 3],
+    metrics: &[(&str, PairedMetric)],
+    out: &mut Output,
+) {
+    out.log(&format!(
+        "    {:<7}  {:<9}  {:>6}  {:>9}  {:>5}  {:>5}  {:>5}  {:>8}",
+        "horizon", "metric", "paired", "meanDelta", "W", "L", "T", "excluded"
+    ));
+    for (label, p) in HORIZON_LABELS.iter().zip(paired) {
+        for (i, (name, metric)) in metrics.iter().enumerate() {
+            let d = metric(p);
+            let horizon = if i == 0 { *label } else { "" };
+            out.log(&format!(
+                "    {horizon:<7}  {name:<9}  {:>6}  {:>9}  {:>5}  {:>5}  {:>5}  {:>8}",
+                d.paired,
+                fmt(d.mean_delta, 3),
+                d.wins,
+                d.losses,
+                d.ties,
+                d.excluded
+            ));
+        }
+    }
 }
 
 /// `Date.prototype.toISOString` of a UTC ms instant, or `n/a`.
