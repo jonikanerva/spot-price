@@ -6,12 +6,13 @@ mod backtest {
     use std::collections::BTreeMap;
 
     use jiff::Timestamp;
-    use spot_price_domain::forecast::{ForecastOptions, QuarterStart};
+    use spot_price_domain::forecast::{ForecastOptions, ForecastWindow, QuarterStart};
     use spot_price_tools::backtest::{
-        AsOfMode, BacktestOptions, ForecastVariant, HORIZON_LABELS, MIN_CALIBRATION_WINDOW_DAYS,
-        collect_input_timestamps, compare_optimism, compare_variants, derive_bands_from_backtest,
-        find_leaking_inputs, forecast_at_issue_time, forecast_at_issue_time_with, mae,
-        reconstruct_issue_time, rmae, run_backtest, select_vintages_as_of, smape,
+        AsOfMode, BacktestOptions, ForecastVariant, HORIZON_LABELS, IssueTimeInputs,
+        MIN_CALIBRATION_WINDOW_DAYS, collect_input_timestamps, compare_optimism, compare_variants,
+        derive_bands_from_backtest, find_leaking_inputs, forecast_at_issue_time,
+        forecast_at_issue_time_with, mae, reconstruct_issue_time, rmae, run_backtest,
+        select_vintages_as_of, smape,
     };
     use spot_price_tools::data::{BacktestData, GridActual, PricePoint, Vintage};
 
@@ -494,6 +495,190 @@ mod backtest {
                 .iter()
                 .any(|d| d.delta_mae.is_some_and(|m| m.abs() > 1e-9))
         );
+    }
+
+    // Served Fingrid window
+
+    /// The issue time of the wind-forecast-gap fixture.
+    const GAP_ISSUE: &str = "2026-02-10T13:00:00Z";
+
+    /// 46 days. The wind forecast stops on 2026-02-07, 3.5 days before the
+    /// issue time, so the 4-week tail extension looks back past the 30-day
+    /// served history. Wind actuals before 2026-01-13 sit on a much higher
+    /// level, so any read of them moves the forecast.
+    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
+    fn build_wind_gap_data() -> BacktestData {
+        let start = ms("2026-01-01T00:00:00Z");
+        let old_until = ms("2026-01-13T00:00:00Z");
+        let wind_forecast_until = ms("2026-02-07T00:00:00Z");
+        let mut data = BacktestData::default();
+        let (mut wind75, mut cons124, mut wind245, mut cons165) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for q in 0..46 * 96 {
+            let at = start + q * QUARTER_MS;
+            let consumption = 8000.0 + (q % 96) as f64 * 15.0;
+            let wind = 2000.0 + ((q * 131) % 1800) as f64;
+            let fi = 0.0012 * (consumption - wind) + 2.0;
+            data.prices.push(price("FI", at, fi));
+            data.prices.push(price("SE1", at, fi - 0.5));
+            data.prices.push(price("SE3", at, fi + 0.3));
+            data.prices.push(price("EE", at, fi + 0.1));
+            cons124.push(actual(at, consumption, 124));
+            let recorded_wind = if at < old_until { wind + 4000.0 } else { wind };
+            wind75.push(actual(at, recorded_wind, 75));
+            cons165.push(vintage(at, consumption, 165, at - STALE_LEAD_H * HOUR_MS));
+            if at < wind_forecast_until {
+                wind245.push(vintage(at, wind, 245, at - 2 * HOUR_MS));
+            }
+        }
+        data.actuals = BTreeMap::from([(75, wind75), (124, cons124)]);
+        data.vintages = BTreeMap::from([(245, wind245), (165, cons165)]);
+        data
+    }
+
+    /// The window of the served forecast, from the domain rule that the
+    /// server reads with: `(history_start, series_end)` in UTC ms.
+    fn served_window(inputs: &IssueTimeInputs) -> (i64, i64) {
+        let window =
+            ForecastWindow::new(inputs.last_published_ms.map(ts), ts(inputs.t_ms)).unwrap();
+        assert_eq!(window.series_start.as_millisecond(), inputs.origin_ms);
+        (
+            window.history_start.as_millisecond(),
+            window.series_end.as_millisecond(),
+        )
+    }
+
+    /// The issue-time inputs with Fingrid data read like the served
+    /// forecast: actuals in `[history_start, min(t, series_end))`, the
+    /// selected vintages with targets in `[history_start, series_end)`.
+    /// Prices stay as the backtest reads them; this oracle covers Fingrid
+    /// data only.
+    fn with_served_fingrid(data: &BacktestData, inputs: &IssueTimeInputs) -> IssueTimeInputs {
+        let (history_start, series_end) = served_window(inputs);
+        let actual_end = inputs.t_ms.min(series_end);
+        let actual = data
+            .actuals
+            .iter()
+            .map(|(id, rows)| {
+                let kept = rows
+                    .iter()
+                    .filter(|r| (history_start..actual_end).contains(&r.start.as_millisecond()))
+                    .copied()
+                    .collect();
+                (*id, kept)
+            })
+            .collect();
+        let forecast = data
+            .vintages
+            .iter()
+            .map(|(id, rows)| {
+                let kept = select_vintages_as_of(rows, Some(inputs.t_ms))
+                    .into_iter()
+                    .filter(|v| (history_start..series_end).contains(&v.start.as_millisecond()))
+                    .collect();
+                (*id, kept)
+            })
+            .collect();
+        IssueTimeInputs {
+            actual,
+            forecast,
+            ..inputs.clone()
+        }
+    }
+
+    #[test]
+    fn the_gap_fixture_reaches_actuals_older_than_the_served_history() {
+        let data = build_wind_gap_data();
+        let t = ms(GAP_ISSUE);
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let (history_start, _) = served_window(&inputs);
+        assert!(
+            data.actuals[&75]
+                .iter()
+                .any(|r| r.start.as_millisecond() < history_start)
+        );
+        let last_wind_target = select_vintages_as_of(&data.vintages[&245], Some(t))
+            .iter()
+            .map(|v| v.start.as_millisecond())
+            .max()
+            .unwrap();
+        assert!(t - last_wind_target >= 2 * DAY_MS);
+        let first_extended = last_wind_target + QUARTER_MS;
+        let weeks = i64::from(ForecastVariant::default().wind_extension_weeks);
+        assert!(first_extended - weeks * 7 * DAY_MS < history_start);
+    }
+
+    #[test]
+    fn issue_time_fingrid_inputs_stay_inside_the_served_window() {
+        let data = build_wind_gap_data();
+        for mode in [AsOfMode::IssueTime, AsOfMode::Latest] {
+            let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), mode);
+            let (history_start, series_end) = served_window(&inputs);
+            let actual_end = inputs.t_ms.min(series_end);
+            for (id, rows) in &inputs.actual {
+                assert!(!rows.is_empty(), "{id}");
+                for r in rows {
+                    let start = r.start.as_millisecond();
+                    assert!((history_start..actual_end).contains(&start), "{id} {start}");
+                }
+            }
+            for (id, rows) in &inputs.forecast {
+                assert!(!rows.is_empty(), "{id}");
+                for v in rows {
+                    let start = v.start.as_millisecond();
+                    assert!((history_start..series_end).contains(&start), "{id} {start}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn after_a_wind_forecast_gap_the_backtest_forecasts_like_the_served_window() {
+        let data = build_wind_gap_data();
+        let t = ms(GAP_ISSUE);
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let served = with_served_fingrid(&data, &inputs);
+        let every_earlier_actual = IssueTimeInputs {
+            actual: data
+                .actuals
+                .iter()
+                .map(|(id, rows)| {
+                    let known = rows
+                        .iter()
+                        .filter(|r| r.start.as_millisecond() < t)
+                        .copied()
+                        .collect();
+                    (*id, known)
+                })
+                .collect(),
+            ..served.clone()
+        };
+        let served_fc = forecast_at_issue_time(&served).unwrap();
+        // The fixture is sensitive: the older actuals change the forecast.
+        assert_ne!(
+            forecast_at_issue_time(&every_earlier_actual)
+                .unwrap()
+                .predicted,
+            served_fc.predicted
+        );
+        assert_eq!(forecast_at_issue_time(&inputs).unwrap(), served_fc);
+        assert_eq!(inputs.actual, served.actual);
+        assert_eq!(inputs.forecast, served.forecast);
+    }
+
+    #[test]
+    fn extension_weeks_above_the_cap_add_nothing_inside_the_served_window() {
+        let data = build_wind_gap_data();
+        let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), AsOfMode::IssueTime);
+        let weeks = |n: u32| ForecastVariant {
+            wind_extension_weeks: n,
+            ..ForecastVariant::default()
+        };
+        let at = |n: u32| forecast_at_issue_time_with(&inputs, weeks(n)).unwrap();
+        assert_eq!(ForecastVariant::default().wind_extension_weeks, 4);
+        assert_ne!(at(3).predicted, at(4).predicted);
+        assert_eq!(at(5), at(4));
+        assert_eq!(at(8), at(4));
     }
 
     #[test]

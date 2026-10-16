@@ -36,10 +36,10 @@ pub const SCORED_AREAS: [&str; 4] = ["FI", "SE1", "SE3", "EE"];
 /// Above this sparse-ladder fraction the leak delta is likely understated.
 const SPARSE_WARN: f64 = 0.2;
 
-/// The largest extension window that `--ab` accepts. The served forecast
-/// reads Fingrid actuals only from [`FLOOR_HISTORY_DAYS`] before the series
-/// start, but the backtest passes all earlier actuals. A longer window would
-/// score data that production never sees.
+/// The largest extension window that `--ab` accepts. An extended quarter is
+/// before the series end, so a lookback of more weeks reaches only actuals
+/// older than [`FLOOR_HISTORY_DAYS`] before the series start. The served
+/// window holds none, and such a variant would score like this cap.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "FLOOR_HISTORY_DAYS / 7 is a small positive number"

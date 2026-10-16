@@ -1,7 +1,8 @@
 //! Rolling-origin backtest of the FI price forecast, keyed by issue time.
 //! Pure. Each origin sees only what the route knew: prices through the last
 //! published delivery, Fingrid actuals strictly before the issue time, and
-//! per target the freshest vintage issued strictly before it.
+//! per target the freshest vintage issued strictly before it. Fingrid data
+//! stays inside the window of the served forecast.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
@@ -9,9 +10,10 @@ use std::str::FromStr;
 use jiff::Timestamp;
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
-    CalibratedBands, DeriveOptions, ForecastInput, ForecastOptions, GridRecord, HorizonResidual,
-    NeighborPrices, QuarterMap, QuarterStart, UtcHour, build_artifact, build_forecast,
-    derive_band_offsets, observed_coverage_of, uncalibrated_bands,
+    CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
+    ForecastOptions, GridRecord, HorizonResidual, NeighborPrices, QuarterMap, QuarterStart,
+    UtcHour, build_artifact, build_forecast, derive_band_offsets, observed_coverage_of,
+    uncalibrated_bands,
 };
 
 use crate::data::{
@@ -24,7 +26,6 @@ use crate::metrics::{RankMode, median, percentile, precision_at_n, spearman};
 const QUARTER_MS: i64 = 15 * 60 * 1000;
 const HOUR_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * HOUR_MS;
-const FORECAST_DAYS: i64 = 3;
 /// FI day-ahead prices for the next day appear at about 12:00 UTC.
 const PUBLICATION_HOUR_UTC: i64 = 12;
 
@@ -104,10 +105,21 @@ pub struct IssueTimeInputs {
     pub fi_prices: QuarterMap,
     /// Neighbour spot (c/kWh) by area code, through the last published delivery.
     pub neighbor_prices: BTreeMap<String, QuarterMap>,
-    /// One selected vintage per target and forecast dataset.
+    /// One selected vintage per target and forecast dataset, for targets in
+    /// the served window `[history_start, series_end)`.
     pub forecast: BTreeMap<DatasetId, Vec<Vintage>>,
-    /// Fingrid actuals strictly before `t_ms`.
+    /// Fingrid actuals in `[history_start, min(t_ms, series_end))`.
     pub actual: BTreeMap<DatasetId, Vec<GridActual>>,
+}
+
+/// The Fingrid read window of the served forecast for a series that starts
+/// at `origin_ms`: `(history_start, series_end)` in UTC ms, the rule of the
+/// domain `ForecastWindow`.
+fn served_window_ms(origin_ms: i64) -> (i64, i64) {
+    (
+        origin_ms.saturating_sub(FLOOR_HISTORY_DAYS * DAY_MS),
+        origin_ms.saturating_add(FORECAST_DAYS * DAY_MS),
+    )
 }
 
 /// Prices delivered before this instant are published at issue time `t_ms`.
@@ -147,6 +159,8 @@ pub fn reconstruct_issue_time(data: &BacktestData, t_ms: i64, mode: AsOfMode) ->
         }
     }
 
+    let origin_ms = last_published_ms.map_or(t_ms, |last| last + QUARTER_MS);
+    let (history_start_ms, series_end_ms) = served_window_ms(origin_ms);
     let as_of_ms = match mode {
         AsOfMode::IssueTime => Some(t_ms),
         AsOfMode::Latest => None,
@@ -154,15 +168,21 @@ pub fn reconstruct_issue_time(data: &BacktestData, t_ms: i64, mode: AsOfMode) ->
     let forecast = data
         .vintages
         .iter()
-        .map(|(id, vintages)| (*id, select_vintages_as_of(vintages, as_of_ms)))
+        .map(|(id, vintages)| {
+            let mut selected = select_vintages_as_of(vintages, as_of_ms);
+            selected
+                .retain(|v| (history_start_ms..series_end_ms).contains(&v.start.as_millisecond()));
+            (*id, selected)
+        })
         .collect();
+    let actual_end_ms = t_ms.min(series_end_ms);
     let actual = data
         .actuals
         .iter()
         .map(|(id, records)| {
             let known = records
                 .iter()
-                .filter(|r| r.start.as_millisecond() < t_ms)
+                .filter(|r| (history_start_ms..actual_end_ms).contains(&r.start.as_millisecond()))
                 .copied()
                 .collect();
             (*id, known)
@@ -172,7 +192,7 @@ pub fn reconstruct_issue_time(data: &BacktestData, t_ms: i64, mode: AsOfMode) ->
     IssueTimeInputs {
         t_ms,
         last_published_ms,
-        origin_ms: last_published_ms.map_or(t_ms, |last| last + QUARTER_MS),
+        origin_ms,
         fi_prices,
         neighbor_prices,
         forecast,
@@ -302,7 +322,12 @@ fn actual_records(inputs: &IssueTimeInputs, id: DatasetId) -> Vec<GridRecord> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ForecastVariant {
     pub ridge_lambda: f64,
+    /// Not checked here. Weeks above
+    /// [`MAX_EXTENSION_WEEKS`](crate::backtest_cli::MAX_EXTENSION_WEEKS) look
+    /// back only before the served Fingrid window, so they equal that cap;
+    /// the `--ab` parser rejects them so that arm B is not arm A relabelled.
     pub wind_extension_weeks: u32,
+    /// Not checked here; see `wind_extension_weeks`.
     pub consumption_extension_weeks: u32,
 }
 
@@ -348,7 +373,7 @@ pub fn forecast_at_issue_time_with(
     variant: ForecastVariant,
 ) -> Result<IssueForecast, OutOfRange> {
     let series_start_ms = inputs.origin_ms;
-    let series_end_ms = series_start_ms + FORECAST_DAYS * DAY_MS;
+    let (_, series_end_ms) = served_window_ms(series_start_ms);
     // The forecast reads only the neighbour areas it knows by exact code.
     let neighbor_prices: NeighborPrices = inputs
         .neighbor_prices
