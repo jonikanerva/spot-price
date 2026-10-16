@@ -540,7 +540,7 @@ pub fn print_paired_table(paired: &[HorizonPairedDelta; 3], out: &mut Output) {
     print_paired_rows(paired, &[("MAE", |p| p.mae)], out);
 
     out.log("\n  PAIRED rank metrics per horizon (information, not the verdict; delta = B − A per origin where both arms have a value):");
-    out.log("    At the 00:00 UTC backtest origin the within-UTC-day ranks do not react to model options, apart from rounding (see #116).");
+    out.log("    Each horizon day starts at the CET/CEST delivery-day boundary, so it spans two UTC days and its ranks can react to model options.");
     out.log("    W = B ranks better (delta > 0), L = B ranks worse, T = exactly equal; excluded = only one arm has a value, or the delta is not finite.");
     print_paired_rows(
         paired,
