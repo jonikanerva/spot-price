@@ -9,7 +9,7 @@ idiomatic_version_file_enable_tools = ["rust"]
 [tools]
 # Node and pnpm run only the Playwright journeys and Prettier. They do not
 # ship in the production image.
-node = "24.21.0"
+node = "24.22.0"
 pnpm = "12.14.0"
 # The PostgreSQL version of production (Railway image postgres-ssl:18).
 "conda:postgresql" = "18.6"
