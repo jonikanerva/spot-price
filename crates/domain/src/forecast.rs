@@ -23,9 +23,10 @@ pub use conformal::{
 pub use conformal_artifact::CALIBRATED_BANDS;
 pub use entries::{EntryBand, ForecastEntry, to_forecast_entries};
 pub use features::{
-    BuiltTraining, FEATURE_COUNT, FEATURE_NAMES, FeatureContext, NEIGHBOR_AREAS, NeighborPrices,
-    PriceIndex, TRAINING_HISTORY_DAYS, build_feature_vector, build_feature_vector_indexed,
-    build_forecast_price_index, build_training_matrix,
+    BuiltTraining, FEATURE_COUNT, FEATURE_NAMES, FeatureContext, LatestPublishedRule,
+    NEIGHBOR_AREAS, NeighborPrices, PrevDayBasis, PriceIndex, TRAINING_HISTORY_DAYS,
+    build_feature_vector, build_feature_vector_indexed, build_forecast_price_index,
+    build_training_matrix,
 };
 pub use model::{
     DEFAULT_RIDGE_LAMBDA, FALLBACK_PREDICTION, FitMeta, FitOptions, FittedModel, MIN_FIT_SAMPLES,

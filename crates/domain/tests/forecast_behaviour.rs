@@ -9,14 +9,15 @@ mod behaviour {
     use spot_price_domain::forecast::{
         BandMethod, BandOffsets, CALIBRATED_BANDS, COVERAGE_GATE_THRESHOLD, CalibratedBands,
         DeriveOptions, FALLBACK_PREDICTION, FEATURE_COUNT, FEATURE_NAMES, FeatureContext,
-        FitOptions, ForecastInput, ForecastOptions, GridRecord, HorizonResidual, LinearFitError,
-        MIN_FIT_SAMPLES, MIN_TOTAL_CALIBRATION_SAMPLES, NEIGHBOR_AREAS, NOMINAL_COVERAGE,
-        NeighborPrices, PriceTransform, QuarterMap, QuarterStart, SANITY_MIN_FALLBACK_CENTS_KWH,
-        SanityBound, TRAINING_HISTORY_DAYS, TrainingData, UtcHour, align_series, apply_band,
-        apply_within_day_shape, bucket_records, build_artifact, build_feature_vector,
-        build_forecast, build_predicted_series, build_training_matrix, derive_band_offsets,
-        expand_hourly_to_quarters, extend_with_last_week, fit_linear, fit_ridge,
-        observed_coverage_of, sanity_bound_from_history, uncalibrated_bands,
+        FitOptions, ForecastInput, ForecastOptions, GridRecord, HorizonResidual,
+        LatestPublishedRule, LinearFitError, MIN_FIT_SAMPLES, MIN_TOTAL_CALIBRATION_SAMPLES,
+        NEIGHBOR_AREAS, NOMINAL_COVERAGE, NeighborPrices, PrevDayBasis, PriceTransform, QuarterMap,
+        QuarterStart, SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound, TRAINING_HISTORY_DAYS,
+        TrainingData, UtcHour, align_series, apply_band, apply_within_day_shape, bucket_records,
+        build_artifact, build_feature_vector, build_forecast, build_predicted_series,
+        build_training_matrix, derive_band_offsets, expand_hourly_to_quarters,
+        extend_with_last_week, fit_linear, fit_ridge, observed_coverage_of,
+        sanity_bound_from_history, uncalibrated_bands,
     };
 
     const QUARTER_MS: i64 = 15 * 60 * 1000;
@@ -463,6 +464,91 @@ mod behaviour {
             abs_error += (point.estimated_spot_cents_kwh - truth).abs();
         }
         assert!(abs_error / count(result.series.len()) < 0.5);
+    }
+
+    fn moved_quarters(
+        a: &spot_price_domain::forecast::ForecastResult,
+        b: &spot_price_domain::forecast::ForecastResult,
+    ) -> usize {
+        assert_eq!(a.series.len(), b.series.len());
+        a.series
+            .iter()
+            .zip(&b.series)
+            .filter(|(x, y)| {
+                x.estimated_spot_cents_kwh.to_bits() != y.estimated_spot_cents_kwh.to_bits()
+            })
+            .count()
+    }
+
+    #[test]
+    fn the_latest_published_rule_reaches_the_forecast() {
+        let s = residual_month();
+        let production = run(&s, 3, &ForecastOptions::default());
+        let at_or_before = ForecastOptions {
+            latest_published: LatestPublishedRule::AtOrBefore,
+            ..ForecastOptions::default()
+        };
+        assert_eq!(run(&s, 3, &at_or_before), production);
+        let before = ForecastOptions {
+            latest_published: LatestPublishedRule::Before,
+            ..ForecastOptions::default()
+        };
+        let variant = run(&s, 3, &before);
+        assert_eq!(variant.diagnostics, production.diagnostics);
+        assert!(moved_quarters(&variant, &production) > 0);
+    }
+
+    /// A month of history that ends at the CET delivery-day boundary. Each
+    /// delivery day has its own price level.
+    fn cet_boundary_month() -> Synthetic {
+        let mut s = Synthetic {
+            spot: QuarterMap::new(),
+            wind_actual: Vec::new(),
+            cons_actual: Vec::new(),
+            wind_forecast: Vec::new(),
+            cons_forecast: Vec::new(),
+            series_start_ms: ms("2026-02-25T23:00:00Z"),
+        };
+        let history_start = s.series_start_ms - 30 * DAY_MS;
+        for k in 0..30 * 96 {
+            let at = history_start + k * QUARTER_MS;
+            let consumption = 8000.0 + int(k % 96) * 20.0;
+            let wind = 2000.0 + int((k * 137) % 1500);
+            let delivery_day_level = int((k / 96 * 7) % 5);
+            s.spot
+                .insert(q(at), price_for(consumption, wind) + delivery_day_level);
+            s.cons_actual.push(rec(at, consumption));
+            s.wind_actual.push(rec(at, wind));
+        }
+        s.cons_forecast.clone_from(&s.cons_actual);
+        s.wind_forecast.clone_from(&s.wind_actual);
+        for k in 0..3 * 96 {
+            let at = s.series_start_ms + k * QUARTER_MS;
+            s.cons_forecast.push(rec(at, 8500.0 + int(k % 96) * 18.0));
+            s.wind_forecast
+                .push(rec(at, 2200.0 + int((k * 113) % 1400)));
+        }
+        s
+    }
+
+    #[test]
+    fn the_prev_day_basis_moves_the_forecast_only_when_set_to_the_delivery_day() {
+        let s = cet_boundary_month();
+        let production = run(&s, 3, &ForecastOptions::default());
+        let utc_day = ForecastOptions {
+            prev_day_basis: PrevDayBasis::UtcDay,
+            ..ForecastOptions::default()
+        };
+        assert_eq!(run(&s, 3, &utc_day), production);
+        let oslo = jiff::tz::TimeZone::get("Europe/Oslo").unwrap();
+        let delivery_day = ForecastOptions {
+            prev_day_basis: PrevDayBasis::DeliveryDay(&oslo),
+            ..ForecastOptions::default()
+        };
+        let variant = run(&s, 3, &delivery_day);
+        assert_eq!(variant.diagnostics, production.diagnostics);
+        assert!(!production.diagnostics.fit_used_default);
+        assert!(moved_quarters(&variant, &production) > 0);
     }
 
     #[test]

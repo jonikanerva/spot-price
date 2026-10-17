@@ -189,12 +189,14 @@ The forecast's accuracy is measured on demand with the offline `spot-price-tools
 ```bash
 cargo run -p spot-price-tools -- backtest --data crates/tools/data/fixture.json
 cargo run -p spot-price-tools -- backtest --db [--window <days>] [--export <file>] [--compare]
+cargo run -p spot-price-tools -- backtest --db [--window <days>] --ab <key=value[,key=value]>
 cargo run -p spot-price-tools -- revision-magnitude --db [--window <days>]
 cargo run -p spot-price-tools -- regenerate-bands --data <file>
 ```
 
 - `--db` reads `DATABASE_PUBLIC_URL` (or `--db-url`) from the process environment. No `.env` file is read.
 - `--db --export <file>` snapshots the assembled window; `--data <file>` replays it.
+- `--ab` scores the production model (A) and a variant (B) on the same origins. It also works with `--data`, but not with `--compare`. The variant keys are `ridge_lambda`, `wind_extension_weeks`, `consumption_extension_weeks`, `latest_published` (`at_or_before` is production, `before` is the variant), and `prev_day_basis` (`utc` is production; `delivery` reads the previous CET/CEST delivery day). The paired MAE per horizon is the verdict line.
 
 Prediction bands ship **dark** (`calibrated: false`). `regenerate-bands` rewrites `crates/domain/src/forecast/conformal_artifact.rs` only when the coverage gate clears. A human reviews and commits the result; bands turn on by committing a calibrated artifact.
 

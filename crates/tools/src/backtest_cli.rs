@@ -9,15 +9,16 @@ use std::path::Path;
 
 use jiff::Timestamp;
 use spot_price_domain::forecast::{
-    DeriveOptions, FLOOR_HISTORY_DAYS, derive_band_offsets, observed_coverage_of,
+    DeriveOptions, FLOOR_HISTORY_DAYS, LatestPublishedRule, derive_band_offsets,
+    observed_coverage_of,
 };
 use spot_price_domain::js::string_to_number;
 use spot_price_domain::price::eur_mwh_to_cents_kwh;
 
 use crate::backtest::{
-    BacktestOptions, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta, OptimismComparison,
-    PRECISION_N_QUARTERS, PairedDelta, VariantComparison, compare_optimism, compare_variants,
-    run_backtest,
+    BacktestOptions, DayBasis, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta,
+    OptimismComparison, PRECISION_N_QUARTERS, PairedDelta, VariantComparison, compare_optimism,
+    compare_variants, run_backtest,
 };
 use crate::cli::{Context, Output, flag_value, has_flag};
 use crate::data::{BacktestData, DatasetId, GridActual, PricePoint, Vintage, load_fixture};
@@ -49,7 +50,8 @@ pub const MAX_EXTENSION_WEEKS: u32 = (FLOOR_HISTORY_DAYS / 7) as u32;
 
 const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>] [--compare] [--db-url <url>] [--ab <key=value[,key=value]>]
   --ab  paired A/B: A = production model, B = production with these overrides, scored on the same origins.
-        keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks. Not with --compare.";
+        keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks,
+        latest_published (at_or_before | before), prev_day_basis (utc | delivery). Not with --compare.";
 
 /// One stored day-ahead price in EUR/MWh.
 #[derive(Debug, Clone, PartialEq)]
@@ -123,7 +125,9 @@ pub fn parse_window_days(raw: Option<&str>) -> Result<i64, ToolError> {
 
 /// `--ab <key=value[,key=value]>`: the production options with overrides.
 /// `ridge_lambda` is a finite number ≥ 0. The `*_extension_weeks` keys are
-/// whole numbers in `0..=MAX_EXTENSION_WEEKS`. A key may appear once.
+/// whole numbers in `0..=MAX_EXTENSION_WEEKS`. `latest_published` is
+/// `at_or_before` or `before`. `prev_day_basis` is `utc` or `delivery`. A key
+/// may appear once.
 ///
 /// # Errors
 /// [`ToolError::Argument`] for an unknown or repeated key, or a bad value.
@@ -148,9 +152,11 @@ pub fn parse_variant(raw: &str) -> Result<ForecastVariant, ToolError> {
             "consumption_extension_weeks" => {
                 variant.consumption_extension_weeks = parse_weeks(key, value)?;
             }
+            "latest_published" => variant.latest_published = parse_latest_published(value)?,
+            "prev_day_basis" => variant.prev_day_basis = parse_prev_day_basis(value)?,
             _ => {
                 return Err(ToolError::Argument(format!(
-                    "--ab key must be ridge_lambda, wind_extension_weeks, or consumption_extension_weeks, got \"{key}\""
+                    "--ab key must be ridge_lambda, wind_extension_weeks, consumption_extension_weeks, latest_published, or prev_day_basis, got \"{key}\""
                 )));
             }
         }
@@ -187,6 +193,42 @@ fn parse_weeks(key: &str, value: &str) -> Result<u32, ToolError> {
         reason = "weeks is a whole number in 0..=MAX_EXTENSION_WEEKS"
     )]
     Ok(weeks as u32)
+}
+
+fn parse_latest_published(value: &str) -> Result<LatestPublishedRule, ToolError> {
+    match value {
+        "at_or_before" => Ok(LatestPublishedRule::AtOrBefore),
+        "before" => Ok(LatestPublishedRule::Before),
+        _ => Err(ToolError::Argument(format!(
+            "--ab latest_published must be at_or_before or before, got \"{value}\""
+        ))),
+    }
+}
+
+/// The `--ab` value of a [`LatestPublishedRule`].
+const fn latest_published_name(rule: LatestPublishedRule) -> &'static str {
+    match rule {
+        LatestPublishedRule::AtOrBefore => "at_or_before",
+        LatestPublishedRule::Before => "before",
+    }
+}
+
+fn parse_prev_day_basis(value: &str) -> Result<DayBasis, ToolError> {
+    match value {
+        "utc" => Ok(DayBasis::Utc),
+        "delivery" => Ok(DayBasis::Delivery),
+        _ => Err(ToolError::Argument(format!(
+            "--ab prev_day_basis must be utc or delivery, got \"{value}\""
+        ))),
+    }
+}
+
+/// The `--ab` value of a [`DayBasis`].
+const fn prev_day_basis_name(basis: DayBasis) -> &'static str {
+    match basis {
+        DayBasis::Utc => "utc",
+        DayBasis::Delivery => "delivery",
+    }
 }
 
 /// `v.toFixed(digits)`, or `n/a`.
@@ -413,8 +455,12 @@ pub fn print_variant_compare(
 
 fn variant_label(v: ForecastVariant) -> String {
     format!(
-        "ridge_lambda={} wind_extension_weeks={} consumption_extension_weeks={}",
-        v.ridge_lambda, v.wind_extension_weeks, v.consumption_extension_weeks
+        "ridge_lambda={} wind_extension_weeks={} consumption_extension_weeks={} latest_published={} prev_day_basis={}",
+        v.ridge_lambda,
+        v.wind_extension_weeks,
+        v.consumption_extension_weeks,
+        latest_published_name(v.latest_published),
+        prev_day_basis_name(v.prev_day_basis)
     )
 }
 

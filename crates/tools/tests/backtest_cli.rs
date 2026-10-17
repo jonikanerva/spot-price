@@ -7,11 +7,11 @@ mod backtest_cli {
     use std::path::PathBuf;
 
     use jiff::Timestamp;
-    use spot_price_domain::forecast::FLOOR_HISTORY_DAYS;
+    use spot_price_domain::forecast::{FLOOR_HISTORY_DAYS, LatestPublishedRule};
     use spot_price_domain::price::eur_mwh_to_cents_kwh;
     use spot_price_tools::backtest::{
-        BacktestOptions, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta, PairedDelta,
-        compare_optimism, run_backtest,
+        BacktestOptions, DayBasis, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta,
+        PairedDelta, compare_optimism, run_backtest,
     };
     use spot_price_tools::backtest_cli::{
         DEFAULT_WINDOW_DAYS, MAX_EXTENSION_WEEKS, MIN_SCOREABLE_ORIGINS, StoredPrice,
@@ -291,6 +291,84 @@ mod backtest_cli {
     }
 
     #[test]
+    fn ab_parses_the_latest_published_rule() {
+        let production = ForecastVariant::default();
+        assert_eq!(production.latest_published, LatestPublishedRule::AtOrBefore);
+        assert_eq!(
+            parse_variant("latest_published=before").unwrap(),
+            ForecastVariant {
+                latest_published: LatestPublishedRule::Before,
+                ..production
+            }
+        );
+        assert_eq!(
+            parse_variant("latest_published=at_or_before").unwrap(),
+            production
+        );
+        assert_eq!(
+            parse_variant("ridge_lambda=2, latest_published=before").unwrap(),
+            ForecastVariant {
+                ridge_lambda: 2.0,
+                latest_published: LatestPublishedRule::Before,
+                ..production
+            }
+        );
+        for raw in [
+            "latest_published=",
+            "latest_published=after",
+            "latest_published=Before",
+            "latest_published=at-or-before",
+        ] {
+            let err = parse_variant(raw).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("latest_published must be at_or_before or before"),
+                "{raw:?}: {err}"
+            );
+        }
+        let err =
+            parse_variant("latest_published=before,latest_published=at_or_before").unwrap_err();
+        assert!(err.to_string().contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn ab_parses_the_prev_day_basis() {
+        let production = ForecastVariant::default();
+        assert_eq!(production.prev_day_basis, DayBasis::Utc);
+        assert_eq!(
+            parse_variant("prev_day_basis=delivery").unwrap(),
+            ForecastVariant {
+                prev_day_basis: DayBasis::Delivery,
+                ..production
+            }
+        );
+        assert_eq!(parse_variant("prev_day_basis=utc").unwrap(), production);
+        assert_eq!(
+            parse_variant("latest_published=before, prev_day_basis=delivery").unwrap(),
+            ForecastVariant {
+                latest_published: LatestPublishedRule::Before,
+                prev_day_basis: DayBasis::Delivery,
+                ..production
+            }
+        );
+        for raw in [
+            "prev_day_basis=",
+            "prev_day_basis=UTC",
+            "prev_day_basis=cet",
+            "prev_day_basis=delivery_day",
+        ] {
+            let err = parse_variant(raw).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("prev_day_basis must be utc or delivery"),
+                "{raw:?}: {err}"
+            );
+        }
+        let err = parse_variant("prev_day_basis=delivery,prev_day_basis=utc").unwrap_err();
+        assert!(err.to_string().contains("more than once"), "{err}");
+    }
+
+    #[test]
     fn ab_extension_weeks_stay_inside_the_served_history_window() {
         assert_eq!(MAX_EXTENSION_WEEKS, 4);
         assert!(i64::from(MAX_EXTENSION_WEEKS) * 7 <= FLOOR_HISTORY_DAYS);
@@ -480,6 +558,50 @@ mod backtest_cli {
         ));
         assert!(stdout.contains("origins paired:      true"));
         std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn ab_prints_the_latest_published_rule_of_each_arm() {
+        let file = verdict_fixture("ab-latest.json");
+        let got = run_cli(&[
+            "backtest",
+            "--data",
+            file.to_str().unwrap(),
+            "--ab",
+            "latest_published=before",
+        ]);
+        let stdout = got.text(Stream::Stdout);
+        assert_eq!(got.code, 0, "{stdout}{}", got.text(Stream::Stderr));
+        let (a, b) = (arm_line(&stdout, "A"), arm_line(&stdout, "B"));
+        assert!(a.contains(" latest_published=at_or_before "), "{a}");
+        assert!(b.contains(" latest_published=before "), "{b}");
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn ab_prints_the_prev_day_basis_of_each_arm() {
+        let file = verdict_fixture("ab-prev-day.json");
+        let got = run_cli(&[
+            "backtest",
+            "--data",
+            file.to_str().unwrap(),
+            "--ab",
+            "prev_day_basis=delivery",
+        ]);
+        let stdout = got.text(Stream::Stdout);
+        assert_eq!(got.code, 0, "{stdout}{}", got.text(Stream::Stderr));
+        let (a, b) = (arm_line(&stdout, "A"), arm_line(&stdout, "B"));
+        assert!(a.ends_with(" prev_day_basis=utc"), "{a}");
+        assert!(b.ends_with(" prev_day_basis=delivery"), "{b}");
+        std::fs::remove_file(file).unwrap();
+    }
+
+    fn arm_line(stdout: &str, name: &str) -> String {
+        stdout
+            .lines()
+            .find(|line| line.starts_with(&format!("  arm {name}:")))
+            .unwrap()
+            .to_owned()
     }
 
     #[test]
