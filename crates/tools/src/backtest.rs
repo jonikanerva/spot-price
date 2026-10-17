@@ -14,7 +14,7 @@ use spot_price_domain::forecast::{
     CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
     ForecastOptions, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices,
     PrevDayBasis, QuarterMap, QuarterStart, UtcHour, build_artifact, build_forecast,
-    derive_band_offsets, observed_coverage_of, uncalibrated_bands,
+    derive_band_offsets, observed_coverage_of, sanity_bound_from_history, uncalibrated_bands,
 };
 use spot_price_domain::time::{next_calendar_day, start_of_local_day_utc};
 
@@ -316,6 +316,8 @@ pub struct IssueForecast {
     pub series_start_ms: i64,
     pub series_end_ms: i64,
     pub used_fallback: bool,
+    /// Quarters that the sanity bound clamped.
+    pub sanity_clamped_quarters: usize,
 }
 
 fn grid_records<'a, I>(records: I) -> Vec<GridRecord>
@@ -361,8 +363,9 @@ pub enum DayBasis {
 }
 
 /// The forecast options that a backtest can vary. The default is the
-/// production model. The sanity bound and the bands stay at their
-/// [`ForecastOptions`] defaults: neither changes a point prediction here.
+/// production model. Every variant gets the sanity bound of the served
+/// forecast, which can clamp a point prediction. The bands stay at their
+/// [`ForecastOptions`] default; they do not change a point prediction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ForecastVariant {
     pub ridge_lambda: f64,
@@ -396,8 +399,14 @@ impl Default for ForecastVariant {
 impl ForecastVariant {
     /// The pipeline options of this variant. `delivery_zone` must be the
     /// [`DELIVERY_DAY_TIME_ZONE`] zone; only [`DayBasis::Delivery`] reads it.
+    /// `fi_prices` must be the FI prices that the forecast gets: the served
+    /// forecast takes its sanity bound from them.
     #[must_use]
-    pub fn forecast_options(self, delivery_zone: &TimeZone) -> ForecastOptions<'_> {
+    pub fn forecast_options<'a>(
+        self,
+        delivery_zone: &'a TimeZone,
+        fi_prices: &QuarterMap,
+    ) -> ForecastOptions<'a> {
         ForecastOptions {
             ridge_lambda: self.ridge_lambda,
             wind_extension_weeks: self.wind_extension_weeks,
@@ -407,6 +416,7 @@ impl ForecastVariant {
                 DayBasis::Utc => PrevDayBasis::UtcDay,
                 DayBasis::Delivery => PrevDayBasis::DeliveryDay(delivery_zone),
             },
+            sanity_bound: sanity_bound_from_history(fi_prices),
             ..ForecastOptions::default()
         }
     }
@@ -454,7 +464,7 @@ pub fn forecast_at_issue_time_with(
             series_start: instant(series_start_ms)?,
             series_end: instant(series_end_ms)?,
         },
-        &variant.forecast_options(&delivery_zone()?),
+        &variant.forecast_options(&delivery_zone()?, &inputs.fi_prices),
     );
     Ok(IssueForecast {
         predicted: result
@@ -465,6 +475,7 @@ pub fn forecast_at_issue_time_with(
         series_start_ms,
         series_end_ms,
         used_fallback: result.diagnostics.fit_used_default,
+        sanity_clamped_quarters: result.diagnostics.sanity_clamped_quarters,
     })
 }
 
@@ -568,6 +579,9 @@ pub struct BacktestSummary {
     pub fallback_origins: usize,
     /// Origins skipped because no wind forecast vintage was knowable.
     pub pre_vintage_origins: usize,
+    /// Quarters that the sanity bound clamped, summed over the scored
+    /// origins. A quarter without a realised price also counts.
+    pub sanity_clamped_quarters: usize,
     pub scored_window_start_ms: Option<i64>,
     pub scored_window_end_ms: Option<i64>,
     /// 0 with fewer than two scored origins.
@@ -626,6 +640,7 @@ struct Scoring {
     horizon_acc: [HorizonAcc; 3],
     origins: usize,
     fallback_origins: usize,
+    sanity_clamped_quarters: usize,
     scored_origins_ms: BTreeSet<i64>,
 }
 
@@ -678,6 +693,7 @@ impl Scoring {
             if fc.used_fallback {
                 self.fallback_origins += 1;
             }
+            self.sanity_clamped_quarters += fc.sanity_clamped_quarters;
             for (acc, series) in self.horizon_acc.iter_mut().zip(origin_by_horizon) {
                 if !series.preds.is_empty() {
                     acc.origin_series.push(series);
@@ -703,6 +719,7 @@ impl Scoring {
             origins: self.origins,
             fallback_origins: self.fallback_origins,
             pre_vintage_origins,
+            sanity_clamped_quarters: self.sanity_clamped_quarters,
             scored_window_start_ms: first,
             scored_window_end_ms: last,
             scored_window_span_days,

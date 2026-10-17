@@ -268,6 +268,10 @@ pub fn print_report(data: &BacktestData, out: &mut Output) -> Result<bool, ToolE
         "  fallback origins:    {}",
         summary.fallback_origins
     ));
+    out.log(&format!(
+        "  sanity-clamped quarters: {}",
+        summary.sanity_clamped_quarters
+    ));
     out.log(&format!("  leakage-free:        {}", summary.leak_free));
     out.log(&format!(
         "  model MAE  (c/kWh):  {}",
@@ -346,6 +350,10 @@ fn print_compare_header(cmp: &OptimismComparison, out: &mut Output) {
     out.log(&format!(
         "  honest leak-free:    {}   leaked leak-free: {}  (leaked is FALSE BY DESIGN — the vintage postdates issue time)",
         honest.leak_free, cmp.leaked.leak_free
+    ));
+    out.log(&format!(
+        "  sanity-clamped quarters: honest {}  leaked {}",
+        honest.sanity_clamped_quarters, cmp.leaked.sanity_clamped_quarters
     ));
 
     out.log("\n  CAVEATS (read before quoting any number):");
@@ -493,6 +501,10 @@ fn print_variant_header(cmp: &VariantComparison, out: &mut Output) {
     out.log(&format!(
         "  fallback origins:    A {}  B {}",
         a.fallback_origins, b.fallback_origins
+    ));
+    out.log(&format!(
+        "  sanity-clamped quarters: A {}  B {}",
+        a.sanity_clamped_quarters, b.sanity_clamped_quarters
     ));
 
     out.log("\n  CAVEATS (read before quoting any number):");

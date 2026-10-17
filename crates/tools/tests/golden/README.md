@@ -27,3 +27,10 @@ pnpm exec prettier --ignore-path '' --write crates/tools/tests/golden/backtest_e
 
 The test keeps the other sections byte for byte. Review the diff before you
 commit it. A golden change is a contract change.
+
+## Rust-only report lines
+
+The Rust backtest report prints the sanity-clamped quarters after the
+fallback origins line. The TypeScript report has no such line. The test of
+the `committedFixture` CLI output adds this one line to the TypeScript text
+and compares the rest byte for byte.

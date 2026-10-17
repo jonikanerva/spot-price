@@ -7,17 +7,24 @@ mod backtest {
 
     use jiff::Timestamp;
     use jiff::tz::TimeZone;
+    use std::str::FromStr;
+
+    use spot_price_domain::areas::Area;
     use spot_price_domain::forecast::{
-        ForecastOptions, ForecastWindow, LatestPublishedRule, PrevDayBasis, QuarterStart,
+        ForecastInput, ForecastOptions, ForecastResult, ForecastWindow, GridRecord,
+        LatestPublishedRule, NeighborPrices, PrevDayBasis, QuarterStart, RouteForecast,
+        build_forecast, forecast_for_route, sanity_bound_from_history,
     };
     use spot_price_tools::backtest::{
-        AsOfMode, BacktestOptions, Better, DayBasis, ForecastVariant, HORIZON_LABELS,
-        HorizonMetrics, HorizonPairedDelta, IssueTimeInputs, MIN_CALIBRATION_WINDOW_DAYS,
-        OriginMetrics, PairedDelta, collect_input_timestamps, compare_optimism, compare_variants,
-        derive_bands_from_backtest, find_leaking_inputs, forecast_at_issue_time,
-        forecast_at_issue_time_with, mae, paired_delta, paired_horizon, reconstruct_issue_time,
-        rmae, run_backtest, select_vintages_as_of, smape,
+        AsOfMode, BacktestOptions, BacktestSummary, Better, DayBasis, ForecastVariant,
+        HORIZON_LABELS, HorizonMetrics, HorizonPairedDelta, IssueTimeInputs,
+        MIN_CALIBRATION_WINDOW_DAYS, OriginMetrics, PairedDelta, collect_input_timestamps,
+        compare_optimism, compare_variants, derive_bands_from_backtest, find_leaking_inputs,
+        forecast_at_issue_time, forecast_at_issue_time_with, mae, paired_delta, paired_horizon,
+        reconstruct_issue_time, rmae, run_backtest, select_vintages_as_of, smape,
     };
+    use spot_price_tools::backtest_cli::{print_compare, print_report, print_variant_compare};
+    use spot_price_tools::cli::{Output, Stream};
     use spot_price_tools::data::{BacktestData, GridActual, PricePoint, Vintage};
 
     const QUARTER_MS: i64 = 15 * 60 * 1000;
@@ -409,7 +416,10 @@ mod backtest {
         let variant = ForecastVariant::default();
         let production = ForecastOptions::default();
         let oslo = oslo();
-        let options = variant.forecast_options(&oslo);
+        let data = build_data(0.0);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
+        let options = variant.forecast_options(&oslo, &inputs.fi_prices);
         assert_eq!(
             options.ridge_lambda.to_bits(),
             production.ridge_lambda.to_bits()
@@ -422,16 +432,19 @@ mod backtest {
             options.consumption_extension_weeks,
             production.consumption_extension_weeks
         );
-        assert!(options.sanity_bound.is_none());
+        // The served route takes its sanity bound from the FI prices that
+        // the forecast gets.
+        assert!(options.sanity_bound.is_some());
+        assert_eq!(
+            options.sanity_bound,
+            sanity_bound_from_history(&inputs.fi_prices)
+        );
         assert_eq!(options.latest_published, production.latest_published);
         assert_eq!(variant.latest_published, LatestPublishedRule::AtOrBefore);
         assert_eq!(options.prev_day_basis, production.prev_day_basis);
         assert_eq!(variant.prev_day_basis, DayBasis::Utc);
         assert_eq!(BacktestOptions::default().variant, variant);
 
-        let data = build_data(0.0);
-        let inputs =
-            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
         assert_eq!(
             forecast_at_issue_time(&inputs).unwrap(),
             forecast_at_issue_time_with(&inputs, variant).unwrap()
@@ -485,7 +498,9 @@ mod backtest {
             ..ForecastVariant::default()
         };
         assert_eq!(
-            before.forecast_options(&oslo()).latest_published,
+            before
+                .forecast_options(&oslo(), &inputs.fi_prices)
+                .latest_published,
             LatestPublishedRule::Before
         );
         let a = forecast_at_issue_time(&inputs).unwrap();
@@ -510,7 +525,9 @@ mod backtest {
         };
         let zone = oslo();
         assert_eq!(
-            delivery.forecast_options(&zone).prev_day_basis,
+            delivery
+                .forecast_options(&zone, &inputs.fi_prices)
+                .prev_day_basis,
             PrevDayBasis::DeliveryDay(&zone)
         );
         let a = forecast_at_issue_time(&inputs).unwrap();
@@ -1294,5 +1311,340 @@ mod backtest {
         assert_eq!(cmp.b.scored_origins_ms, cmp.a.scored_origins_ms);
         assert_eq!(cmp.b.pre_vintage_origins, 0);
         assert!(cmp.origins_match);
+    }
+
+    // Served sanity bound
+
+    /// The issue time of the extreme fixture. Its series starts at
+    /// 2026-02-11T23:00Z.
+    const EXTREME_ISSUE: &str = "2026-02-10T13:00:00Z";
+
+    /// [`build_data`] with the consumption forecast on a ramp from its level
+    /// on 2026-02-12 to four times its level three days later, far above the
+    /// training range, so that some predictions leave the sanity bound of
+    /// the price history.
+    fn build_extreme_data() -> BacktestData {
+        let from = ms("2026-02-12T00:00:00Z");
+        let mut data = build_data(0.0);
+        for v in data.vintages.get_mut(&165).unwrap() {
+            let since = v.start.as_millisecond() - from;
+            if since >= 0 {
+                #[expect(clippy::cast_precision_loss, reason = "a small quarter count")]
+                let ramp = (since / QUARTER_MS).min(288) as f64 / 288.0;
+                v.value *= 1.0 + 3.0 * ramp;
+            }
+        }
+        data
+    }
+
+    /// The owned inputs of the served route, converted from the issue-time
+    /// inputs like the server reads its rows.
+    struct RouteInputs {
+        neighbors: NeighborPrices,
+        wind_forecast: Vec<GridRecord>,
+        wind_actual: Vec<GridRecord>,
+        consumption_forecast: Vec<GridRecord>,
+        consumption_actual: Vec<GridRecord>,
+    }
+
+    impl RouteInputs {
+        fn of(inputs: &IssueTimeInputs) -> Self {
+            let forecast = |id: i32| -> Vec<GridRecord> {
+                inputs
+                    .forecast
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .map(|v| GridRecord {
+                        start: v.start,
+                        value: v.value,
+                    })
+                    .collect()
+            };
+            let actual = |id: i32| -> Vec<GridRecord> {
+                inputs
+                    .actual
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .map(|r| GridRecord {
+                        start: r.start,
+                        value: r.value,
+                    })
+                    .collect()
+            };
+            Self {
+                neighbors: inputs
+                    .neighbor_prices
+                    .iter()
+                    .map(|(code, series)| (Area::from_str(code).unwrap(), series.clone()))
+                    .collect(),
+                wind_forecast: forecast(245),
+                wind_actual: actual(75),
+                consumption_forecast: forecast(165),
+                consumption_actual: actual(124),
+            }
+        }
+
+        /// The route input: the issue-time FI prices and the served series
+        /// window from the issue-time origin.
+        fn input<'a>(&'a self, inputs: &'a IssueTimeInputs) -> ForecastInput<'a> {
+            let (_, series_end) = served_window(inputs);
+            ForecastInput {
+                spot_prices: &inputs.fi_prices,
+                neighbor_prices: &self.neighbors,
+                wind_forecast: &self.wind_forecast,
+                wind_actual: &self.wind_actual,
+                consumption_forecast: &self.consumption_forecast,
+                consumption_actual: &self.consumption_actual,
+                series_start: ts(inputs.origin_ms),
+                series_end: ts(series_end),
+            }
+        }
+    }
+
+    fn points(result: &ForecastResult) -> Vec<(QuarterStart, f64)> {
+        result
+            .series
+            .iter()
+            .map(|p| (p.start, p.estimated_spot_cents_kwh))
+            .collect()
+    }
+
+    /// The served route result of the issue-time inputs.
+    fn served(inputs: &IssueTimeInputs) -> ForecastResult {
+        let owned = RouteInputs::of(inputs);
+        match forecast_for_route(&owned.input(inputs)) {
+            RouteForecast::Ready { result, .. } => result,
+            RouteForecast::NoGridData => panic!("the fixture has grid data"),
+        }
+    }
+
+    #[test]
+    fn the_backtest_forecast_is_the_served_forecast_when_a_prediction_leaves_the_bound() {
+        let data = build_extreme_data();
+        let inputs = reconstruct_issue_time(&data, ms(EXTREME_ISSUE), AsOfMode::IssueTime).unwrap();
+        let served = served(&inputs);
+        // The fixture is sensitive: the served bound clamps predictions.
+        assert!(served.diagnostics.sanity_clamped_quarters > 0);
+        let owned = RouteInputs::of(&inputs);
+        let unclamped = build_forecast(&owned.input(&inputs), &ForecastOptions::default());
+        assert_eq!(unclamped.diagnostics.sanity_clamped_quarters, 0);
+        assert_ne!(points(&unclamped), points(&served));
+
+        let backtest = forecast_at_issue_time(&inputs).unwrap();
+        assert_eq!(backtest.series_start_ms, inputs.origin_ms);
+        assert_eq!(backtest.predicted, points(&served));
+    }
+
+    #[test]
+    fn a_variant_forecast_gets_the_served_bound_of_the_issue_time_prices() {
+        let data = build_extreme_data();
+        let inputs = reconstruct_issue_time(&data, ms(EXTREME_ISSUE), AsOfMode::IssueTime).unwrap();
+        let owned = RouteInputs::of(&inputs);
+        let input = owned.input(&inputs);
+        let zone = oslo();
+        let variant = ForecastVariant {
+            latest_published: LatestPublishedRule::Before,
+            prev_day_basis: DayBasis::Delivery,
+            ..ForecastVariant::default()
+        };
+        let base = ForecastOptions {
+            latest_published: LatestPublishedRule::Before,
+            prev_day_basis: PrevDayBasis::DeliveryDay(&zone),
+            ..ForecastOptions::default()
+        };
+        let bounded = build_forecast(
+            &input,
+            &ForecastOptions {
+                sanity_bound: sanity_bound_from_history(&inputs.fi_prices),
+                ..base
+            },
+        );
+        assert!(bounded.diagnostics.sanity_clamped_quarters > 0);
+        let unclamped = build_forecast(&input, &base);
+        assert_ne!(points(&unclamped), points(&bounded));
+
+        let backtest = forecast_at_issue_time_with(&inputs, variant).unwrap();
+        assert_eq!(backtest.predicted, points(&bounded));
+    }
+
+    /// The clamped quarters of the served route sequence, summed over the
+    /// origins that `summary` scored. `options` gives the pipeline options
+    /// of one origin before the served bound is added.
+    fn served_clamps(
+        data: &BacktestData,
+        summary: &BacktestSummary,
+        mode: AsOfMode,
+        options: impl Fn() -> ForecastOptions<'static>,
+    ) -> usize {
+        summary
+            .scored_origins_ms
+            .iter()
+            .map(|&t| {
+                let inputs = reconstruct_issue_time(data, t, mode).unwrap();
+                let owned = RouteInputs::of(&inputs);
+                let opts = ForecastOptions {
+                    sanity_bound: sanity_bound_from_history(&inputs.fi_prices),
+                    ..options()
+                };
+                build_forecast(&owned.input(&inputs), &opts)
+                    .diagnostics
+                    .sanity_clamped_quarters
+            })
+            .sum()
+    }
+
+    #[test]
+    fn the_summary_counts_the_clamped_quarters_of_the_scored_origins() {
+        let data = build_extreme_data();
+        let summary = run_backtest(&data, &BacktestOptions::default()).unwrap();
+        let mut by_route = 0;
+        for &t in &summary.scored_origins_ms {
+            let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
+            by_route += served(&inputs).diagnostics.sanity_clamped_quarters;
+        }
+        assert_eq!(summary.sanity_clamped_quarters, by_route);
+        assert_eq!(summary.sanity_clamped_quarters, 280);
+        assert_eq!(
+            served_clamps(
+                &data,
+                &summary,
+                AsOfMode::IssueTime,
+                ForecastOptions::default
+            ),
+            by_route
+        );
+    }
+
+    /// [`build_data`] with a consumption forecast at four times its level
+    /// for the three days after the last price. Only the last origin,
+    /// which has no realised price, knows it.
+    fn build_extreme_tail_data() -> BacktestData {
+        let from = ms("2026-02-21T00:00:00Z");
+        let issued = ms("2026-02-20T12:00:00Z");
+        let mut data = build_data(0.0);
+        let rows = data.vintages.get_mut(&165).unwrap();
+        for q in 0..3 * 96 {
+            rows.push(vintage(from + q * QUARTER_MS, 4.0 * 9000.0, 165, issued));
+        }
+        data
+    }
+
+    #[test]
+    fn an_origin_without_a_realised_price_adds_no_clamped_quarters() {
+        let data = build_extreme_tail_data();
+        let last = ms("2026-02-20T13:00:00Z");
+        let inputs = reconstruct_issue_time(&data, last, AsOfMode::IssueTime).unwrap();
+        assert!(served(&inputs).diagnostics.sanity_clamped_quarters > 0);
+        let summary = run_backtest(&data, &BacktestOptions::default()).unwrap();
+        assert!(!summary.scored_origins_ms.contains(&last));
+        assert!(summary.scored_origins_ms.contains(&(last - DAY_MS)));
+        assert_eq!(summary.sanity_clamped_quarters, 0);
+    }
+
+    /// A weaker ridge than production: on the extreme fixture it clamps a
+    /// different number of quarters. Also its pipeline options without the
+    /// served bound.
+    fn clamping_variant() -> (ForecastVariant, fn() -> ForecastOptions<'static>) {
+        let variant = ForecastVariant {
+            ridge_lambda: 0.1,
+            ..ForecastVariant::default()
+        };
+        let options = || ForecastOptions {
+            ridge_lambda: 0.1,
+            ..ForecastOptions::default()
+        };
+        (variant, options)
+    }
+
+    #[test]
+    fn each_arm_and_each_run_reports_its_own_clamped_quarters() {
+        let data = build_extreme_data();
+        let (variant, variant_options) = clamping_variant();
+        let cmp = compare_variants(&data, ForecastVariant::default(), variant).unwrap();
+        assert!(cmp.origins_match);
+        let a = served_clamps(&data, &cmp.a, AsOfMode::IssueTime, ForecastOptions::default);
+        let b = served_clamps(&data, &cmp.b, AsOfMode::IssueTime, variant_options);
+        assert!(a > 0 && b > 0);
+        assert_ne!(a, b);
+        assert_eq!(cmp.a.sanity_clamped_quarters, a);
+        assert_eq!(cmp.b.sanity_clamped_quarters, b);
+    }
+
+    /// [`build_data`] with the fresh consumption issuance at four times its
+    /// level for every target from 2026-02-12. Only the leaked run reads
+    /// the fresh issuance of a target after the issue time.
+    fn build_extreme_fresh_data() -> BacktestData {
+        let from = ms("2026-02-12T00:00:00Z");
+        let mut data = build_data(0.0);
+        for v in data.vintages.get_mut(&165).unwrap() {
+            let lead = v.start.as_millisecond() - v.issued_at.as_millisecond();
+            if v.start.as_millisecond() >= from && lead == 2 * HOUR_MS {
+                v.value *= 4.0;
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn the_honest_and_the_leaked_run_report_their_own_clamped_quarters() {
+        let data = build_extreme_fresh_data();
+        let cmp = compare_optimism(&data).unwrap();
+        let honest = served_clamps(
+            &data,
+            &cmp.honest,
+            AsOfMode::IssueTime,
+            ForecastOptions::default,
+        );
+        let leaked = served_clamps(
+            &data,
+            &cmp.leaked,
+            AsOfMode::Latest,
+            ForecastOptions::default,
+        );
+        assert!(leaked > 0);
+        assert_ne!(honest, leaked);
+        assert_eq!(cmp.honest.sanity_clamped_quarters, honest);
+        assert_eq!(cmp.leaked.sanity_clamped_quarters, leaked);
+        let summary = run_backtest(&data, &BacktestOptions::default()).unwrap();
+        assert_eq!(summary.sanity_clamped_quarters, honest);
+    }
+
+    #[test]
+    fn the_reports_print_the_clamped_quarters() {
+        let data = build_extreme_data();
+        let mut out = Output::default();
+        print_report(&data, &mut out).unwrap();
+        let summary = run_backtest(&data, &BacktestOptions::default()).unwrap();
+        assert!(
+            out.text(Stream::Stdout)
+                .contains("\n  sanity-clamped quarters: 280\n")
+        );
+        assert_eq!(summary.sanity_clamped_quarters, 280);
+
+        let fresh = build_extreme_fresh_data();
+        let mut out = Output::default();
+        print_compare(&fresh, &mut out).unwrap();
+        let cmp = compare_optimism(&fresh).unwrap();
+        assert_ne!(
+            cmp.honest.sanity_clamped_quarters,
+            cmp.leaked.sanity_clamped_quarters
+        );
+        let line = format!(
+            "\n  sanity-clamped quarters: honest {}  leaked {}\n",
+            cmp.honest.sanity_clamped_quarters, cmp.leaked.sanity_clamped_quarters
+        );
+        assert!(out.text(Stream::Stdout).contains(&line), "{line}");
+
+        let (variant, _) = clamping_variant();
+        let mut out = Output::default();
+        print_variant_compare(&data, variant, &mut out).unwrap();
+        let cmp = compare_variants(&data, ForecastVariant::default(), variant).unwrap();
+        let line = format!(
+            "\n  sanity-clamped quarters: A {}  B {}\n",
+            cmp.a.sanity_clamped_quarters, cmp.b.sanity_clamped_quarters
+        );
+        assert!(out.text(Stream::Stdout).contains(&line), "{line}");
     }
 }

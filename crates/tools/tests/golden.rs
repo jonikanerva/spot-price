@@ -516,10 +516,31 @@ mod golden {
 
         let fixture = workspace_root().join("crates/tools/data/fixture.json");
         let got = run_cli(&["backtest", "--data", fixture.to_str().unwrap()]);
-        assert_same_cli(
-            &got,
-            &expected()["committedFixture"]["cli"],
-            "committed fixture",
+        let typescript = &expected()["committedFixture"]["cli"];
+        // The TypeScript report has no clamp count line; the Rust report adds
+        // exactly this line after the fallback line.
+        let fallback = "\n  fallback origins:    0\n";
+        let ts_stdout = typescript["stdout"].as_str().unwrap();
+        assert_eq!(ts_stdout.matches(fallback).count(), 1);
+        let want_stdout = ts_stdout.replacen(
+            fallback,
+            &format!("{fallback}  sanity-clamped quarters: 0\n"),
+            1,
+        );
+        assert_eq!(
+            got.text(Stream::Stdout),
+            want_stdout,
+            "committed fixture stdout"
+        );
+        assert_eq!(
+            got.text(Stream::Stderr),
+            typescript["stderr"].as_str().unwrap(),
+            "committed fixture stderr"
+        );
+        assert_eq!(
+            i64::from(got.code),
+            int(&typescript["status"]),
+            "committed fixture status"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
