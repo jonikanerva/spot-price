@@ -6,8 +6,8 @@ use jiff::Timestamp;
 use super::conformal::{CalibratedBands, UtcHour, apply_band};
 use super::conformal_artifact::CALIBRATED_BANDS;
 use super::features::{
-    FEATURE_NAMES, FeatureContext, NeighborPrices, build_feature_vector_indexed,
-    build_forecast_price_index, training_matrix_at,
+    FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule, NeighborPrices,
+    build_feature_vector_indexed, build_price_index, training_matrix_at,
 };
 use super::js::{js_max, js_min};
 use super::model::{DEFAULT_RIDGE_LAMBDA, FitOptions, PriceTransform, TrainingData, fit_ridge};
@@ -50,6 +50,8 @@ pub struct ForecastOptions<'a> {
     pub ridge_lambda: f64,
     /// Bands go only on quarters with a real prediction.
     pub bands: &'a CalibratedBands,
+    /// The served forecast uses [`LatestPublishedRule::AtOrBefore`].
+    pub latest_published: LatestPublishedRule,
 }
 
 impl Default for ForecastOptions<'static> {
@@ -60,6 +62,7 @@ impl Default for ForecastOptions<'static> {
             sanity_bound: None,
             ridge_lambda: DEFAULT_RIDGE_LAMBDA,
             bands: &CALIBRATED_BANDS,
+            latest_published: LatestPublishedRule::AtOrBefore,
         }
     }
 }
@@ -170,7 +173,12 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
         wind: &grid.wind,
         consumption: &grid.consumption,
     };
-    let index = build_forecast_price_index(&ctx);
+    let index = build_price_index(
+        &ctx,
+        FeatureRules {
+            latest_published: opts.latest_published,
+        },
+    );
     let training = training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index));
     let fitted = fit_ridge(
         &TrainingData {

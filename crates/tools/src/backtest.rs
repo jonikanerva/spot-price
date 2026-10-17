@@ -12,9 +12,9 @@ use jiff::tz::TimeZone;
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
     CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
-    ForecastOptions, GridRecord, HorizonResidual, NeighborPrices, QuarterMap, QuarterStart,
-    UtcHour, build_artifact, build_forecast, derive_band_offsets, observed_coverage_of,
-    uncalibrated_bands,
+    ForecastOptions, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices, QuarterMap,
+    QuarterStart, UtcHour, build_artifact, build_forecast, derive_band_offsets,
+    observed_coverage_of, uncalibrated_bands,
 };
 use spot_price_domain::time::{next_calendar_day, start_of_local_day_utc};
 
@@ -360,6 +360,7 @@ pub struct ForecastVariant {
     pub wind_extension_weeks: u32,
     /// Not checked here; see `wind_extension_weeks`.
     pub consumption_extension_weeks: u32,
+    pub latest_published: LatestPublishedRule,
 }
 
 impl Default for ForecastVariant {
@@ -369,6 +370,7 @@ impl Default for ForecastVariant {
             ridge_lambda: production.ridge_lambda,
             wind_extension_weeks: production.wind_extension_weeks,
             consumption_extension_weeks: production.consumption_extension_weeks,
+            latest_published: production.latest_published,
         }
     }
 }
@@ -381,6 +383,7 @@ impl ForecastVariant {
             ridge_lambda: self.ridge_lambda,
             wind_extension_weeks: self.wind_extension_weeks,
             consumption_extension_weeks: self.consumption_extension_weeks,
+            latest_published: self.latest_published,
             ..ForecastOptions::default()
         }
     }

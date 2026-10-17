@@ -7,7 +7,7 @@ mod backtest_cli {
     use std::path::PathBuf;
 
     use jiff::Timestamp;
-    use spot_price_domain::forecast::FLOOR_HISTORY_DAYS;
+    use spot_price_domain::forecast::{FLOOR_HISTORY_DAYS, LatestPublishedRule};
     use spot_price_domain::price::eur_mwh_to_cents_kwh;
     use spot_price_tools::backtest::{
         BacktestOptions, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta, PairedDelta,
@@ -291,6 +291,47 @@ mod backtest_cli {
     }
 
     #[test]
+    fn ab_parses_the_latest_published_rule() {
+        let production = ForecastVariant::default();
+        assert_eq!(production.latest_published, LatestPublishedRule::AtOrBefore);
+        assert_eq!(
+            parse_variant("latest_published=before").unwrap(),
+            ForecastVariant {
+                latest_published: LatestPublishedRule::Before,
+                ..production
+            }
+        );
+        assert_eq!(
+            parse_variant("latest_published=at_or_before").unwrap(),
+            production
+        );
+        assert_eq!(
+            parse_variant("ridge_lambda=2, latest_published=before").unwrap(),
+            ForecastVariant {
+                ridge_lambda: 2.0,
+                latest_published: LatestPublishedRule::Before,
+                ..production
+            }
+        );
+        for raw in [
+            "latest_published=",
+            "latest_published=after",
+            "latest_published=Before",
+            "latest_published=at-or-before",
+        ] {
+            let err = parse_variant(raw).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("latest_published must be at_or_before or before"),
+                "{raw:?}: {err}"
+            );
+        }
+        let err =
+            parse_variant("latest_published=before,latest_published=at_or_before").unwrap_err();
+        assert!(err.to_string().contains("more than once"), "{err}");
+    }
+
+    #[test]
     fn ab_extension_weeks_stay_inside_the_served_history_window() {
         assert_eq!(MAX_EXTENSION_WEEKS, 4);
         assert!(i64::from(MAX_EXTENSION_WEEKS) * 7 <= FLOOR_HISTORY_DAYS);
@@ -479,6 +520,38 @@ mod backtest_cli {
             "arm B:               ridge_lambda=1000000 wind_extension_weeks=4 consumption_extension_weeks=1"
         ));
         assert!(stdout.contains("origins paired:      true"));
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn ab_prints_the_latest_published_rule_of_each_arm() {
+        let file = verdict_fixture("ab-latest.json");
+        let got = run_cli(&[
+            "backtest",
+            "--data",
+            file.to_str().unwrap(),
+            "--ab",
+            "latest_published=before",
+        ]);
+        let stdout = got.text(Stream::Stdout);
+        assert_eq!(got.code, 0, "{stdout}{}", got.text(Stream::Stderr));
+        let arm = |name: &str| {
+            stdout
+                .lines()
+                .find(|line| line.starts_with(&format!("  arm {name}:")))
+                .unwrap()
+                .to_owned()
+        };
+        assert!(
+            arm("A").ends_with(" latest_published=at_or_before"),
+            "{}",
+            arm("A")
+        );
+        assert!(
+            arm("B").ends_with(" latest_published=before"),
+            "{}",
+            arm("B")
+        );
         std::fs::remove_file(file).unwrap();
     }
 

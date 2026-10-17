@@ -6,7 +6,9 @@ mod backtest {
     use std::collections::{BTreeMap, BTreeSet};
 
     use jiff::Timestamp;
-    use spot_price_domain::forecast::{ForecastOptions, ForecastWindow, QuarterStart};
+    use spot_price_domain::forecast::{
+        ForecastOptions, ForecastWindow, LatestPublishedRule, QuarterStart,
+    };
     use spot_price_tools::backtest::{
         AsOfMode, BacktestOptions, Better, ForecastVariant, HORIZON_LABELS, HorizonMetrics,
         HorizonPairedDelta, IssueTimeInputs, MIN_CALIBRATION_WINDOW_DAYS, OriginMetrics,
@@ -419,6 +421,8 @@ mod backtest {
             production.consumption_extension_weeks
         );
         assert!(options.sanity_bound.is_none());
+        assert_eq!(options.latest_published, production.latest_published);
+        assert_eq!(variant.latest_published, LatestPublishedRule::AtOrBefore);
         assert_eq!(BacktestOptions::default().variant, variant);
 
         let data = build_data(0.0);
@@ -465,6 +469,26 @@ mod backtest {
             assert_eq!(d.delta_precision_at_n_peak, Some(0.0), "{label}");
             assert_eq!(d.delta_mae, Some(0.0), "{label}");
         }
+    }
+
+    #[test]
+    fn the_latest_published_variant_reaches_the_forecast() {
+        let data = build_data(0.0);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
+        let before = ForecastVariant {
+            latest_published: LatestPublishedRule::Before,
+            ..ForecastVariant::default()
+        };
+        assert_eq!(
+            before.forecast_options().latest_published,
+            LatestPublishedRule::Before
+        );
+        let a = forecast_at_issue_time(&inputs).unwrap();
+        let b = forecast_at_issue_time_with(&inputs, before).unwrap();
+        assert_eq!(a.series_start_ms, b.series_start_ms);
+        assert_eq!(a.predicted.len(), b.predicted.len());
+        assert_ne!(a.predicted, b.predicted);
     }
 
     #[test]
