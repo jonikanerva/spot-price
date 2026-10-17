@@ -1,13 +1,14 @@
 //! Rolling-origin backtest of the FI price forecast, keyed by issue time.
 //! Pure. Each origin sees only what the route knew: prices through the last
-//! published delivery, Fingrid actuals strictly before the issue time, and
-//! per target the freshest vintage issued strictly before it. Fingrid data
-//! stays inside the window of the served forecast.
+//! published CET/CEST delivery day, Fingrid actuals strictly before the issue
+//! time, and per target the freshest vintage issued strictly before it.
+//! Prices and Fingrid data stay inside the window of the served forecast.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 
 use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
     CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
@@ -15,6 +16,7 @@ use spot_price_domain::forecast::{
     UtcHour, build_artifact, build_forecast, derive_band_offsets, observed_coverage_of,
     uncalibrated_bands,
 };
+use spot_price_domain::time::{next_calendar_day, start_of_local_day_utc};
 
 use crate::data::{
     BacktestData, DATASET_CONSUMPTION_ACTUAL, DATASET_CONSUMPTION_FORECAST, DATASET_WIND_ACTUAL,
@@ -28,6 +30,8 @@ const HOUR_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * HOUR_MS;
 /// FI day-ahead prices for the next day appear at about 12:00 UTC.
 const PUBLICATION_HOUR_UTC: i64 = 12;
+/// Nord Pool day-ahead delivery days run from 00:00 to 24:00 CET/CEST.
+const DELIVERY_DAY_TIME_ZONE: &str = "Europe/Oslo";
 
 /// Labels of forecast days 0, 1, and 2 after the series start.
 pub const HORIZON_LABELS: [&str; 3] = ["d+1", "d+2", "d+3"];
@@ -48,6 +52,16 @@ pub struct OutOfRange;
 
 fn instant(ms: i64) -> Result<Timestamp, OutOfRange> {
     Timestamp::from_millisecond(ms).map_err(|_| OutOfRange)
+}
+
+/// A backtest run that cannot continue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BacktestError {
+    #[error(transparent)]
+    OutOfRange(#[from] OutOfRange),
+    /// The bundled time zone database has no [`DELIVERY_DAY_TIME_ZONE`].
+    #[error("time zone {DELIVERY_DAY_TIME_ZONE} is not in the bundled database")]
+    DeliveryDayTimeZone,
 }
 
 /// How a reconstructed issue time selects forecast vintages.
@@ -97,13 +111,13 @@ pub struct IssueTimeInputs {
     pub t_ms: i64,
     /// The last published FI delivery start (UTC ms).
     pub last_published_ms: Option<i64>,
-    /// One quarter after the last published delivery, or `t_ms`. Price lags
-    /// must be strictly before it; published day-ahead prices can be later
-    /// than the wall clock `t_ms`.
+    /// One quarter after the last published delivery, or `t_ms`: the series
+    /// start of the served forecast. Price lags must be strictly before it;
+    /// published day-ahead prices can be later than the wall clock `t_ms`.
     pub origin_ms: i64,
-    /// FI spot (c/kWh) through the last published delivery.
+    /// FI spot (c/kWh) in the served window `[history_start, origin_ms)`.
     pub fi_prices: QuarterMap,
-    /// Neighbour spot (c/kWh) by area code, through the last published delivery.
+    /// Neighbour spot (c/kWh) by area code, in the same window as `fi_prices`.
     pub neighbor_prices: BTreeMap<String, QuarterMap>,
     /// One selected vintage per target and forecast dataset, for targets in
     /// the served window `[history_start, series_end)`.
@@ -123,34 +137,53 @@ fn served_window_ms(origin_ms: i64) -> (i64, i64) {
 }
 
 /// Prices delivered before this instant are published at issue time `t_ms`.
-fn publication_horizon_ms(t_ms: i64) -> i64 {
-    let today_end = t_ms.div_euclid(DAY_MS) * DAY_MS + DAY_MS;
-    let hour = t_ms.rem_euclid(DAY_MS) / HOUR_MS;
-    if hour >= PUBLICATION_HOUR_UTC {
-        today_end + DAY_MS
+/// Delivery day D is published at [`PUBLICATION_HOUR_UTC`] on the UTC date
+/// D − 1, and it ends at 24:00 in [`DELIVERY_DAY_TIME_ZONE`].
+fn publication_horizon_ms(t_ms: i64) -> Result<i64, BacktestError> {
+    let utc = instant(t_ms)?.to_zoned(TimeZone::UTC);
+    let published_day = if i64::from(utc.hour()) >= PUBLICATION_HOUR_UTC {
+        next_calendar_day(utc.date()).map_err(|_| OutOfRange)?
     } else {
-        today_end
-    }
+        utc.date()
+    };
+    let zone =
+        TimeZone::get(DELIVERY_DAY_TIME_ZONE).map_err(|_| BacktestError::DeliveryDayTimeZone)?;
+    let next_day = next_calendar_day(published_day).map_err(|_| OutOfRange)?;
+    let end = start_of_local_day_utc(next_day, &zone).map_err(|_| OutOfRange)?;
+    Ok(end.as_millisecond())
 }
 
 /// Builds the issue-time inputs.
-#[must_use]
-pub fn reconstruct_issue_time(data: &BacktestData, t_ms: i64, mode: AsOfMode) -> IssueTimeInputs {
-    let horizon = publication_horizon_ms(t_ms);
+///
+/// # Errors
+/// [`BacktestError`] when the publication horizon of `t_ms` leaves the Jiff
+/// range or the delivery-day time zone is missing.
+pub fn reconstruct_issue_time(
+    data: &BacktestData,
+    t_ms: i64,
+    mode: AsOfMode,
+) -> Result<IssueTimeInputs, BacktestError> {
+    let horizon = publication_horizon_ms(t_ms)?;
+    let last_published_ms = data
+        .prices
+        .iter()
+        .filter(|p| p.area == "FI")
+        .map(|p| p.start.as_millisecond())
+        .filter(|start_ms| *start_ms < horizon)
+        .max();
+    let origin_ms = last_published_ms.map_or(t_ms, |last| last + QUARTER_MS);
+    let (history_start_ms, series_end_ms) = served_window_ms(origin_ms);
+
     let mut fi_prices = QuarterMap::new();
     let mut neighbor_prices: BTreeMap<String, QuarterMap> = BTreeMap::new();
-    let mut last_published_ms: Option<i64> = None;
     for p in &data.prices {
         let start_ms = p.start.as_millisecond();
-        if start_ms >= horizon {
+        if !(history_start_ms..origin_ms).contains(&start_ms) {
             continue;
         }
         let key = QuarterStart::from_millisecond(start_ms);
         if p.area == "FI" {
             fi_prices.insert(key, p.spot_cents_kwh);
-            if last_published_ms.is_none_or(|last| start_ms > last) {
-                last_published_ms = Some(start_ms);
-            }
         } else {
             neighbor_prices
                 .entry(p.area.clone())
@@ -159,8 +192,6 @@ pub fn reconstruct_issue_time(data: &BacktestData, t_ms: i64, mode: AsOfMode) ->
         }
     }
 
-    let origin_ms = last_published_ms.map_or(t_ms, |last| last + QUARTER_MS);
-    let (history_start_ms, series_end_ms) = served_window_ms(origin_ms);
     let as_of_ms = match mode {
         AsOfMode::IssueTime => Some(t_ms),
         AsOfMode::Latest => None,
@@ -189,7 +220,7 @@ pub fn reconstruct_issue_time(data: &BacktestData, t_ms: i64, mode: AsOfMode) ->
         })
         .collect();
 
-    IssueTimeInputs {
+    Ok(IssueTimeInputs {
         t_ms,
         last_published_ms,
         origin_ms,
@@ -197,7 +228,7 @@ pub fn reconstruct_issue_time(data: &BacktestData, t_ms: i64, mode: AsOfMode) ->
         neighbor_prices,
         forecast,
         actual,
-    }
+    })
 }
 
 /// One input timestamp and the boundary it must respect. A `None` boundary
@@ -449,7 +480,8 @@ pub fn rmae(model_mae: Option<f64>, baseline_mae: Option<f64>) -> Option<f64> {
 pub enum Baseline {
     /// The same quarter one week earlier.
     LastWeek,
-    /// The same time of day on the last published delivery day.
+    /// The same quarter in the 24 hours before the series start, the last
+    /// published delivery day.
     LastPublishedDay,
 }
 
@@ -464,8 +496,8 @@ fn baseline_for(baseline: Baseline, target_ms: i64, inputs: &IssueTimeInputs) ->
     let key_ms = match baseline {
         Baseline::LastWeek => target_ms - 7 * DAY_MS,
         Baseline::LastPublishedDay => {
-            let last_day_start = inputs.last_published_ms?.div_euclid(DAY_MS) * DAY_MS;
-            last_day_start + (target_ms - last_day_start).rem_euclid(DAY_MS)
+            let series_start = inputs.last_published_ms? + QUARTER_MS;
+            series_start - DAY_MS + (target_ms - series_start).rem_euclid(DAY_MS)
         }
     };
     inputs
@@ -665,11 +697,12 @@ impl Scoring {
 /// FI price day, and aggregates.
 ///
 /// # Errors
-/// [`OutOfRange`] when a forecast window leaves the `Timestamp` range.
+/// [`BacktestError`] when a forecast window or a publication horizon leaves
+/// the `Timestamp` range, or the delivery-day time zone is missing.
 pub fn run_backtest(
     data: &BacktestData,
     options: &BacktestOptions,
-) -> Result<BacktestSummary, OutOfRange> {
+) -> Result<BacktestSummary, BacktestError> {
     let mode = options.as_of_mode.unwrap_or(AsOfMode::IssueTime);
     let mut realized: BTreeMap<QuarterStart, f64> = BTreeMap::new();
     let mut range: Option<(i64, i64)> = None;
@@ -704,7 +737,7 @@ pub fn run_backtest(
                 continue;
             }
 
-            let inputs = reconstruct_issue_time(data, t_ms, mode);
+            let inputs = reconstruct_issue_time(data, t_ms, mode)?;
             if !find_leaking_inputs(&inputs).is_empty() {
                 leak_free = false;
             }
@@ -802,11 +835,12 @@ pub struct DerivedBands {
 /// [`MIN_CALIBRATION_WINDOW_DAYS`].
 ///
 /// # Errors
-/// [`OutOfRange`] when a forecast window leaves the `Timestamp` range.
+/// [`BacktestError`] when a forecast window or a publication horizon leaves
+/// the `Timestamp` range, or the delivery-day time zone is missing.
 pub fn derive_bands_from_backtest(
     data: &BacktestData,
     generated_at: String,
-) -> Result<DerivedBands, OutOfRange> {
+) -> Result<DerivedBands, BacktestError> {
     let summary = run_backtest(data, &BacktestOptions::default())?;
     let candidate = build_artifact(&summary.residuals, generated_at);
     let observed_coverage = candidate.observed_coverage;
@@ -888,8 +922,9 @@ fn ladder_diagnostic_for(vintages: &[Vintage]) -> LadderDiagnostic {
 /// vintages) and leaked (latest vintages). Delta = leaked − honest.
 ///
 /// # Errors
-/// [`OutOfRange`] when a forecast window leaves the `Timestamp` range.
-pub fn compare_optimism(data: &BacktestData) -> Result<OptimismComparison, OutOfRange> {
+/// [`BacktestError`] when a forecast window or a publication horizon leaves
+/// the `Timestamp` range, or the delivery-day time zone is missing.
+pub fn compare_optimism(data: &BacktestData) -> Result<OptimismComparison, BacktestError> {
     let honest = run_backtest(
         data,
         &BacktestOptions {
@@ -1076,12 +1111,13 @@ pub fn paired_horizon(a: &HorizonMetrics, b: &HorizonMetrics) -> HorizonPairedDe
 /// origins that `a` scored. Delta = B − A.
 ///
 /// # Errors
-/// [`OutOfRange`] when a forecast window leaves the `Timestamp` range.
+/// [`BacktestError`] when a forecast window or a publication horizon leaves
+/// the `Timestamp` range, or the delivery-day time zone is missing.
 pub fn compare_variants(
     data: &BacktestData,
     a: ForecastVariant,
     b: ForecastVariant,
-) -> Result<VariantComparison, OutOfRange> {
+) -> Result<VariantComparison, BacktestError> {
     let run_a = run_backtest(
         data,
         &BacktestOptions {

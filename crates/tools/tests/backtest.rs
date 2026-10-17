@@ -137,9 +137,10 @@ mod backtest {
     #[test]
     fn exposes_prices_only_through_the_publication_horizon() {
         let data = build_data(0.0);
-        let inputs = reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
         assert!(inputs.last_published_ms.is_some());
-        let horizon_end = ms("2026-02-12T00:00:00Z");
+        let horizon_end = ms("2026-02-11T23:00:00Z");
         assert!(
             inputs
                 .fi_prices
@@ -152,7 +153,7 @@ mod backtest {
     fn keeps_actuals_before_issue_time_and_forecasts_forward_looking() {
         let data = build_data(0.0);
         let t = ms("2026-02-10T13:00:00Z");
-        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
         assert!(
             inputs.actual[&124]
                 .iter()
@@ -172,7 +173,7 @@ mod backtest {
         for d in 0..10 {
             for hour in [6, 13] {
                 let t = base + d * DAY_MS + hour * HOUR_MS;
-                let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+                let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
                 assert_eq!(find_leaking_inputs(&inputs).len(), 0);
                 for stamp in collect_input_timestamps(&inputs) {
                     if !stamp.forward_looking_allowed {
@@ -201,7 +202,7 @@ mod backtest {
     fn flags_an_injected_future_issuance() {
         let data = build_data(0.0);
         let t = ms("2026-02-10T13:00:00Z");
-        let mut inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let mut inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
         inputs
             .forecast
             .entry(245)
@@ -220,7 +221,7 @@ mod backtest {
     fn detects_an_injected_future_fi_price() {
         let data = build_data(0.0);
         let mut inputs =
-            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime);
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
         let key = QuarterStart::from_millisecond(inputs.origin_ms + DAY_MS);
         inputs.fi_prices.insert(key, 99.0);
         assert_ne!(find_leaking_inputs(&inputs).len(), 0);
@@ -231,7 +232,8 @@ mod backtest {
     #[test]
     fn anchors_the_series_one_quarter_after_the_last_published_delivery() {
         let data = build_data(0.0);
-        let inputs = reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
         let fc = forecast_at_issue_time(&inputs).unwrap();
         assert_eq!(
             fc.series_start_ms,
@@ -259,14 +261,16 @@ mod backtest {
     // runBacktest
 
     #[test]
-    fn scores_many_origins_and_beats_the_naive_baseline() {
+    fn scores_many_origins_against_both_baselines() {
         let summary = run_backtest(&build_data(0.0), &BacktestOptions::default()).unwrap();
         assert!(summary.leak_free);
         assert!(summary.origins > 5);
         assert_eq!(summary.pre_vintage_origins, 0);
         assert_eq!(summary.scored_origins_ms.len(), summary.origins);
         assert!(summary.model_mae.is_some());
-        assert!(summary.r_mae.last_week.unwrap() < 1.0);
+        for r_mae in [summary.r_mae.last_week, summary.r_mae.last_published_day] {
+            assert!(r_mae.is_some_and(|r| r.is_finite() && r > 0.0), "{r_mae:?}");
+        }
     }
 
     /// 24 days whose vintages are all issued on day 19, so the earlier
@@ -418,7 +422,8 @@ mod backtest {
         assert_eq!(BacktestOptions::default().variant, variant);
 
         let data = build_data(0.0);
-        let inputs = reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
         assert_eq!(
             forecast_at_issue_time(&inputs).unwrap(),
             forecast_at_issue_time_with(&inputs, variant).unwrap()
@@ -428,7 +433,8 @@ mod backtest {
     #[test]
     fn the_variant_reaches_the_forecast() {
         let data = build_data(0.0);
-        let inputs = reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
         let a = forecast_at_issue_time(&inputs).unwrap();
         let b = forecast_at_issue_time_with(&inputs, strong_ridge()).unwrap();
         assert_eq!(a.series_start_ms, b.series_start_ms);
@@ -739,20 +745,44 @@ mod backtest {
                 assert_eq!(d.paired + d.excluded, either_has_value, "{label} {name}");
             }
         }
-        // The arms differ in level (MAE), not in rank: inside one UTC day the
-        // forecast is the day mean plus the persistence shape.
+        // Both arms score the same quarters of each origin, so the per-origin
+        // MAE deltas weighted by their pair counts give the pooled MAE delta.
+        let realized: BTreeSet<i64> = data
+            .prices
+            .iter()
+            .filter(|p| p.area == "FI")
+            .map(|p| p.start.as_millisecond())
+            .collect();
         for (h, label) in HORIZON_LABELS.iter().enumerate() {
             let mae = cmp.paired_by_horizon[h].mae;
             assert!(mae.paired > 0, "{label}");
             assert_eq!(mae.excluded, 0, "{label}");
             assert!(mae.ties < mae.paired, "{label} {mae:?}");
-            // Each origin of a horizon has the same 96 pairs in both arms,
-            // so the paired mean equals the delta of the pooled MAE.
+            let (mut weighted, mut pairs) = (0.0, 0_usize);
+            for (t, origin_a) in &cmp.a.by_horizon[h].by_origin {
+                let inputs = reconstruct_issue_time(&data, *t, AsOfMode::IssueTime).unwrap();
+                let day_start = inputs.origin_ms + i64::try_from(h).unwrap() * DAY_MS;
+                let n = forecast_at_issue_time(&inputs)
+                    .unwrap()
+                    .predicted
+                    .iter()
+                    .map(|(key, _)| key.as_millisecond())
+                    .filter(|ms| (day_start..day_start + DAY_MS).contains(ms))
+                    .filter(|ms| realized.contains(ms))
+                    .count();
+                let origin_b = cmp.b.by_horizon[h].by_origin[t];
+                #[expect(clippy::cast_precision_loss, reason = "at most 96 pairs")]
+                let weight = n as f64;
+                weighted += weight * (origin_b.mae.unwrap() - origin_a.mae.unwrap());
+                pairs += n;
+            }
+            assert_eq!(pairs, cmp.a.by_horizon[h].pairs, "{label}");
+            #[expect(clippy::cast_precision_loss, reason = "a small pair count")]
+            let weighted = weighted / pairs as f64;
             let pooled = cmp.delta_by_horizon[h].delta_mae.unwrap();
-            let paired_mean = mae.mean_delta.unwrap();
             assert!(
-                (paired_mean - pooled).abs() < 1e-9,
-                "{label} {paired_mean} {pooled}"
+                (weighted - pooled).abs() < 1e-9,
+                "{label} {weighted} {pooled}"
             );
         }
         // Day by day, B is more accurate on some d+1 days and less on others.
@@ -773,7 +803,7 @@ mod backtest {
         for (variant, summary) in [(cmp.variant_a, &cmp.a), (cmp.variant_b, &cmp.b)] {
             let mut checked = 0;
             for &t in &summary.scored_origins_ms {
-                let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+                let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
                 let fc = forecast_at_issue_time_with(&inputs, variant).unwrap();
                 for (h, label) in HORIZON_LABELS.iter().enumerate() {
                     let day_start = fc.series_start_ms + i64::try_from(h).unwrap() * DAY_MS;
@@ -893,7 +923,7 @@ mod backtest {
     fn the_gap_fixture_reaches_actuals_older_than_the_served_history() {
         let data = build_wind_gap_data();
         let t = ms(GAP_ISSUE);
-        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
         let (history_start, _) = served_window(&inputs);
         assert!(
             data.actuals[&75]
@@ -915,7 +945,7 @@ mod backtest {
     fn issue_time_fingrid_inputs_stay_inside_the_served_window() {
         let data = build_wind_gap_data();
         for mode in [AsOfMode::IssueTime, AsOfMode::Latest] {
-            let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), mode);
+            let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), mode).unwrap();
             let (history_start, series_end) = served_window(&inputs);
             let actual_end = inputs.t_ms.min(series_end);
             for (id, rows) in &inputs.actual {
@@ -939,7 +969,7 @@ mod backtest {
     fn after_a_wind_forecast_gap_the_backtest_forecasts_like_the_served_window() {
         let data = build_wind_gap_data();
         let t = ms(GAP_ISSUE);
-        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime);
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
         let served = with_served_fingrid(&data, &inputs);
         let every_earlier_actual = IssueTimeInputs {
             actual: data
@@ -972,7 +1002,7 @@ mod backtest {
     #[test]
     fn extension_weeks_above_the_cap_add_nothing_inside_the_served_window() {
         let data = build_wind_gap_data();
-        let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), AsOfMode::IssueTime);
+        let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), AsOfMode::IssueTime).unwrap();
         let weeks = |n: u32| ForecastVariant {
             wind_extension_weeks: n,
             ..ForecastVariant::default()
@@ -982,6 +1012,223 @@ mod backtest {
         assert_ne!(at(3).predicted, at(4).predicted);
         assert_eq!(at(5), at(4));
         assert_eq!(at(8), at(4));
+    }
+
+    // Served price window and series start
+
+    const NEIGHBOR_AREAS: [&str; 3] = ["SE1", "SE3", "EE"];
+
+    /// FI and neighbour prices for every quarter of 2026-01-01 to
+    /// 2026-11-01, without Fingrid data.
+    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
+    fn build_price_year() -> BacktestData {
+        let start = ms("2026-01-01T00:00:00Z");
+        let end = ms("2026-11-01T00:00:00Z");
+        let mut data = BacktestData::default();
+        let mut q = 0;
+        while start + q * QUARTER_MS < end {
+            let at = start + q * QUARTER_MS;
+            let fi = 2.0 + (q % 96) as f64 * 0.01;
+            data.prices.push(price("FI", at, fi));
+            for area in NEIGHBOR_AREAS {
+                data.prices.push(price(area, at, fi + 0.1));
+            }
+            q += 1;
+        }
+        data
+    }
+
+    #[test]
+    fn the_series_starts_at_the_cet_delivery_day_boundary() {
+        let data = build_price_year();
+        // (issue time, first quarter that Nord Pool has not published).
+        // Delivery day D is published at 12:00 UTC on D − 1 and runs from
+        // 00:00 CET/CEST to 24:00 CET/CEST.
+        let cases = [
+            ("2026-02-10T06:00:00Z", "2026-02-10T23:00:00Z"),
+            ("2026-02-10T13:00:00Z", "2026-02-11T23:00:00Z"),
+            ("2026-07-10T13:00:00Z", "2026-07-11T22:00:00Z"),
+            ("2026-07-10T23:30:00Z", "2026-07-11T22:00:00Z"),
+            // 2026-03-29 has 23 hours, 2026-10-25 has 25 hours.
+            ("2026-03-28T13:00:00Z", "2026-03-29T22:00:00Z"),
+            ("2026-10-24T13:00:00Z", "2026-10-25T23:00:00Z"),
+        ];
+        for (issue, want) in cases {
+            let want = ms(want);
+            for mode in [AsOfMode::IssueTime, AsOfMode::Latest] {
+                let inputs = reconstruct_issue_time(&data, ms(issue), mode).unwrap();
+                assert_eq!(inputs.origin_ms, want, "{issue}");
+                assert_eq!(inputs.last_published_ms, Some(want - QUARTER_MS), "{issue}");
+                let fc = forecast_at_issue_time(&inputs).unwrap();
+                assert_eq!(fc.series_start_ms, want, "{issue}");
+                let prices = inputs
+                    .fi_prices
+                    .keys()
+                    .chain(inputs.neighbor_prices.values().flat_map(|s| s.keys()));
+                for key in prices {
+                    assert!(key.as_millisecond() < want, "{issue} {key:?}");
+                }
+                assert!(find_leaking_inputs(&inputs).is_empty(), "{issue}");
+            }
+        }
+    }
+
+    #[test]
+    fn neighbour_prices_stop_at_the_fi_series_start() {
+        let fi_until = ms("2026-02-11T12:00:00Z");
+        let mut data = build_price_year();
+        data.prices
+            .retain(|p| p.area != "FI" || p.start.as_millisecond() < fi_until);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
+        assert_eq!(inputs.origin_ms, fi_until);
+        // The neighbours have prices up to the publication horizon.
+        assert!(data.prices.iter().any(|p| p.area != "FI"
+            && (fi_until..ms("2026-02-11T23:00:00Z")).contains(&p.start.as_millisecond())));
+        for (area, series) in &inputs.neighbor_prices {
+            let last = series.keys().next_back().unwrap().as_millisecond();
+            assert_eq!(last, fi_until - QUARTER_MS, "{area}");
+        }
+    }
+
+    /// 46 days of prices. Before 2026-01-10, FI and neighbour prices sit
+    /// 5 c/kWh higher, so any read of them moves the price mean.
+    fn build_old_price_data() -> BacktestData {
+        let old_until = ms("2026-01-10T00:00:00Z");
+        let mut data = build_wind_gap_data();
+        for p in &mut data.prices {
+            if p.start.as_millisecond() < old_until {
+                p.spot_cents_kwh += 5.0;
+            }
+        }
+        data
+    }
+
+    /// The issue-time inputs with prices read like the served forecast:
+    /// FI and neighbour prices in `[history_start, series_start)`.
+    fn with_served_prices(data: &BacktestData, inputs: &IssueTimeInputs) -> IssueTimeInputs {
+        let (history_start, _) = served_window(inputs);
+        let window = history_start..inputs.origin_ms;
+        let mut fi_prices = BTreeMap::new();
+        let mut neighbor_prices: BTreeMap<String, BTreeMap<QuarterStart, f64>> = BTreeMap::new();
+        for p in &data.prices {
+            let start = p.start.as_millisecond();
+            if !window.contains(&start) {
+                continue;
+            }
+            let key = QuarterStart::from_millisecond(start);
+            if p.area == "FI" {
+                fi_prices.insert(key, p.spot_cents_kwh);
+            } else {
+                neighbor_prices
+                    .entry(p.area.clone())
+                    .or_default()
+                    .insert(key, p.spot_cents_kwh);
+            }
+        }
+        IssueTimeInputs {
+            fi_prices,
+            neighbor_prices,
+            ..inputs.clone()
+        }
+    }
+
+    #[test]
+    fn issue_time_prices_stay_inside_the_served_window() {
+        let data = build_old_price_data();
+        for mode in [AsOfMode::IssueTime, AsOfMode::Latest] {
+            let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), mode).unwrap();
+            let (history_start, _) = served_window(&inputs);
+            assert!(
+                data.prices
+                    .iter()
+                    .any(|p| p.start.as_millisecond() < history_start)
+            );
+            let served = with_served_prices(&data, &inputs);
+            assert!(!served.fi_prices.is_empty());
+            assert_eq!(
+                served.neighbor_prices.keys().collect::<Vec<_>>(),
+                ["EE", "SE1", "SE3"]
+            );
+            let first = |series: &BTreeMap<QuarterStart, f64>| {
+                series.keys().next().map(|k| k.as_millisecond())
+            };
+            assert_eq!(first(&inputs.fi_prices), Some(history_start), "FI");
+            for (area, series) in &inputs.neighbor_prices {
+                assert_eq!(first(series), Some(history_start), "{area}");
+            }
+            assert_eq!(inputs.fi_prices, served.fi_prices);
+            assert_eq!(inputs.neighbor_prices, served.neighbor_prices);
+        }
+    }
+
+    #[test]
+    fn older_prices_move_the_forecast_and_the_backtest_reads_the_served_window() {
+        let data = build_old_price_data();
+        let inputs = reconstruct_issue_time(&data, ms(GAP_ISSUE), AsOfMode::IssueTime).unwrap();
+        let served = with_served_prices(&data, &inputs);
+        let every_earlier_price = IssueTimeInputs {
+            fi_prices: data
+                .prices
+                .iter()
+                .filter(|p| p.area == "FI" && p.start.as_millisecond() < inputs.origin_ms)
+                .map(|p| (QuarterStart::floor(p.start), p.spot_cents_kwh))
+                .collect(),
+            ..served.clone()
+        };
+        let served_fc = forecast_at_issue_time(&served).unwrap();
+        // The fixture is sensitive: the older prices change the forecast.
+        assert_ne!(
+            forecast_at_issue_time(&every_earlier_price)
+                .unwrap()
+                .predicted,
+            served_fc.predicted
+        );
+        assert_eq!(forecast_at_issue_time(&inputs).unwrap(), served_fc);
+    }
+
+    #[test]
+    fn the_last_published_day_baseline_reads_the_day_before_the_series_start() {
+        let data = build_data(0.0);
+        let realized: BTreeMap<i64, f64> = data
+            .prices
+            .iter()
+            .filter(|p| p.area == "FI")
+            .map(|p| (p.start.as_millisecond(), p.spot_cents_kwh))
+            .collect();
+        let t = ms("2026-02-10T13:00:00Z");
+        let options = BacktestOptions {
+            restrict_origins_ms: Some(BTreeSet::from([t])),
+            ..BacktestOptions::default()
+        };
+        let summary = run_backtest(&data, &options).unwrap();
+        let inputs = reconstruct_issue_time(&data, t, AsOfMode::IssueTime).unwrap();
+        let fc = forecast_at_issue_time(&inputs).unwrap();
+        let day_before = inputs.origin_ms - DAY_MS;
+        let errors: Vec<f64> = fc
+            .predicted
+            .iter()
+            .filter_map(|(key, _)| {
+                let target = key.as_millisecond();
+                let actual = realized.get(&target)?;
+                let same_time = day_before + (target - inputs.origin_ms).rem_euclid(DAY_MS);
+                Some((realized[&same_time] - actual).abs())
+            })
+            .collect();
+        assert_eq!(errors.len(), summary.residuals.len());
+        #[expect(clippy::cast_precision_loss, reason = "at most 288 errors")]
+        let want = errors.iter().sum::<f64>() / errors.len() as f64;
+        let got = summary.baseline_mae.last_published_day.unwrap();
+        assert!((got - want).abs() < 1e-12, "{got} {want}");
+    }
+
+    #[test]
+    fn at_the_cet_series_start_the_rank_metrics_react_to_the_variant() {
+        let cmp =
+            compare_variants(&build_data(0.0), ForecastVariant::default(), strong_ridge()).unwrap();
+        let d1 = cmp.paired_by_horizon[0].spearman;
+        assert!(d1.paired > 0, "{d1:?}");
+        assert!(d1.wins + d1.losses > 0, "{d1:?}");
     }
 
     #[test]

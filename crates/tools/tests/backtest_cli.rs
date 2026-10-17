@@ -423,7 +423,7 @@ mod backtest_cli {
         assert!(verdict < info);
         assert!(text.contains("W = B more accurate (delta < 0)"));
         assert!(text.contains("W = B ranks better (delta > 0)"));
-        assert!(text.contains("do not react to model options"));
+        assert!(text.contains("starts at the CET/CEST delivery-day boundary"));
         assert_eq!(text.matches("or the delta is not finite").count(), 2);
         let rows: Vec<Vec<&str>> = text
             .lines()

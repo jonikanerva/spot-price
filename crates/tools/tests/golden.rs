@@ -1,5 +1,5 @@
-//! Parity of the Rust tools with the TypeScript tools. The fixtures in
-//! `tests/golden/` come from the TypeScript tools and CLIs
+//! The tools against `tests/golden/`. Most fixtures come from the TypeScript
+//! tools and CLIs; the synthetic backtest sections come from the Rust tools
 //! (`tests/golden/README.md`). Printed values and counts must be equal. A raw
 //! float may differ within 1e-9 relative, because V8 and Rust use different
 //! `asinh`, `sinh`, `sin`, and `cos`.
@@ -24,12 +24,14 @@ mod golden {
     use jiff::Timestamp;
     use serde_json::Value;
     use spot_price_domain::forecast::{
-        DeriveOptions, HorizonResidual, QuarterStart, UtcHour, derive_band_offsets, iso_millis,
+        BandOffsets, DeriveOptions, HorizonResidual, QuarterStart, UtcHour, derive_band_offsets,
+        iso_millis,
     };
-    use spot_price_domain::js::math_round;
+    use spot_price_domain::js::{math_round, number_to_string};
     use spot_price_tools::backtest::{
-        AsOfMode, BacktestOptions, BacktestSummary, HORIZON_LABELS, compare_optimism,
-        derive_bands_from_backtest, forecast_at_issue_time, reconstruct_issue_time, run_backtest,
+        AsOfMode, BacktestOptions, BacktestSummary, DerivedBands, HORIZON_LABELS,
+        OptimismComparison, PerBaseline, compare_optimism, derive_bands_from_backtest,
+        forecast_at_issue_time, reconstruct_issue_time, run_backtest,
     };
     use spot_price_tools::backtest_cli::{StoredPrice, assemble_backtest_data, print_compare};
     use spot_price_tools::cli::{Context, Output, Stream, run};
@@ -269,7 +271,7 @@ mod golden {
             .collect();
         let mut by_horizon: [Vec<HorizonResidual>; 3] = Default::default();
         for &t_ms in &summary.scored_origins_ms {
-            let inputs = reconstruct_issue_time(data, t_ms, mode);
+            let inputs = reconstruct_issue_time(data, t_ms, mode).unwrap();
             let fc = forecast_at_issue_time(&inputs).unwrap();
             for &(key, pred) in &fc.predicted {
                 let Some(&actual) = realized.get(&key) else {
@@ -403,7 +405,7 @@ mod golden {
     }
 
     #[test]
-    fn synthetic_backtest_matches_typescript() {
+    fn synthetic_backtest_matches_the_golden_file() {
         let stats = Stats::default();
         let (summary, edges) = synthetic_summary();
         check_summary(
@@ -414,7 +416,7 @@ mod golden {
             "synthetic",
         );
         println!("edge residuals: {edges:?}");
-        assert_eq!(summary.origins, 92);
+        assert_eq!(summary.origins, 93);
         stats.report("synthetic backtest");
         // Predictions are rounded to 0.001, so they must be bit-equal.
         assert_eq!(
@@ -440,7 +442,7 @@ mod golden {
     }
 
     #[test]
-    fn optimism_comparison_matches_typescript() {
+    fn optimism_comparison_matches_the_golden_file() {
         let stats = Stats::default();
         let want = &expected()["synthetic"]["compare"];
         let cmp = compare_optimism(synthetic()).unwrap();
@@ -495,7 +497,7 @@ mod golden {
     }
 
     #[test]
-    fn backtest_cli_output_matches_typescript() {
+    fn backtest_cli_output_matches_the_golden_file() {
         let dir = temp_dir("backtest-cli");
         let file = dir.join("synthetic.json");
         std::fs::write(&file, to_fixture_json(synthetic())).unwrap();
@@ -671,7 +673,7 @@ mod golden {
     }
 
     #[test]
-    fn compare_report_matches_typescript() {
+    fn compare_report_matches_the_golden_file() {
         let data = db_shaped(synthetic());
         // The EUR/MWh round trip gives back every spot price exactly.
         let spot = |d: &BacktestData| {
@@ -774,7 +776,7 @@ mod golden {
     }
 
     #[test]
-    fn regenerate_bands_matches_typescript() {
+    fn regenerate_bands_matches_the_golden_file() {
         let want = &expected()["synthetic"]["bands"];
         let generated_at = expected()["generatedAt"].as_str().unwrap();
         let derived = derive_bands_from_backtest(synthetic(), generated_at.to_owned()).unwrap();
@@ -842,11 +844,12 @@ mod golden {
             p["scoredWindowStart"].as_str().unwrap(),
             p["scoredWindowEnd"].as_str().unwrap()
         )));
-        assert!(text.contains("//!   scored origins: 92   span: 91.0 days\n"));
+        assert!(text.contains(&format!(
+            "//!   scored origins: {}   span: {:.1} days\n",
+            count(&p["scoredOrigins"]),
+            f(&p["scoredWindowSpanDays"])
+        )));
         assert!(!text.contains("SUMMER-ONLY"));
-        // The TypeScript module has the same provenance numbers.
-        let ts_module = want["tsModule"].as_str().unwrap();
-        assert!(ts_module.contains("scored origins: 92   span: 91.0 days"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -876,6 +879,298 @@ mod golden {
         );
         assert!(stdout.contains("  → shipping DARK"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // Regeneration of the Rust-produced backtest sections
+    // -----------------------------------------------------------------------
+
+    /// A JSON value with members in output order and JavaScript number text.
+    enum Json {
+        Null,
+        Bool(bool),
+        Number(f64),
+        Text(String),
+        Array(Vec<Json>),
+        Object(Vec<(&'static str, Json)>),
+    }
+
+    impl Json {
+        fn write(&self, out: &mut String) {
+            match self {
+                Self::Null => out.push_str("null"),
+                Self::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+                Self::Number(x) => out.push_str(&number_to_string(*x)),
+                Self::Text(t) => out.push_str(&serde_json::to_string(t).unwrap()),
+                Self::Array(items) => {
+                    out.push('[');
+                    for (i, item) in items.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        item.write(out);
+                    }
+                    out.push(']');
+                }
+                Self::Object(members) => {
+                    out.push('{');
+                    for (i, (key, value)) in members.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        out.push_str(&serde_json::to_string(key).unwrap());
+                        out.push(':');
+                        value.write(out);
+                    }
+                    out.push('}');
+                }
+            }
+        }
+    }
+
+    fn num(x: Option<f64>) -> Json {
+        x.map_or(Json::Null, Json::Number)
+    }
+
+    fn int_json(n: usize) -> Json {
+        Json::Number(n as f64)
+    }
+
+    fn iso_json(ms: Option<i64>) -> Json {
+        ms.map_or(Json::Null, |ms| Json::Text(iso_millis(ts(ms))))
+    }
+
+    fn summary_json(s: &BacktestSummary, with_residuals: bool) -> Json {
+        let per_baseline = |b: &PerBaseline<Option<f64>>| {
+            Json::Object(vec![
+                ("last_week", num(b.last_week)),
+                ("last_published_day", num(b.last_published_day)),
+            ])
+        };
+        let by_horizon = HORIZON_LABELS
+            .iter()
+            .zip(&s.by_horizon)
+            .map(|(label, m)| {
+                let metrics = Json::Object(vec![
+                    ("mae", num(m.mae)),
+                    ("smape", num(m.smape)),
+                    ("spearman", num(m.spearman)),
+                    ("precisionAtNCheap", num(m.precision_at_n_cheap)),
+                    ("precisionAtNPeak", num(m.precision_at_n_peak)),
+                    ("bandCoverage", num(m.band_coverage)),
+                    ("pairs", int_json(m.pairs)),
+                ]);
+                (*label, metrics)
+            })
+            .collect();
+        let residuals = |part: fn(&HorizonResidual) -> f64| {
+            if with_residuals {
+                Json::Array(s.residuals.iter().map(|r| Json::Number(part(r))).collect())
+            } else {
+                Json::Null
+            }
+        };
+        Json::Object(vec![
+            ("origins", int_json(s.origins)),
+            ("fallbackOrigins", int_json(s.fallback_origins)),
+            ("preVintageOrigins", int_json(s.pre_vintage_origins)),
+            ("scoredWindowStart", iso_json(s.scored_window_start_ms)),
+            ("scoredWindowEnd", iso_json(s.scored_window_end_ms)),
+            (
+                "scoredWindowSpanDays",
+                Json::Number(s.scored_window_span_days),
+            ),
+            (
+                "scoredOriginsMs",
+                Json::Array(
+                    s.scored_origins_ms
+                        .iter()
+                        .map(|ms| Json::Number(*ms as f64))
+                        .collect(),
+                ),
+            ),
+            ("modelMae", num(s.model_mae)),
+            ("modelSmape", num(s.model_smape)),
+            ("baselineMae", per_baseline(&s.baseline_mae)),
+            ("rMae", per_baseline(&s.r_mae)),
+            ("leakFree", Json::Bool(s.leak_free)),
+            ("byHorizon", Json::Object(by_horizon)),
+            ("residualCount", int_json(s.residuals.len())),
+            ("residualHours", residuals(|r| f64::from(r.utc_hour.get()))),
+            (
+                "residualPredMilli",
+                residuals(|r| math_round(r.predicted_raw * 1000.0)),
+            ),
+        ])
+    }
+
+    fn compare_json(cmp: &OptimismComparison) -> Json {
+        let by_horizon = HORIZON_LABELS
+            .iter()
+            .zip(&cmp.delta_by_horizon)
+            .map(|(label, d)| {
+                let deltas = Json::Object(vec![
+                    ("deltaMae", num(d.delta_mae)),
+                    ("deltaSmape", num(d.delta_smape)),
+                    ("deltaBandCoverage", num(d.delta_band_coverage)),
+                ]);
+                (*label, deltas)
+            })
+            .collect();
+        let ladder = cmp
+            .ladder_diagnostic
+            .iter()
+            .map(|(id, ld)| {
+                Json::Array(vec![
+                    Json::Text(id.to_string()),
+                    Json::Object(vec![
+                        ("medianDepth", num(ld.median_depth)),
+                        ("expectedDepth", num(ld.expected_depth)),
+                        ("sparseTargetFraction", num(ld.sparse_target_fraction)),
+                    ]),
+                ])
+            })
+            .collect();
+        Json::Object(vec![
+            ("scoredOrigins", int_json(cmp.scored_origins)),
+            ("deltaMae", num(cmp.delta_mae)),
+            ("deltaSmape", num(cmp.delta_smape)),
+            ("deltaBandCoverage", num(cmp.delta_band_coverage)),
+            ("deltaByHorizon", Json::Object(by_horizon)),
+            ("ladderDiagnostic", Json::Array(ladder)),
+            ("leaked", summary_json(&cmp.leaked, false)),
+            ("honestLeakFree", Json::Bool(cmp.honest.leak_free)),
+        ])
+    }
+
+    fn bands_json(derived: &DerivedBands) -> Json {
+        let offsets = |o: &BandOffsets| {
+            Json::Object(vec![
+                ("lowOffset", Json::Number(o.low_offset)),
+                ("highOffset", Json::Number(o.high_offset)),
+            ])
+        };
+        let bands = &derived.bands;
+        let summary = &derived.summary;
+        let by_hour = bands
+            .offsets_by_hour
+            .iter()
+            .enumerate()
+            .filter_map(|(hour, o)| {
+                o.as_ref()
+                    .map(|o| Json::Array(vec![int_json(hour), offsets(o)]))
+            })
+            .collect();
+        Json::Object(vec![
+            ("calibrated", Json::Bool(bands.calibrated)),
+            ("nominalCoverage", Json::Number(bands.nominal_coverage)),
+            ("observedCoverage", num(bands.observed_coverage)),
+            ("measuredCoverage", num(derived.observed_coverage)),
+            ("offsetsByHour", Json::Array(by_hour)),
+            (
+                "globalOffsets",
+                bands.global_offsets.as_ref().map_or(Json::Null, offsets),
+            ),
+            ("generatedAt", Json::Text(bands.generated_at.to_string())),
+            (
+                "provenance",
+                Json::Object(vec![
+                    (
+                        "scoredWindowStart",
+                        iso_json(summary.scored_window_start_ms),
+                    ),
+                    ("scoredWindowEnd", iso_json(summary.scored_window_end_ms)),
+                    ("scoredOrigins", int_json(summary.origins)),
+                    (
+                        "scoredWindowSpanDays",
+                        Json::Number(summary.scored_window_span_days),
+                    ),
+                    ("observedCoverage", num(bands.observed_coverage)),
+                ]),
+            ),
+            ("residualCount", int_json(summary.residuals.len())),
+        ])
+    }
+
+    fn cli_json(args: &[&str], got: &Output) -> Json {
+        Json::Object(vec![
+            (
+                "args",
+                Json::Array(args.iter().map(|a| Json::Text((*a).to_owned())).collect()),
+            ),
+            ("stdout", Json::Text(got.text(Stream::Stdout))),
+            ("stderr", Json::Text(got.text(Stream::Stderr))),
+            ("status", Json::Number(f64::from(got.code))),
+        ])
+    }
+
+    /// The text of the value of the top-level member `key` of a
+    /// two-space-indented JSON object.
+    fn top_level_value<'a>(text: &'a str, key: &str) -> &'a str {
+        let marker = format!("\n  \"{key}\": ");
+        let start = text.find(&marker).unwrap() + marker.len();
+        let rest = &text[start..];
+        let end = rest.find("\n  \"").map_or_else(
+            || rest.rfind("\n}").unwrap(),
+            |next| next - 1, // the comma before the next member
+        );
+        &rest[..end]
+    }
+
+    /// Rewrites the `synthetic` and `dbCompare` sections of
+    /// `backtest_expected.json` from the Rust tools and keeps the other
+    /// sections byte for byte. Run it, then format the file with Prettier
+    /// (`tests/golden/README.md`).
+    #[test]
+    #[ignore = "rewrites tests/golden/backtest_expected.json"]
+    fn regenerate_backtest_expected() {
+        let path = golden_dir().join("backtest_expected.json");
+        let original = std::fs::read_to_string(&path).unwrap();
+        let generated_at = expected()["generatedAt"].as_str().unwrap();
+
+        let summary = run_backtest(synthetic(), &BacktestOptions::default()).unwrap();
+        let cmp = compare_optimism(synthetic()).unwrap();
+        let derived = derive_bands_from_backtest(synthetic(), generated_at.to_owned()).unwrap();
+        let dir = temp_dir("regenerate");
+        let file = dir.join("synthetic.json");
+        std::fs::write(&file, to_fixture_json(synthetic())).unwrap();
+        let cli = run_cli(&["backtest", "--data", file.to_str().unwrap()]);
+        std::fs::remove_dir_all(dir).unwrap();
+        let mut db_out = Output::default();
+        let ok = print_compare(&db_shaped(synthetic()), &mut db_out).unwrap();
+        db_out.code = i32::from(!ok);
+
+        let synthetic_json = Json::Object(vec![
+            ("summary", summary_json(&summary, true)),
+            ("compare", compare_json(&cmp)),
+            ("bands", bands_json(&derived)),
+            ("cli", cli_json(&["--data", "<tmp>/synthetic.json"], &cli)),
+        ]);
+        let mut text = String::from("{\n");
+        for key in [
+            "generatedAt",
+            "synthetic",
+            "committedFixture",
+            "dbCompare",
+            "usage",
+            "badWindow",
+            "fixtureJson",
+        ] {
+            if key != "generatedAt" {
+                text.push_str(",\n");
+            }
+            text.push_str("  \"");
+            text.push_str(key);
+            text.push_str("\": ");
+            match key {
+                "synthetic" => synthetic_json.write(&mut text),
+                "dbCompare" => cli_json(&["--db", "--compare"], &db_out).write(&mut text),
+                _ => text.push_str(top_level_value(&original, key)),
+            }
+        }
+        text.push_str("\n}\n");
+        serde_json::from_str::<Value>(&text).unwrap();
+        std::fs::write(&path, text).unwrap();
     }
 
     // -----------------------------------------------------------------------

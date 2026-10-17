@@ -29,6 +29,8 @@ pub enum ToolError {
     MissingDatabaseUrl(&'static str),
     #[error(transparent)]
     OutOfRange(#[from] crate::backtest::OutOfRange),
+    #[error(transparent)]
+    Backtest(#[from] crate::backtest::BacktestError),
     #[error("database read failed: {0}")]
     Database(#[from] sqlx::Error),
     #[error("cannot start the async runtime: {0}")]

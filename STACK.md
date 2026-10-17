@@ -493,7 +493,10 @@ evidence blocks merge. There is no CI.
 `crates/server/tests/golden/http/README.md`, the domain golden files, and the
 tools golden files record how they were produced from the TypeScript
 service. The TypeScript service is gone from the tree; regenerate them only
-from the port PR's history. A golden change is a contract change.
+from the port PR's history. Exception: the synthetic backtest sections of
+`crates/tools/tests/golden/backtest_expected.json` come from the Rust tools,
+because the backtest now follows the served forecast. Their README gives the
+regeneration command. A golden change is a contract change.
 
 ---
 
