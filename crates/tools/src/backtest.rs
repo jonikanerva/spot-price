@@ -12,9 +12,9 @@ use jiff::tz::TimeZone;
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
     CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
-    ForecastOptions, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices, QuarterMap,
-    QuarterStart, UtcHour, build_artifact, build_forecast, derive_band_offsets,
-    observed_coverage_of, uncalibrated_bands,
+    ForecastOptions, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices,
+    PrevDayBasis, QuarterMap, QuarterStart, UtcHour, build_artifact, build_forecast,
+    derive_band_offsets, observed_coverage_of, uncalibrated_bands,
 };
 use spot_price_domain::time::{next_calendar_day, start_of_local_day_utc};
 
@@ -136,6 +136,10 @@ fn served_window_ms(origin_ms: i64) -> (i64, i64) {
     )
 }
 
+fn delivery_zone() -> Result<TimeZone, BacktestError> {
+    TimeZone::get(DELIVERY_DAY_TIME_ZONE).map_err(|_| BacktestError::DeliveryDayTimeZone)
+}
+
 /// Prices delivered before this instant are published at issue time `t_ms`.
 /// Delivery day D is published at [`PUBLICATION_HOUR_UTC`] on the UTC date
 /// D − 1, and it ends at 24:00 in [`DELIVERY_DAY_TIME_ZONE`].
@@ -146,8 +150,7 @@ fn publication_horizon_ms(t_ms: i64) -> Result<i64, BacktestError> {
     } else {
         utc.date()
     };
-    let zone =
-        TimeZone::get(DELIVERY_DAY_TIME_ZONE).map_err(|_| BacktestError::DeliveryDayTimeZone)?;
+    let zone = delivery_zone()?;
     let next_day = next_calendar_day(published_day).map_err(|_| OutOfRange)?;
     let end = start_of_local_day_utc(next_day, &zone).map_err(|_| OutOfRange)?;
     Ok(end.as_millisecond())
@@ -347,6 +350,16 @@ fn actual_records(inputs: &IssueTimeInputs, id: DatasetId) -> Vec<GridRecord> {
     )
 }
 
+/// The day basis of the previous-day price statistics in a [`ForecastVariant`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DayBasis {
+    /// The UTC day, [`PrevDayBasis::UtcDay`].
+    #[default]
+    Utc,
+    /// The delivery day in [`DELIVERY_DAY_TIME_ZONE`].
+    Delivery,
+}
+
 /// The forecast options that a backtest can vary. The default is the
 /// production model. The sanity bound and the bands stay at their
 /// [`ForecastOptions`] defaults: neither changes a point prediction here.
@@ -361,6 +374,7 @@ pub struct ForecastVariant {
     /// Not checked here; see `wind_extension_weeks`.
     pub consumption_extension_weeks: u32,
     pub latest_published: LatestPublishedRule,
+    pub prev_day_basis: DayBasis,
 }
 
 impl Default for ForecastVariant {
@@ -371,19 +385,28 @@ impl Default for ForecastVariant {
             wind_extension_weeks: production.wind_extension_weeks,
             consumption_extension_weeks: production.consumption_extension_weeks,
             latest_published: production.latest_published,
+            prev_day_basis: match production.prev_day_basis {
+                PrevDayBasis::UtcDay => DayBasis::Utc,
+                PrevDayBasis::DeliveryDay(_) => DayBasis::Delivery,
+            },
         }
     }
 }
 
 impl ForecastVariant {
-    /// The pipeline options of this variant.
+    /// The pipeline options of this variant. `delivery_zone` must be the
+    /// [`DELIVERY_DAY_TIME_ZONE`] zone; only [`DayBasis::Delivery`] reads it.
     #[must_use]
-    pub fn forecast_options(self) -> ForecastOptions<'static> {
+    pub fn forecast_options(self, delivery_zone: &TimeZone) -> ForecastOptions<'_> {
         ForecastOptions {
             ridge_lambda: self.ridge_lambda,
             wind_extension_weeks: self.wind_extension_weeks,
             consumption_extension_weeks: self.consumption_extension_weeks,
             latest_published: self.latest_published,
+            prev_day_basis: match self.prev_day_basis {
+                DayBasis::Utc => PrevDayBasis::UtcDay,
+                DayBasis::Delivery => PrevDayBasis::DeliveryDay(delivery_zone),
+            },
             ..ForecastOptions::default()
         }
     }
@@ -393,19 +416,21 @@ impl ForecastVariant {
 /// options.
 ///
 /// # Errors
-/// [`OutOfRange`] when the series window leaves the `Timestamp` range.
-pub fn forecast_at_issue_time(inputs: &IssueTimeInputs) -> Result<IssueForecast, OutOfRange> {
+/// [`BacktestError`] when the series window leaves the `Timestamp` range or
+/// the delivery-day time zone is missing.
+pub fn forecast_at_issue_time(inputs: &IssueTimeInputs) -> Result<IssueForecast, BacktestError> {
     forecast_at_issue_time_with(inputs, ForecastVariant::default())
 }
 
 /// Runs the forecast of `variant` with the issue-time inputs.
 ///
 /// # Errors
-/// [`OutOfRange`] when the series window leaves the `Timestamp` range.
+/// [`BacktestError`] when the series window leaves the `Timestamp` range or
+/// the delivery-day time zone is missing.
 pub fn forecast_at_issue_time_with(
     inputs: &IssueTimeInputs,
     variant: ForecastVariant,
-) -> Result<IssueForecast, OutOfRange> {
+) -> Result<IssueForecast, BacktestError> {
     let series_start_ms = inputs.origin_ms;
     let (_, series_end_ms) = served_window_ms(series_start_ms);
     // The forecast reads only the neighbour areas it knows by exact code.
@@ -429,7 +454,7 @@ pub fn forecast_at_issue_time_with(
             series_start: instant(series_start_ms)?,
             series_end: instant(series_end_ms)?,
         },
-        &variant.forecast_options(),
+        &variant.forecast_options(&delivery_zone()?),
     );
     Ok(IssueForecast {
         predicted: result

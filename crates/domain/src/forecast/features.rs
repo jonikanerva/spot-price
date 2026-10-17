@@ -1,13 +1,17 @@
 //! Feature engineering for the FI price forecast. Every calendar feature is
-//! in UTC. Training rows and prediction vectors come from one assembly
-//! function, so their columns are identical.
+//! in UTC. The previous-day price statistics use the UTC day unless the
+//! feature rules select a local delivery day. Training rows and prediction
+//! vectors come from one assembly function, so their columns are identical.
 
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
 
 use jiff::Timestamp;
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
 
 use crate::areas::Area;
+use crate::time::{local_date, start_of_local_day_utc};
 
 use super::js::count_f64;
 use super::quarter::{DAY_MS, QuarterMap, QuarterStart, WEEK_MS};
@@ -81,10 +85,67 @@ pub enum LatestPublishedRule {
     Before,
 }
 
-/// The feature rules of a forecast run. The default is the served forecast.
+/// The day whose price statistics `fi_prev_day_min`, `fi_prev_day_max`, and
+/// `fi_prev_day_mean` read: the day before the day of the quarter.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PrevDayBasis<'a> {
+    /// The UTC calendar day.
+    #[default]
+    UtcDay,
+    /// The local calendar day in this zone. It lasts 23, 24, or 25 hours.
+    DeliveryDay(&'a TimeZone),
+}
+
+/// [`PrevDayBasis`] with an owned zone, so the price index has no lifetime.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum DayBasis {
+    #[default]
+    Utc,
+    Local(TimeZone),
+}
+
+impl From<PrevDayBasis<'_>> for DayBasis {
+    fn from(basis: PrevDayBasis<'_>) -> Self {
+        match basis {
+            PrevDayBasis::UtcDay => Self::Utc,
+            PrevDayBasis::DeliveryDay(zone) => Self::Local(zone.clone()),
+        }
+    }
+}
+
+impl DayBasis {
+    /// The UTC start (epoch ms) of the day that holds `at`. `None` only
+    /// outside the Jiff range.
+    fn day_start_ms(&self, at: QuarterStart) -> Option<i64> {
+        match self {
+            Self::Utc => Some(at.utc_day_start_ms()),
+            Self::Local(zone) => local_day_start_ms(local_date(at.timestamp().ok()?, zone), zone),
+        }
+    }
+
+    /// The UTC start (epoch ms) of the day before the day that holds `at`.
+    fn previous_day_start_ms(&self, at: QuarterStart) -> Option<i64> {
+        match self {
+            Self::Utc => Some(at.utc_day_start_ms() - DAY_MS),
+            Self::Local(zone) => {
+                let day = local_date(at.timestamp().ok()?, zone);
+                local_day_start_ms(day.yesterday().ok()?, zone)
+            }
+        }
+    }
+}
+
+fn local_day_start_ms(day: Date, zone: &TimeZone) -> Option<i64> {
+    start_of_local_day_utc(day, zone)
+        .ok()
+        .map(Timestamp::as_millisecond)
+}
+
+/// The feature rules of a forecast run. The default is the served forecast.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FeatureRules {
     pub(crate) latest_published: LatestPublishedRule,
+    pub(crate) previous_day: DayBasis,
 }
 
 /// Lookups derived once from the FI prices of a forecast run, and the feature
@@ -122,8 +183,11 @@ pub(crate) fn build_price_index(ctx: &FeatureContext<'_>, rules: FeatureRules) -
     let mut total = 0.0;
     for (&key, &price) in ctx.fi_prices {
         total += price;
+        let Some(day_start) = rules.previous_day.day_start_ms(key) else {
+            continue;
+        };
         per_day
-            .entry(key.utc_day_start_ms())
+            .entry(day_start)
             .and_modify(|agg| {
                 if price < agg.min {
                     agg.min = price;
@@ -183,8 +247,10 @@ fn assemble_features(at: QuarterStart, ctx: &FeatureContext<'_>, index: &PriceIn
     let fi_1d = ctx.fi_prices.get(&day_ago).copied().unwrap_or(neutral);
     let fi_7d = ctx.fi_prices.get(&week_ago).copied().unwrap_or(neutral);
     let previous_day = index
-        .stats_by_day_start
-        .get(&(at.utc_day_start_ms() - DAY_MS))
+        .rules
+        .previous_day
+        .previous_day_start_ms(at)
+        .and_then(|day_start| index.stats_by_day_start.get(&day_start))
         .copied()
         .unwrap_or(DayStats {
             min: neutral,
@@ -343,6 +409,7 @@ mod tests {
     fn latest_rule(rule: LatestPublishedRule) -> FeatureRules {
         FeatureRules {
             latest_published: rule,
+            ..FeatureRules::default()
         }
     }
 
@@ -410,5 +477,169 @@ mod tests {
             let bits = |row: &[f64]| row.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
             assert_eq!(bits(&a), bits(&b), "step {step}");
         }
+    }
+
+    const PREV_MIN: usize = 7;
+    const PREV_MAX: usize = 8;
+    const PREV_MEAN: usize = 9;
+
+    fn oslo() -> TimeZone {
+        TimeZone::get("Europe/Oslo").unwrap()
+    }
+
+    fn day_rule(basis: PrevDayBasis<'_>) -> FeatureRules {
+        FeatureRules {
+            previous_day: basis.into(),
+            ..FeatureRules::default()
+        }
+    }
+
+    /// Every quarter in `[from, to)` at `fill`, then the `marks` on top.
+    fn prices(from: &str, to: &str, fill: f64, marks: &[(&str, f64)]) -> QuarterMap {
+        let (from, to) = (q(from), q(to));
+        let mut fi = QuarterMap::new();
+        let mut at = from;
+        while at < to {
+            fi.insert(at, fill);
+            at = at.offset(QUARTER_MS);
+        }
+        for &(key, value) in marks {
+            assert!(fi.insert(q(key), value).is_some(), "{key}");
+        }
+        fi
+    }
+
+    fn quarters_in(fi: &QuarterMap, from: &str, to: &str) -> usize {
+        fi.range(q(from)..q(to)).count()
+    }
+
+    /// `(min, max, mean)` of the previous day for the quarter `at`.
+    fn previous_day_stats(owned: &Owned, rules: FeatureRules, at: &str) -> (f64, f64, f64) {
+        let ctx = owned.ctx();
+        let index = build_price_index(&ctx, rules);
+        let row = build_feature_vector_indexed(q(at), &ctx, &index);
+        (row[PREV_MIN], row[PREV_MAX], row[PREV_MEAN])
+    }
+
+    #[test]
+    fn the_default_prev_day_basis_is_the_utc_day() {
+        assert_eq!(PrevDayBasis::default(), PrevDayBasis::UtcDay);
+        assert_eq!(FeatureRules::default().previous_day, DayBasis::Utc);
+        assert_eq!(
+            FEATURE_NAMES[PREV_MIN..=PREV_MEAN],
+            ["fi_prev_day_min", "fi_prev_day_max", "fi_prev_day_mean"]
+        );
+    }
+
+    #[test]
+    fn delivery_day_statistics_cover_the_23_hour_day_of_march_2026() {
+        // Delivery day 2026-03-29 runs from 2026-03-28T23:00Z to 2026-03-29T22:00Z.
+        let owned = Owned::new(prices(
+            "2026-03-27T00:00:00Z",
+            "2026-03-31T00:00:00Z",
+            2.0,
+            &[
+                ("2026-03-28T22:45:00Z", 50.0),
+                ("2026-03-28T23:00:00Z", 10.0),
+                ("2026-03-29T21:45:00Z", -4.0),
+                ("2026-03-29T22:00:00Z", -50.0),
+            ],
+        ));
+        let zone = oslo();
+        let delivery = || day_rule(PrevDayBasis::DeliveryDay(&zone));
+        assert_eq!(
+            quarters_in(&owned.fi, "2026-03-28T23:00:00Z", "2026-03-29T22:00:00Z"),
+            92
+        );
+        let march_29 = (-4.0, 10.0, (10.0 - 4.0 + 90.0 * 2.0) / 92.0);
+        assert_eq!(
+            previous_day_stats(&owned, delivery(), "2026-03-30T10:00:00Z"),
+            march_29
+        );
+        assert_eq!(
+            previous_day_stats(&owned, delivery(), "2026-03-29T22:00:00Z"),
+            march_29
+        );
+        // The last quarter of 2026-03-29 reads the 24-hour day 2026-03-28.
+        assert_eq!(
+            previous_day_stats(&owned, delivery(), "2026-03-29T21:45:00Z"),
+            (2.0, 50.0, (95.0 * 2.0 + 50.0) / 96.0)
+        );
+    }
+
+    #[test]
+    fn delivery_day_statistics_cover_the_25_hour_day_of_october_2026() {
+        // Delivery day 2026-10-25 runs from 2026-10-24T22:00Z to 2026-10-25T23:00Z.
+        let owned = Owned::new(prices(
+            "2026-10-23T00:00:00Z",
+            "2026-10-27T00:00:00Z",
+            2.0,
+            &[
+                ("2026-10-24T21:45:00Z", 50.0),
+                ("2026-10-24T22:00:00Z", 10.0),
+                ("2026-10-25T22:45:00Z", -4.0),
+                ("2026-10-25T23:00:00Z", -50.0),
+            ],
+        ));
+        let zone = oslo();
+        let delivery = || day_rule(PrevDayBasis::DeliveryDay(&zone));
+        assert_eq!(
+            quarters_in(&owned.fi, "2026-10-24T22:00:00Z", "2026-10-25T23:00:00Z"),
+            100
+        );
+        let october_25 = (-4.0, 10.0, (10.0 - 4.0 + 98.0 * 2.0) / 100.0);
+        assert_eq!(
+            previous_day_stats(&owned, delivery(), "2026-10-26T10:00:00Z"),
+            october_25
+        );
+        assert_eq!(
+            previous_day_stats(&owned, delivery(), "2026-10-25T23:00:00Z"),
+            october_25
+        );
+        // The last quarter of 2026-10-25 reads the 24-hour day 2026-10-24.
+        assert_eq!(
+            previous_day_stats(&owned, delivery(), "2026-10-25T22:45:00Z"),
+            (2.0, 50.0, (95.0 * 2.0 + 50.0) / 96.0)
+        );
+    }
+
+    #[test]
+    fn at_the_cet_series_start_only_the_delivery_day_basis_reads_a_complete_day() {
+        // The series starts at 2026-02-10T23:00Z, the start of delivery day
+        // 2026-02-11. The last published hour, 2026-02-09T23:00Z to 24:00Z,
+        // is in delivery day 2026-02-10 but in UTC day 2026-02-09.
+        let owned = Owned::new(prices(
+            "2026-02-08T23:00:00Z",
+            "2026-02-10T23:00:00Z",
+            1.0,
+            &[
+                ("2026-02-09T23:00:00Z", 9.0),
+                ("2026-02-09T23:15:00Z", 9.0),
+                ("2026-02-09T23:30:00Z", 9.0),
+                ("2026-02-09T23:45:00Z", 9.0),
+            ],
+        ));
+        assert_eq!(
+            quarters_in(&owned.fi, "2026-02-10T00:00:00Z", "2026-02-11T00:00:00Z"),
+            92
+        );
+        assert_eq!(
+            quarters_in(&owned.fi, "2026-02-09T23:00:00Z", "2026-02-10T23:00:00Z"),
+            96
+        );
+        let first_full_utc_day = "2026-02-11T12:00:00Z";
+        assert_eq!(
+            previous_day_stats(&owned, FeatureRules::default(), first_full_utc_day),
+            (1.0, 1.0, 1.0)
+        );
+        let zone = oslo();
+        assert_eq!(
+            previous_day_stats(
+                &owned,
+                day_rule(PrevDayBasis::DeliveryDay(&zone)),
+                first_full_utc_day
+            ),
+            (1.0, 9.0, (92.0 + 4.0 * 9.0) / 96.0)
+        );
     }
 }

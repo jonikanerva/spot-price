@@ -6,13 +6,14 @@ mod backtest {
     use std::collections::{BTreeMap, BTreeSet};
 
     use jiff::Timestamp;
+    use jiff::tz::TimeZone;
     use spot_price_domain::forecast::{
-        ForecastOptions, ForecastWindow, LatestPublishedRule, QuarterStart,
+        ForecastOptions, ForecastWindow, LatestPublishedRule, PrevDayBasis, QuarterStart,
     };
     use spot_price_tools::backtest::{
-        AsOfMode, BacktestOptions, Better, ForecastVariant, HORIZON_LABELS, HorizonMetrics,
-        HorizonPairedDelta, IssueTimeInputs, MIN_CALIBRATION_WINDOW_DAYS, OriginMetrics,
-        PairedDelta, collect_input_timestamps, compare_optimism, compare_variants,
+        AsOfMode, BacktestOptions, Better, DayBasis, ForecastVariant, HORIZON_LABELS,
+        HorizonMetrics, HorizonPairedDelta, IssueTimeInputs, MIN_CALIBRATION_WINDOW_DAYS,
+        OriginMetrics, PairedDelta, collect_input_timestamps, compare_optimism, compare_variants,
         derive_bands_from_backtest, find_leaking_inputs, forecast_at_issue_time,
         forecast_at_issue_time_with, mae, paired_delta, paired_horizon, reconstruct_issue_time,
         rmae, run_backtest, select_vintages_as_of, smape,
@@ -407,7 +408,8 @@ mod backtest {
     fn the_default_variant_is_the_production_model() {
         let variant = ForecastVariant::default();
         let production = ForecastOptions::default();
-        let options = variant.forecast_options();
+        let oslo = oslo();
+        let options = variant.forecast_options(&oslo);
         assert_eq!(
             options.ridge_lambda.to_bits(),
             production.ridge_lambda.to_bits()
@@ -423,6 +425,8 @@ mod backtest {
         assert!(options.sanity_bound.is_none());
         assert_eq!(options.latest_published, production.latest_published);
         assert_eq!(variant.latest_published, LatestPublishedRule::AtOrBefore);
+        assert_eq!(options.prev_day_basis, production.prev_day_basis);
+        assert_eq!(variant.prev_day_basis, DayBasis::Utc);
         assert_eq!(BacktestOptions::default().variant, variant);
 
         let data = build_data(0.0);
@@ -481,11 +485,37 @@ mod backtest {
             ..ForecastVariant::default()
         };
         assert_eq!(
-            before.forecast_options().latest_published,
+            before.forecast_options(&oslo()).latest_published,
             LatestPublishedRule::Before
         );
         let a = forecast_at_issue_time(&inputs).unwrap();
         let b = forecast_at_issue_time_with(&inputs, before).unwrap();
+        assert_eq!(a.series_start_ms, b.series_start_ms);
+        assert_eq!(a.predicted.len(), b.predicted.len());
+        assert_ne!(a.predicted, b.predicted);
+    }
+
+    fn oslo() -> TimeZone {
+        TimeZone::get("Europe/Oslo").unwrap()
+    }
+
+    #[test]
+    fn the_prev_day_basis_variant_reaches_the_forecast() {
+        let data = build_data(0.0);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
+        let delivery = ForecastVariant {
+            prev_day_basis: DayBasis::Delivery,
+            ..ForecastVariant::default()
+        };
+        let zone = oslo();
+        assert_eq!(
+            delivery.forecast_options(&zone).prev_day_basis,
+            PrevDayBasis::DeliveryDay(&zone)
+        );
+        let a = forecast_at_issue_time(&inputs).unwrap();
+        let b = forecast_at_issue_time_with(&inputs, delivery).unwrap();
+        assert_eq!(a.series_start_ms, ms("2026-02-11T23:00:00Z"));
         assert_eq!(a.series_start_ms, b.series_start_ms);
         assert_eq!(a.predicted.len(), b.predicted.len());
         assert_ne!(a.predicted, b.predicted);

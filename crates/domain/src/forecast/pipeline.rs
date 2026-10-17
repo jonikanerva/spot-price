@@ -6,7 +6,7 @@ use jiff::Timestamp;
 use super::conformal::{CalibratedBands, UtcHour, apply_band};
 use super::conformal_artifact::CALIBRATED_BANDS;
 use super::features::{
-    FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule, NeighborPrices,
+    FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule, NeighborPrices, PrevDayBasis,
     build_feature_vector_indexed, build_price_index, training_matrix_at,
 };
 use super::js::{js_max, js_min};
@@ -52,6 +52,8 @@ pub struct ForecastOptions<'a> {
     pub bands: &'a CalibratedBands,
     /// The served forecast uses [`LatestPublishedRule::AtOrBefore`].
     pub latest_published: LatestPublishedRule,
+    /// The served forecast uses [`PrevDayBasis::UtcDay`].
+    pub prev_day_basis: PrevDayBasis<'a>,
 }
 
 impl Default for ForecastOptions<'static> {
@@ -63,6 +65,7 @@ impl Default for ForecastOptions<'static> {
             ridge_lambda: DEFAULT_RIDGE_LAMBDA,
             bands: &CALIBRATED_BANDS,
             latest_published: LatestPublishedRule::AtOrBefore,
+            prev_day_basis: PrevDayBasis::UtcDay,
         }
     }
 }
@@ -177,6 +180,7 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
         &ctx,
         FeatureRules {
             latest_published: opts.latest_published,
+            previous_day: opts.prev_day_basis.into(),
         },
     );
     let training = training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index));
