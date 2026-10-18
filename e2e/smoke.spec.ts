@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+import { readChart } from "./chart.js";
+
 const TEST_USER = `e2e_${Date.now()}`;
 const TEST_PASS = "testpass1234";
 
@@ -69,9 +71,32 @@ test.describe("Dashboard", () => {
     });
   });
 
-  test("total chart SVG is present", async ({ page }) => {
-    const svg = page.locator("#totalChart");
-    await expect(svg).toBeVisible();
+  test.describe("in a browser zone far from the settings zone", () => {
+    test.use({ timezoneId: "Pacific/Auckland" });
+
+    test("total chart draws today and tomorrow on one local time axis", async ({
+      page,
+    }) => {
+      const svg = page.locator("#totalChart");
+      await expect(svg).toBeVisible();
+      await expect(svg.locator("path")).toHaveCount(2);
+
+      // The seed covers both local days of the default zone in full.
+      const chart = await readChart(page, "totalChart");
+      expect(chart.ticks.map((tick) => tick.label)).toEqual([
+        "00",
+        "06",
+        "12",
+        "18",
+        "00",
+        "06",
+        "12",
+        "18",
+        "00",
+      ]);
+      const [today = [], tomorrow = []] = chart.paths;
+      expect(tomorrow[0]).toEqual(today[today.length - 1]);
+    });
   });
 });
 

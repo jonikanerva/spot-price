@@ -1,8 +1,9 @@
 //! The setup page `GET /` and the API reference page `GET /api/docs`.
 //!
 //! `ui/index.html` and `ui/client.js` are the bytes of the TypeScript page
-//! with placeholders for the generated parts. Prettier must not format them
-//! (`.prettierignore`): a test compares the rendered page byte for byte.
+//! with placeholders for the generated parts, except the chart drawing.
+//! Prettier must not format them (`.prettierignore`): a test compares the
+//! rendered page byte for byte with `tests/fixtures/ui-home.html`.
 
 use axum::extract::State;
 use axum::http::StatusCode;

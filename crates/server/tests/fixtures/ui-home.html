@@ -374,14 +374,34 @@
         markCopied(button)
       }
 
-      const toChartData = (prices, valueKey) =>
+      // HH:MM of an ISO instant in timeZone, not in the time zone of the browser.
+      const timeInZone = (timeZone) => {
+        const format = new Intl.DateTimeFormat('fi-FI', {
+          timeZone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        })
+        return (iso) => {
+          const parts = format.formatToParts(new Date(iso))
+          const part = (type) => (parts.find((item) => item.type === type) || { value: '00' }).value
+          return part('hour') + ':' + part('minute')
+        }
+      }
+
+      // HH:MM of a local time text with an offset, such as localStart.
+      const wallClock = (text) => {
+        const match = /T(\d\d):(\d\d)/.exec(text || '')
+        return match ? match[1] + ':' + match[2] : ''
+      }
+
+      const toChartData = (prices, valueKey, startLabel, endLabel) =>
         prices.map((price) => ({
           value: Number(price[valueKey]),
-          label: new Date(price.deliveryStart).toLocaleTimeString('fi-FI', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          }),
+          start: Date.parse(price.deliveryStart),
+          end: Date.parse(price.deliveryEnd),
+          label: startLabel(price),
+          endLabel: endLabel(price),
         }))
 
       const drawChart = (svgId, tooltipId, todayData, tomorrowData) => {
@@ -412,18 +432,21 @@
         const yMax = Math.ceil((maxValue + span * 0.12) * 10) / 10
         const ySpan = Math.max(yMax - yMin, 0.001)
 
-        const toX = (index) =>
-          paddingLeft +
-          (points.length <= 1 ? 0 : (index / (points.length - 1)) * chartWidth)
+        // The x axis is time: one local day is 23, 24, or 25 hours long.
+        const domainStart = points[0].start
+        const domainEnd = points[points.length - 1].end
+        const domainSpan = Math.max(domainEnd - domainStart, 1)
+        const toX = (time) =>
+          paddingLeft + ((time - domainStart) / domainSpan) * chartWidth
         const toY = (value) =>
           paddingTop + (1 - (value - yMin) / ySpan) * chartHeight
 
-        const pathFor = (series, offset, color) => {
+        const pathFor = (series, color) => {
           if (series.length === 0) return ''
           const d = series
             .map((point, i) => {
               const cmd = i === 0 ? 'M' : 'L'
-              return cmd + toX(offset + i).toFixed(1) + ' ' + toY(point.value).toFixed(1)
+              return cmd + toX(point.start).toFixed(1) + ' ' + toY(point.value).toFixed(1)
             })
             .join(' ')
           return '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" />'
@@ -439,12 +462,17 @@
           }
         })
 
-        const xTicks = ['00', '06', '12', '18', '00']
-        const xGrid = [0, 0.25, 0.5, 0.75, 1].map((factor, i) => {
-          const x = paddingLeft + factor * chartWidth
+        const isTick = (label) => /^(00|06|12|18):00$/.test(label)
+        const lastPoint = points[points.length - 1]
+        const xTicks = points
+          .filter((point) => isTick(point.label))
+          .map((point) => ({ time: point.start, label: point.label.slice(0, 2) }))
+          .concat(isTick(lastPoint.endLabel) ? [{ time: lastPoint.end, label: lastPoint.endLabel.slice(0, 2) }] : [])
+        const xGrid = xTicks.map((tick) => {
+          const x = toX(tick.time)
           return {
             line: '<line x1="' + x.toFixed(1) + '" y1="' + paddingTop + '" x2="' + x.toFixed(1) + '" y2="' + (height - paddingBottom) + '" stroke="#1f2a45" stroke-width="1" />',
-            label: '<text x="' + x.toFixed(1) + '" y="' + (height - 6) + '" text-anchor="middle" fill="#96a4c2" font-size="11">' + xTicks[i] + '</text>',
+            label: '<text x="' + x.toFixed(1) + '" y="' + (height - 6) + '" text-anchor="middle" fill="#96a4c2" font-size="11">' + tick.label + '</text>',
           }
         })
 
@@ -458,15 +486,16 @@
           '<line x1="' + paddingLeft + '" y1="' + paddingTop + '" x2="' + paddingLeft + '" y2="' + (height - paddingBottom) + '" stroke="#2b3655" stroke-width="1" />' +
           yGrid.map((tick) => tick.label).join('') +
           xGrid.map((tick) => tick.label).join('') +
-          pathFor(todayData, 0, '#5dd5ff') +
-          pathFor(tomorrowData, todayData.length, '#7b6bff') +
+          pathFor(todayData.concat(tomorrowData.slice(0, 1)), '#5dd5ff') +
+          pathFor(tomorrowData, '#7b6bff') +
           '<line id="' + crosshairId + '" x1="0" y1="' + paddingTop + '" x2="0" y2="' + (height - paddingBottom) + '" stroke="#7f8fb6" stroke-dasharray="3 3" stroke-width="1" visibility="hidden" />'
 
         const crosshair = document.getElementById(crosshairId)
         const handleHover = (clientX) => {
           const rect = svg.getBoundingClientRect()
           const x = clientX - rect.left
-          const index = Math.round(((x - paddingLeft) / chartWidth) * (points.length - 1))
+          const time = domainStart + ((x - paddingLeft) / chartWidth) * domainSpan
+          const index = time < domainStart ? -1 : points.findIndex((point) => time < point.end)
           if (index < 0 || index >= points.length) {
             if (tooltip) tooltip.style.display = 'none'
             if (crosshair) crosshair.setAttribute('visibility', 'hidden')
@@ -474,7 +503,7 @@
           }
 
           const point = points[index]
-          const xPos = toX(index)
+          const xPos = toX(point.start)
           if (crosshair) {
             crosshair.setAttribute('x1', xPos.toFixed(1))
             crosshair.setAttribute('x2', xPos.toFixed(1))
@@ -718,8 +747,11 @@
           return
         }
 
-        const today = toChartData(response.data.today || [], 'spotCentsKwh')
-        const tomorrow = toChartData(response.data.tomorrow || [], 'spotCentsKwh')
+        const inZone = timeInZone(areaTimezoneMap[response.data.area])
+        const startLabel = (price) => inZone(price.deliveryStart)
+        const endLabel = (price) => inZone(price.deliveryEnd)
+        const today = toChartData(response.data.today || [], 'spotCentsKwh', startLabel, endLabel)
+        const tomorrow = toChartData(response.data.tomorrow || [], 'spotCentsKwh', startLabel, endLabel)
         drawChart('publicChart', 'publicTooltip', today, tomorrow)
         setStatus(
           'publicStatus',
@@ -770,8 +802,10 @@
           return
         }
 
-        const today = toChartData(response.data.today || [], 'totalCentsKwh')
-        const tomorrow = toChartData(response.data.tomorrow || [], 'totalCentsKwh')
+        const startLabel = (price) => wallClock(price.localStart)
+        const endLabel = (price) => wallClock(price.localEnd)
+        const today = toChartData(response.data.today || [], 'totalCentsKwh', startLabel, endLabel)
+        const tomorrow = toChartData(response.data.tomorrow || [], 'totalCentsKwh', startLabel, endLabel)
         drawChart('totalChart', 'totalTooltip', today, tomorrow)
         setStatus('totalStatus', 'ok', response.data.tomorrowAvailable ? 'Today + tomorrow loaded' : 'Tomorrow not yet available')
       }

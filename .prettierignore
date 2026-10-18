@@ -4,7 +4,7 @@ node_modules/
 data/
 .worktrees/
 pnpm-lock.yaml
-# Byte-exact copies of the TypeScript UI output (crates/server tests compare bytes).
+# The setup UI sources and their rendered page (crates/server tests compare bytes).
 crates/server/src/http/ui/
 crates/server/tests/fixtures/ui-home.html
 contract/openapi.json
