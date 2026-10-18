@@ -326,7 +326,7 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | tracing / tracing-subscriber | 0.1.44 / 0.3.23    | Structured logs; the formatter is first-party (§8)                                 |
 | utoipa / utoipa-axum         | 6.0.0 / 0.3.0      | OpenAPI 3.1 document of the routes                                                 |
 | scrypt                       | 0.12.0             | Better Auth password hashes (N=16384, r=16, p=1, 64 bytes)                         |
-| unicode-normalization        | 0.1.25             | NFKC of a password, like `String.prototype.normalize`                              |
+| unicode-normalization        | 0.1.26             | NFKC of a password, like `String.prototype.normalize`                              |
 | subtle                       | 2.6.1              | Constant-time comparison of a password hash                                        |
 | sha2                         | 0.11.1             | SHA-256 of a stored session token                                                  |
 | getrandom                    | 0.4.3              | Random tokens, API keys, ids, and salts                                            |
