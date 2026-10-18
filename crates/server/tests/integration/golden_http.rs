@@ -242,7 +242,7 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
 /// The reason of each `forecast-values` entry: the served forecast trains
 /// `fi_latest_published` on the last FI price strictly before each quarter,
 /// and the TypeScript bodies used the price at or before it.
-const FORECAST_BEFORE_RULE: &str = "the forecast trains fi_latest_published on the last FI price strictly before each quarter, so only the estimate numbers differ; owner decision: https://github.com/jonikanerva/spot-price/issues/120#issuecomment-6246267911";
+const FORECAST_BEFORE_RULE: &str = "the forecast trains fi_latest_published on the last FI price strictly before each quarter, so only the estimate numbers differ; owner decision: https://github.com/jonikanerva/spot-price/issues/120#issuecomment-6246267911, change: https://github.com/jonikanerva/spot-price/pull/130";
 
 /// The forecast entry fields that hold estimate numbers. A `forecast-values`
 /// difference may change only these values.
