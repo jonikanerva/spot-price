@@ -145,7 +145,11 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   `/health` keep the TypeScript wire format byte for byte
   (docs/adr/0003). `crates/server/tests/golden/http/` holds 91 recorded cases
   of the TypeScript service; `golden_http.rs` replays them. The test lists
-  each intentional difference and fails when one stops occurring.
+  each intentional difference and fails when one stops occurring. The
+  `forecast-values` kind accepts a forecast body that equals the recorded
+  body byte for byte after it masks the `estimated*CentsKwh` values; each
+  masked value must be a finite JSON number. The forecast training rule
+  (`LatestPublishedRule::Before`) differs from the TypeScript service.
 - `contract/openapi.json` is the export of `spot-price export-openapi`. The
   `contract:check` task fails on drift. `contract.rs` compares it with the
   TypeScript document field by field.
@@ -496,7 +500,9 @@ service. The TypeScript service is gone from the tree; regenerate them only
 from the port PR's history. Exception: the synthetic backtest sections of
 `crates/tools/tests/golden/backtest_expected.json` come from the Rust tools,
 because the backtest now follows the served forecast. Their README gives the
-regeneration command. A golden change is a contract change.
+regeneration command. The HTTP forecast bodies stay TypeScript output; their
+estimate numbers differ through `forecast-values` entries (§2.1). A golden
+change is a contract change.
 
 ---
 
