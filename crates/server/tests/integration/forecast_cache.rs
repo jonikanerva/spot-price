@@ -313,14 +313,20 @@ async fn a_price_run_that_stores_prices_recomputes_the_forecast(pool: PgPool) {
     let body = nordpool_body("2026-10-25T00:00:00Z");
     let server = FakeServer::start(move |_| json(StatusCode::OK, &body)).await;
     let context = context(&pool, &server);
+    // The seed gives every price one fixed `fetched_at`; a written row gets
+    // the database clock.
+    let written = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM prices \
+             WHERE area = 'FI' AND fetched_at <> '2026-10-23T11:02:00Z'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(written().await, 0);
     jobs::price_fetch(&context, "test").await;
-    let stored: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM prices WHERE area = 'FI' AND delivery_start >= '2026-10-25T00:00:00Z'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert!(stored > 0, "the run stores prices");
+    assert!(written().await > 0, "the run stores prices");
     assert!(context.forecast.current().is_some());
 }
 
