@@ -157,6 +157,33 @@ pub async fn get_latest_delivery_start(
     Ok(latest.map(jiff_sqlx::Timestamp::to_jiff))
 }
 
+/// The newest `fetched_at` of the prices of `area` with `delivery_start` in
+/// `[start, end)`, if any. The upsert changes `fetched_at` only when a row
+/// changes (STACK.md §5), so this is when the newest price data arrived.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Query`] when the query fails.
+pub async fn get_latest_fetched_at_by_range(
+    pool: &PgPool,
+    start: Timestamp,
+    end: Timestamp,
+    area: Area,
+) -> Result<Option<Timestamp>, StoreError> {
+    let latest = sqlx::query_scalar!(
+        r#"
+        SELECT MAX(fetched_at) FROM prices
+        WHERE area = $1 AND delivery_start >= $2 AND delivery_start < $3
+        "#,
+        area.code(),
+        start.to_sqlx(),
+        end.to_sqlx(),
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(latest.map(jiff_sqlx::Timestamp::to_jiff))
+}
+
 /// The number of prices of `area` with `delivery_start` in `[start, end)`.
 ///
 /// # Errors

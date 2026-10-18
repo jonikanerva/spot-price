@@ -397,11 +397,30 @@ or the request path. Runs of one job never overlap. All jobs run once at
 start. These are the only allowed background tasks; a new one needs an
 entry here.
 
-| Job               | Schedule                                                                          | Work                                                                                                                                      |
-| ----------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Day-ahead prices  | `0 */2 * * *` UTC, plus `*/10 12-13 * * *` Europe/Oslo until tomorrow is complete | Nord Pool for today and tomorrow (UTC dates); skip a date when every area has at least `MIN_ENTRIES_PER_AREA` (23) rows. Deadline 300 s.  |
-| Fingrid grid data | `0 * * * *` UTC, only with `FINGRID_API_KEY`                                      | Actuals (75, 124) upsert and prune; forecast vintages (245, 165) append and prune (§5). Deadline 120 s.                                   |
-| OpenWeatherMap    | `0 * * * *` UTC, only with `OPENWEATHERMAP_API_KEY`                               | Hourly and daily blocks for two FI points, stored separately; no pruning when every point failed. About 48 calls per day. Deadline 120 s. |
+| Job                | Schedule                                                                          | Work                                                                                                                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Day-ahead prices   | `0 */2 * * *` UTC, plus `*/10 12-13 * * *` Europe/Oslo until tomorrow is complete | Nord Pool for today and tomorrow (UTC dates); skip a date when every area has at least `MIN_ENTRIES_PER_AREA` (23) rows. After a successful run, recompute the forecast. Deadline 300 s.     |
+| Fingrid grid data  | `0 * * * *` UTC, only with `FINGRID_API_KEY`                                      | Actuals (75, 124) upsert and prune; forecast vintages (245, 165) append and prune (§5). After a run that stored data, recompute the forecast. Deadline 120 s.                                |
+| OpenWeatherMap     | `0 * * * *` UTC, only with `OPENWEATHERMAP_API_KEY`                               | Hourly and daily blocks for two FI points, stored separately; no pruning when every point failed. About 48 calls per day. Deadline 120 s.                                                    |
+| Forecast recompute | Once at start (deadline 60 s), then after the price and Fingrid runs above        | Read the forecast inputs (§5), run the model, and swap the result into `ForecastCache` (`std::sync::RwLock<Option<Arc<Snapshot>>>`). A failure keeps the previous result and logs a warning. |
+
+- **Precomputed forecast (#127):** the model result does not depend on the
+  user. `GET /api/v1/price/forecast` serves the result of `ForecastCache` and
+  applies the contract terms and the time zone of the user per request. The
+  recompute runs in the job that triggers it, after its writes; refreshes
+  are serialised, so an older build cannot replace a newer result. When the
+  cache is empty, or its window came from the clock (no FI price exists), the
+  handler computes per request with the same reads and does not store the
+  result.
+- **`generatedAt` of a forecast:** the data freshness, not the request
+  instant. It is the later of the newest `fingrid_forecasts.issued_at` of
+  datasets 245 and 165 and the newest `prices.fetched_at` of FI prices with
+  `delivery_start` in `[history_start, series_start)`. When neither exists,
+  it is the instant of the computation. The responses without a computation
+  (settings not found, area other than FI) keep the request instant.
+- **Staleness:** when the newest grid forecast issuance is older than 2 h,
+  the recompute and the first serve of that result log a warning with the
+  code `forecast_stale`.
 
 - **Shutdown:** SIGTERM or SIGINT stops accepting connections and signals the
   jobs. Active requests get 10 s; jobs get 5 s, then they are aborted; the

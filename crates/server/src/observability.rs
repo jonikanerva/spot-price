@@ -20,7 +20,7 @@ use crate::config::LogFormat;
 /// The fields whose values may appear in the log. A value of these fields
 /// must never hold an API key, a password, a token, an e-mail address, an IP
 /// address, a request body, or free text from a user.
-pub const ALLOWED_FIELDS: [&str; 29] = [
+pub const ALLOWED_FIELDS: [&str; 31] = [
     "message",
     "request_id",
     "method",
@@ -50,6 +50,9 @@ pub const ALLOWED_FIELDS: [&str; 29] = [
     "tomorrow_available",
     "applied",
     "user_id",
+    // Instants of public market and grid data (the forecast, #127).
+    "generated_at",
+    "grid_issued_at",
 ];
 
 /// Installs the global subscriber. Events of this service at INFO and above
