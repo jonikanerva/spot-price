@@ -1,7 +1,7 @@
 //! The background jobs: the Nord Pool price fetch, the Fingrid fetch, and the
 //! weather collection, plus their schedules. These are the only background
 //! tasks of the service (STACK.md §9). The price and Fingrid jobs also
-//! recompute the precomputed forecast after a successful run
+//! recompute the precomputed forecast after a run that stored data
 //! (`crate::forecast_cache`).
 //!
 //! Each job logs its own outcome and never returns an error to the
@@ -36,7 +36,7 @@ pub struct JobContext {
     pub weather: WeatherClient,
     pub clock: Arc<dyn Clock>,
     /// The forecast result that the API serves. The price and Fingrid jobs
-    /// recompute it after a successful run.
+    /// recompute it after a run that stored data.
     pub forecast: ForecastCache,
 }
 
@@ -94,13 +94,15 @@ async fn recompute_forecast(context: &JobContext, trigger: &'static str) {
         .await;
 }
 
-/// Runs the price fetch and logs the outcome, then recomputes the forecast
-/// after a successful run. Returns whether tomorrow's prices are stored; a
-/// failure returns false.
+/// Runs the price fetch and logs the outcome. After a run that stored
+/// prices, it recomputes the forecast. Returns whether tomorrow's prices are
+/// stored; a failure returns false.
 pub async fn price_fetch(context: &JobContext, label: &'static str) -> bool {
     match prices::run_fetch_job(&context.pool, &context.nordpool, context.clock.now()).await {
         Ok(result) => {
-            recompute_forecast(context, "prices").await;
+            if result.results.iter().any(|r| r.stored > 0) {
+                recompute_forecast(context, "prices").await;
+            }
             let stored: usize = result.results.iter().map(|r| r.stored).sum();
             tracing::info!(
                 job = "prices",
@@ -130,8 +132,8 @@ pub async fn price_fetch(context: &JobContext, label: &'static str) -> bool {
 }
 
 /// Runs the Fingrid fetch and logs the outcome. After a run that stored
-/// data, it recomputes the forecast. A degraded or failed run writes nothing,
-/// so the forecast stays.
+/// data, it recomputes the forecast. A degraded run writes nothing. A failed
+/// run can store actuals before it fails; the next run recomputes.
 pub async fn fingrid_fetch(context: &JobContext, key: &Secret, label: &'static str) {
     let now = context.clock.now();
     match fingrid::run_forecast_fetch_job(&context.pool, &context.fingrid, key, now).await {

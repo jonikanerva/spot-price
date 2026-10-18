@@ -1,4 +1,4 @@
-//! The precomputed FI forecast (STACK.md §9, #127).
+//! The precomputed FI forecast (STACK.md §9).
 //!
 //! The model result does not depend on the user: only the contract terms and
 //! the time zone do, and the handler applies them per request. So the
@@ -6,14 +6,14 @@
 //! from memory:
 //!
 //! - at start-up,
-//! - after each successful price run (a new published price moves the
-//!   forecast window),
+//! - after each price run that stored prices (a new published price moves
+//!   the forecast window),
 //! - after each Fingrid run that stored data.
 //!
 //! A new result replaces the old one with one atomic swap of an `Arc`. A
 //! reader that holds the old `Arc` keeps a complete result. A failed
 //! recompute keeps the previous result and logs a warning. When no result
-//! exists yet, the handler computes one per request, as before.
+//! exists yet, the handler computes one per request.
 //!
 //! The read queries are the live reads of STACK.md §5, unchanged.
 

@@ -397,14 +397,14 @@ or the request path. Runs of one job never overlap. All jobs run once at
 start. These are the only allowed background tasks; a new one needs an
 entry here.
 
-| Job                | Schedule                                                                          | Work                                                                                                                                                                                         |
-| ------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Day-ahead prices   | `0 */2 * * *` UTC, plus `*/10 12-13 * * *` Europe/Oslo until tomorrow is complete | Nord Pool for today and tomorrow (UTC dates); skip a date when every area has at least `MIN_ENTRIES_PER_AREA` (23) rows. After a successful run, recompute the forecast. Deadline 300 s.     |
-| Fingrid grid data  | `0 * * * *` UTC, only with `FINGRID_API_KEY`                                      | Actuals (75, 124) upsert and prune; forecast vintages (245, 165) append and prune (§5). After a run that stored data, recompute the forecast. Deadline 120 s.                                |
-| OpenWeatherMap     | `0 * * * *` UTC, only with `OPENWEATHERMAP_API_KEY`                               | Hourly and daily blocks for two FI points, stored separately; no pruning when every point failed. About 48 calls per day. Deadline 120 s.                                                    |
-| Forecast recompute | Once at start (deadline 60 s), then after the price and Fingrid runs above        | Read the forecast inputs (§5), run the model, and swap the result into `ForecastCache` (`std::sync::RwLock<Option<Arc<Snapshot>>>`). A failure keeps the previous result and logs a warning. |
+| Job                | Schedule                                                                          | Work                                                                                                                                                                                             |
+| ------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Day-ahead prices   | `0 */2 * * *` UTC, plus `*/10 12-13 * * *` Europe/Oslo until tomorrow is complete | Nord Pool for today and tomorrow (UTC dates); skip a date when every area has at least `MIN_ENTRIES_PER_AREA` (23) rows. After a run that stored prices, recompute the forecast. Deadline 300 s. |
+| Fingrid grid data  | `0 * * * *` UTC, only with `FINGRID_API_KEY`                                      | Actuals (75, 124) upsert and prune; forecast vintages (245, 165) append and prune (§5). After a run that stored data, recompute the forecast. Deadline 120 s.                                    |
+| OpenWeatherMap     | `0 * * * *` UTC, only with `OPENWEATHERMAP_API_KEY`                               | Hourly and daily blocks for two FI points, stored separately; no pruning when every point failed. About 48 calls per day. Deadline 120 s.                                                        |
+| Forecast recompute | Once at start (deadline 60 s), then after the price and Fingrid runs above        | Read the forecast inputs (§5), run the model, and swap the result into `ForecastCache` (`std::sync::RwLock<Option<Arc<Snapshot>>>`). A failure keeps the previous result and logs a warning.     |
 
-- **Precomputed forecast (#127):** the model result does not depend on the
+- **Precomputed forecast:** the model result does not depend on the
   user. `GET /api/v1/price/forecast` serves the result of `ForecastCache` and
   applies the contract terms and the time zone of the user per request. The
   recompute runs in the job that triggers it, after its writes; refreshes

@@ -1,8 +1,8 @@
-//! The precomputed forecast (#127): the swap, the start-up computation, the
+//! The precomputed forecast: the swap, the start-up computation, the
 //! job triggers, a failed recompute, and the `generatedAt` rule. The data is
 //! the golden seed of the TypeScript cases.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::body::Body;
@@ -17,8 +17,12 @@ use spot_price_server::lifecycle::startup_forecast;
 use sqlx::PgPool;
 use tokio::sync::watch;
 use tower::ServiceExt as _;
+use tracing::field::{Field, Visit};
+use tracing::instrument::WithSubscriber as _;
+use tracing::{Event, Level, Subscriber};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
-use crate::common::{FakeServer, fingrid, hours, json, nordpool, raw, ts, weather};
+use crate::common::{FakeServer, fingrid, hours, json, minutes, nordpool, raw, ts, weather};
 
 const NOW: &str = "2026-10-24T09:07:30Z";
 const ALICE: &str = "sp_a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
@@ -26,6 +30,53 @@ const BOB: &str = "sp_b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2
 /// The newest vintage of the seed.
 const SEED_ISSUED: &str = "2026-10-24T08:00:00.000Z";
 const SEED: &str = include_str!("../golden/http/seed.sql");
+
+/// The level, the message, and the `code` field of one event.
+type Recorded = (Level, String, Option<String>);
+
+/// The events of this service in the futures that run with this layer.
+#[derive(Clone, Default)]
+struct Events(Arc<Mutex<Vec<Recorded>>>);
+
+impl Events {
+    fn take(&self) -> Vec<Recorded> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+#[derive(Default)]
+struct EventFields {
+    message: String,
+    code: Option<String>,
+}
+
+impl Visit for EventFields {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "code" {
+            self.code = Some(value.to_owned());
+        }
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{value:?}");
+        }
+    }
+}
+
+impl<S: Subscriber> Layer<S> for Events {
+    fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+        if !event.metadata().target().starts_with("spot_price_server") {
+            return;
+        }
+        let mut fields = EventFields::default();
+        event.record(&mut fields);
+        self.0
+            .lock()
+            .unwrap()
+            .push((*event.metadata().level(), fields.message, fields.code));
+    }
+}
 
 /// Loads the seed with a fixed `fetched_at` for every price.
 async fn seed(pool: &PgPool) {
@@ -158,9 +209,22 @@ async fn a_failed_recompute_keeps_the_previous_result(pool: PgPool) {
         .execute(&pool)
         .await
         .unwrap();
-    let error = cache.refresh(&pool, ts(NOW), "test").await.unwrap_err();
+    let events = Events::default();
+    let error = cache
+        .refresh(&pool, ts(NOW), "test")
+        .with_subscriber(tracing_subscriber::registry().with(events.clone()))
+        .await
+        .unwrap_err();
     assert_eq!(error.code(), "query");
     assert!(Arc::ptr_eq(&before, &cache.current().unwrap()));
+    assert_eq!(
+        events.take(),
+        [(
+            Level::WARN,
+            "forecast recompute failed; the previous result stays".to_owned(),
+            Some("query".to_owned()),
+        )]
+    );
 
     let (status, body_after) = forecast(&app, ALICE).await;
     assert_eq!(status, StatusCode::OK);
@@ -228,14 +292,46 @@ async fn the_start_up_task_fills_the_cache(pool: PgPool) {
     assert_eq!(snapshot.built_at, ts(NOW));
 }
 
+/// A Nord Pool body with 96 FI quarters from `start`.
+fn nordpool_body(start: &str) -> Value {
+    let entries: Vec<Value> = (0..96)
+        .map(|i| {
+            let delivery_start = minutes(ts(start), 15 * i);
+            serde_json::json!({
+                "deliveryStart": delivery_start.to_string(),
+                "deliveryEnd": minutes(delivery_start, 15).to_string(),
+                "entryPerArea": {"FI": 30.0}
+            })
+        })
+        .collect();
+    serde_json::json!({"multiAreaEntries": entries})
+}
+
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
-async fn a_successful_price_run_recomputes_the_forecast(pool: PgPool) {
+async fn a_price_run_that_stores_prices_recomputes_the_forecast(pool: PgPool) {
     seed(&pool).await;
-    // Nord Pool has nothing new; the run still succeeds.
+    let body = nordpool_body("2026-10-25T00:00:00Z");
+    let server = FakeServer::start(move |_| json(StatusCode::OK, &body)).await;
+    let context = context(&pool, &server);
+    jobs::price_fetch(&context, "test").await;
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM prices WHERE area = 'FI' AND delivery_start >= '2026-10-25T00:00:00Z'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(stored > 0, "the run stores prices");
+    assert!(context.forecast.current().is_some());
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_price_run_that_stores_nothing_keeps_the_forecast(pool: PgPool) {
+    seed(&pool).await;
+    // Nord Pool has nothing new; the run succeeds and stores no row.
     let server = FakeServer::start(|_| raw(StatusCode::OK, "")).await;
     let context = context(&pool, &server);
     jobs::price_fetch(&context, "test").await;
-    assert!(context.forecast.current().is_some());
+    assert!(context.forecast.current().is_none());
 }
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
