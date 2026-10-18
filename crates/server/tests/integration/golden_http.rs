@@ -189,7 +189,11 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
         "cookie",
         "a session older than 1 day since its last renewal gets the expiry now + 7 days and the cookie again; the TypeScript service never renewed",
     ),
+    ("root-html", 0, "body", ROOT_HTML_CHART),
+    ("root-html", 1, "body", ROOT_HTML_CHART),
 ];
+
+const ROOT_HTML_CHART: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
