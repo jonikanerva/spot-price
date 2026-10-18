@@ -462,11 +462,11 @@ async fn the_release_precheck_counts_the_settings_that_the_service_rejects(pool:
     );
 }
 
-/// The indexes that migration 3 drops (#128). Each duplicates another index.
+/// The indexes that migration 3 drops. Each duplicates another index.
 const DROPPED_INDEXES: [&str; 3] = [
     "idx_fingrid_actuals_dataset_start",
-    "idx_api_keys_user_id",
     "idx_fingrid_forecasts_issued",
+    "idx_api_keys_user_id",
 ];
 
 async fn index_exists(pool: &PgPool, name: &str) -> bool {
@@ -508,5 +508,58 @@ async fn the_redundant_indexes_are_dropped_on_an_empty_database(pool: PgPool) {
     db::migrate(&pool).await.unwrap();
     for name in DROPPED_INDEXES {
         assert!(!index_exists(&pool, name).await, "{name}");
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_held_table_lock_fails_migration_3_and_keeps_the_indexes(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    db::migrate(&pool).await.unwrap();
+    // Back to the state before migration 3: the ledger without version 3
+    // and the three indexes of the baseline.
+    sqlx::raw_sql(
+        "DELETE FROM _sqlx_migrations WHERE version = 3;
+         CREATE INDEX idx_fingrid_actuals_dataset_start
+           ON fingrid_actuals (dataset_id, start_time);
+         CREATE INDEX idx_fingrid_forecasts_issued ON fingrid_forecasts (issued_at);
+         CREATE INDEX idx_api_keys_user_id ON api_keys(user_id);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // An open write transaction of the running release, like the Fingrid job.
+    let mut writer = pool.begin().await.unwrap();
+    sqlx::raw_sql("LOCK TABLE fingrid_forecasts IN ROW EXCLUSIVE MODE")
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(20), db::migrate(&pool))
+        .await
+        .expect("lock_timeout ends the wait");
+    assert_eq!(
+        result,
+        Err(MigrationFailure {
+            kind: MigrationFailureKind::Execute,
+            sqlstate: Some("55P03".to_owned()),
+            reason: None,
+        })
+    );
+    assert!(started.elapsed() >= Duration::from_secs(4));
+    for name in DROPPED_INDEXES {
+        assert!(index_exists(&pool, name).await, "{name} after the failure");
+    }
+    let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY 1")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, [1, 2]);
+
+    writer.rollback().await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    for name in DROPPED_INDEXES {
+        assert!(!index_exists(&pool, name).await, "{name} after the retry");
     }
 }

@@ -266,9 +266,10 @@ result.
   is idempotent and changes nothing on the production schema; the old ledger
   `_migrations` stays. `0002_app_sessions.sql` adds the session table.
   `0003_drop_redundant_indexes.sql` drops three indexes that duplicate other
-  indexes (#128); after it, the production catalog differs from
-  `fixtures/schema-snapshot.txt` by exactly these three indexes. The
-  migration runs as a separate step before the server starts (§15).
+  indexes, with a `lock_timeout` of 5 s; after it, the production catalog
+  differs from `fixtures/schema-snapshot.txt` by exactly these three
+  indexes. The migration runs as a separate step before the server starts
+  (§15).
   `serve` refuses to start on an unmigrated database. New migrations MUST
   stay compatible with the running release and MUST NOT break the
   TypeScript revert path until the owner ends it (docs/adr/0001).
@@ -562,7 +563,8 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
        psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
      ```
 
-   - The snapshot shows no difference. The precheck prints
+   - The snapshot shows no difference. After migration 3, the only
+     difference is the three indexes that it drops (§5). The precheck prints
      `typescript_migrations|1,2,3,4,5,6,7`, the server version, and `0` for
      each `user_settings_invalid_*` count. A non-zero count is a user for
      whom the Rust service answers 500. It blocks the merge until the owner
@@ -595,10 +597,15 @@ and an API key.
 
 ### Rollback and recovery
 
-- **Immediate:** roll back to the known-good deployment in Railway.
-- **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. The
-  revert removes `railpack.json`, so Railpack detects the Node service
-  again.
+- **Immediate:** roll back to the known-good deployment in Railway. A Rust
+  deployment that does not know every applied migration stops at `migrate`
+  (`migrate_version`), and Railway keeps the active deployment. So after
+  migration 3, a rollback to a Rust deployment before it fails. Then use a
+  forward fix, a code revert that keeps the migration files, or the
+  TypeScript revert.
+- **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. A
+  revert of the port removes `railpack.json`, so Railpack detects the Node
+  service again. A revert of a later change keeps its migration files.
 - **Data:** a revert needs no data change (docs/adr/0001). Sessions created
   by the Rust service end at a revert; users sign in again. `_sqlx_migrations` and `app_sessions` stay and are
   harmless.
