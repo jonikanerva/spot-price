@@ -45,15 +45,15 @@ Posture`). Price and grid data are public and can be fetched again. Most
 
 ### Not applicable (with reasons)
 
-| Profile part                                                                     | Reason                                                                                                                                                 |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Frontend SPA: TypeScript 7, React, Vite, TanStack, Oxlint, Vitest (§1, §2, §2.4) | The UI is a setup page only (`VISION.md`). `crates/server/src/http/ui/` holds the HTML and the inline script of the TypeScript service, byte for byte. |
-| Hey API client and Zod validators (§2.1 steps 3–5)                               | No first-party client consumes the API. Home Assistant and scripts are the clients. `contract/openapi.json` is committed and drift-checked.            |
-| RFC 9457 Problem Details (§2.2)                                                  | The v1 contract keeps `{"error": "..."}` (docs/adr/0003). A change needs `/api/v2`.                                                                    |
-| OIDC (§2.5)                                                                      | The product uses local username and password accounts (docs/adr/0002).                                                                                 |
-| Exact decimals (§7)                                                              | Prices are `DOUBLE PRECISION` and binary floats with JavaScript rounding (docs/adr/0003).                                                              |
-| axe accessibility checks (§11)                                                   | Not adopted in the port. The page is unchanged from the TypeScript service. The keyboard and contrast thresholds of §11 stay review checks.            |
-| proptest, uuid, rust_decimal, Tailwind                                           | No current need. Golden files and seeded sweeps cover the rounding rules.                                                                              |
+| Profile part                                                                     | Reason                                                                                                                                                            |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend SPA: TypeScript 7, React, Vite, TanStack, Oxlint, Vitest (§1, §2, §2.4) | The UI is a setup page only (`VISION.md`). `crates/server/src/http/ui/` holds the HTML and the inline script of the TypeScript service, except the chart drawing. |
+| Hey API client and Zod validators (§2.1 steps 3–5)                               | No first-party client consumes the API. Home Assistant and scripts are the clients. `contract/openapi.json` is committed and drift-checked.                       |
+| RFC 9457 Problem Details (§2.2)                                                  | The v1 contract keeps `{"error": "..."}` (docs/adr/0003). A change needs `/api/v2`.                                                                               |
+| OIDC (§2.5)                                                                      | The product uses local username and password accounts (docs/adr/0002).                                                                                            |
+| Exact decimals (§7)                                                              | Prices are `DOUBLE PRECISION` and binary floats with JavaScript rounding (docs/adr/0003).                                                                         |
+| axe accessibility checks (§11)                                                   | Not adopted in the port. Only the chart drawing differs from the TypeScript page. The keyboard and contrast thresholds of §11 stay review checks.                 |
+| proptest, uuid, rust_decimal, Tailwind                                           | No current need. Golden files and seeded sweeps cover the rounding rules.                                                                                         |
 
 ### Repository layout and boundaries
 
@@ -145,7 +145,11 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   `/health` keep the TypeScript wire format byte for byte
   (docs/adr/0003). `crates/server/tests/golden/http/` holds 91 recorded cases
   of the TypeScript service; `golden_http.rs` replays them. The test lists
-  each intentional difference and fails when one stops occurring.
+  each intentional difference and fails when one stops occurring. The
+  `forecast-values` kind accepts a forecast body that equals the recorded
+  body byte for byte after it masks the `estimated*CentsKwh` values; each
+  masked value must be a finite JSON number. The forecast training rule
+  (`LatestPublishedRule::Before`) differs from the TypeScript service.
 - `contract/openapi.json` is the export of `spot-price export-openapi`. The
   `contract:check` task fails on drift. `contract.rs` compares it with the
   TypeScript document field by field.
@@ -454,7 +458,7 @@ entry here.
 ## 11. Design guidelines & UX thresholds
 
 The web UI is a setup surface only (`VISION.md`). It is the page of the
-TypeScript service, byte for byte. It must be usable without a pointer.
+TypeScript service, except the chart drawing. It must be usable without a pointer.
 
 - **Design authority:** WCAG 2.2 AA and native HTML semantics.
 - **Thresholds:** pointer target size ≥ 24×24 CSS px (WCAG 2.5.8); text
@@ -515,7 +519,9 @@ service. The TypeScript service is gone from the tree; regenerate them only
 from the port PR's history. Exception: the synthetic backtest sections of
 `crates/tools/tests/golden/backtest_expected.json` come from the Rust tools,
 because the backtest now follows the served forecast. Their README gives the
-regeneration command. A golden change is a contract change.
+regeneration command. The HTTP forecast bodies stay TypeScript output; their
+estimate numbers differ through `forecast-values` entries (§2.1). A golden
+change is a contract change.
 
 ---
 

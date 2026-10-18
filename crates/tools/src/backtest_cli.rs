@@ -51,7 +51,7 @@ pub const MAX_EXTENSION_WEEKS: u32 = (FLOOR_HISTORY_DAYS / 7) as u32;
 const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>] [--compare] [--db-url <url>] [--ab <key=value[,key=value]>]
   --ab  paired A/B: A = production model, B = production with these overrides, scored on the same origins.
         keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks,
-        latest_published (at_or_before | before), prev_day_basis (utc | delivery). Not with --compare.";
+        latest_published (before | at_or_before), prev_day_basis (utc | delivery). Not with --compare.";
 
 /// One stored day-ahead price in EUR/MWh.
 #[derive(Debug, Clone, PartialEq)]
@@ -126,7 +126,7 @@ pub fn parse_window_days(raw: Option<&str>) -> Result<i64, ToolError> {
 /// `--ab <key=value[,key=value]>`: the production options with overrides.
 /// `ridge_lambda` is a finite number ≥ 0. The `*_extension_weeks` keys are
 /// whole numbers in `0..=MAX_EXTENSION_WEEKS`. `latest_published` is
-/// `at_or_before` or `before`. `prev_day_basis` is `utc` or `delivery`. A key
+/// `before` or `at_or_before`. `prev_day_basis` is `utc` or `delivery`. A key
 /// may appear once.
 ///
 /// # Errors
@@ -200,7 +200,7 @@ fn parse_latest_published(value: &str) -> Result<LatestPublishedRule, ToolError>
         "at_or_before" => Ok(LatestPublishedRule::AtOrBefore),
         "before" => Ok(LatestPublishedRule::Before),
         _ => Err(ToolError::Argument(format!(
-            "--ab latest_published must be at_or_before or before, got \"{value}\""
+            "--ab latest_published must be before or at_or_before, got \"{value}\""
         ))),
     }
 }

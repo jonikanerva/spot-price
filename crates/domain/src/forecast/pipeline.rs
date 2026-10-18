@@ -50,7 +50,7 @@ pub struct ForecastOptions<'a> {
     pub ridge_lambda: f64,
     /// Bands go only on quarters with a real prediction.
     pub bands: &'a CalibratedBands,
-    /// The served forecast uses [`LatestPublishedRule::AtOrBefore`].
+    /// The served forecast uses [`LatestPublishedRule::Before`].
     pub latest_published: LatestPublishedRule,
     /// The served forecast uses [`PrevDayBasis::UtcDay`].
     pub prev_day_basis: PrevDayBasis<'a>,
@@ -64,7 +64,7 @@ impl Default for ForecastOptions<'static> {
             sanity_bound: None,
             ridge_lambda: DEFAULT_RIDGE_LAMBDA,
             bands: &CALIBRATED_BANDS,
-            latest_published: LatestPublishedRule::AtOrBefore,
+            latest_published: LatestPublishedRule::Before,
             prev_day_basis: PrevDayBasis::UtcDay,
         }
     }

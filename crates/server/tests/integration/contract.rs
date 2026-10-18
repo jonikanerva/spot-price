@@ -5,7 +5,9 @@
 //!   (`golden/http/openapi.ts.json`): equal paths, methods, parameters,
 //!   schemas, responses, tags, security, servers, and info. Only the JSON key
 //!   order differs.
-//! - The setup page is byte-identical to the TypeScript `renderHomePage()`.
+//! - The setup page is byte-identical to `fixtures/ui-home.html`. The
+//!   fixture is the TypeScript `renderHomePage()` with the chart fix of the
+//!   setup page; the HTTP golden replay lists that difference.
 
 use serde_json::Value;
 use spot_price_server::http::openapi::{document, document_json};
@@ -13,7 +15,7 @@ use spot_price_server::http::ui::render_home;
 
 const CONTRACT: &str = include_str!("../../../../contract/openapi.json");
 const TS_DOCUMENT: &str = include_str!("../golden/http/openapi.ts.json");
-const TS_HOME: &str = include_str!("../fixtures/ui-home.html");
+const HOME: &str = include_str!("../fixtures/ui-home.html");
 
 /// Every difference between two JSON values, as `<pointer>: <detail>`.
 fn differences(want: &Value, got: &Value, at: &str, out: &mut Vec<String>) {
@@ -62,9 +64,9 @@ fn the_document_means_the_typescript_document() {
 }
 
 #[test]
-fn the_setup_page_is_the_typescript_page() {
+fn the_setup_page_is_the_committed_page() {
     assert!(
-        render_home() == TS_HOME,
+        render_home() == HOME,
         "the setup page differs from ui-home.html"
     );
 }

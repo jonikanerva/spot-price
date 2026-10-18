@@ -75,13 +75,15 @@ struct DayStats {
 }
 
 /// The published FI price that `fi_latest_published` reads for a quarter.
+/// The served forecast uses [`LatestPublishedRule::Before`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LatestPublishedRule {
     /// The last price at or before the quarter. In a training row, this is
-    /// the target price of the row itself.
-    #[default]
+    /// the target price of the row itself. The TypeScript parity fixtures
+    /// follow this rule.
     AtOrBefore,
     /// The last price strictly before the quarter.
+    #[default]
     Before,
 }
 
@@ -170,6 +172,23 @@ impl PriceIndex {
 #[must_use]
 pub fn build_forecast_price_index(ctx: &FeatureContext<'_>) -> PriceIndex {
     build_price_index(ctx, FeatureRules::default())
+}
+
+/// The shared price index with a selected `fi_latest_published` rule and the
+/// default previous-day basis. Use it to select the training rule; the
+/// TypeScript parity checks use [`LatestPublishedRule::AtOrBefore`].
+#[must_use]
+pub fn build_price_index_with(
+    ctx: &FeatureContext<'_>,
+    latest_published: LatestPublishedRule,
+) -> PriceIndex {
+    build_price_index(
+        ctx,
+        FeatureRules {
+            latest_published,
+            ..FeatureRules::default()
+        },
+    )
 }
 
 pub(crate) fn build_price_index(ctx: &FeatureContext<'_>, rules: FeatureRules) -> PriceIndex {
@@ -414,12 +433,29 @@ mod tests {
     }
 
     #[test]
-    fn the_default_latest_published_rule_is_at_or_before() {
+    fn the_default_latest_published_rule_is_before() {
+        assert_eq!(LatestPublishedRule::default(), LatestPublishedRule::Before);
         assert_eq!(
-            LatestPublishedRule::default(),
-            LatestPublishedRule::AtOrBefore
+            FeatureRules::default().latest_published,
+            LatestPublishedRule::Before
         );
         assert_eq!(FEATURE_NAMES[LATEST], "fi_latest_published");
+    }
+
+    #[test]
+    fn the_selected_rule_reaches_the_price_index() {
+        let (owned, _) = eight_quarters();
+        let ctx = owned.ctx();
+        for rule in [LatestPublishedRule::AtOrBefore, LatestPublishedRule::Before] {
+            assert_eq!(
+                build_price_index_with(&ctx, rule),
+                build_price_index(&ctx, latest_rule(rule))
+            );
+        }
+        assert_eq!(
+            build_forecast_price_index(&ctx),
+            build_price_index_with(&ctx, LatestPublishedRule::Before)
+        );
     }
 
     #[test]

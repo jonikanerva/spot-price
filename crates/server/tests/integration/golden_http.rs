@@ -255,7 +255,75 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
         "cookie",
         "a session older than 1 day since its last renewal gets the expiry now + 7 days and the cookie again; the TypeScript service never renewed",
     ),
+    ("root-html", 0, "body", ROOT_HTML_CHART),
+    ("root-html", 1, "body", ROOT_HTML_CHART),
+    (
+        "forecast-success",
+        0,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
+    (
+        "forecast-success",
+        1,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
+    (
+        "forecast-success-stockholm-user",
+        0,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
+    (
+        "forecast-success-stockholm-user",
+        1,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
+    (
+        "forecast-one-day-history",
+        0,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
+    (
+        "forecast-partial-fingrid-outage",
+        0,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
+    (
+        "forecast-actuals-only",
+        0,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
+    (
+        "forecast-sparse-fingrid",
+        0,
+        "forecast-values",
+        FORECAST_BEFORE_RULE,
+    ),
 ];
+
+/// The reason of each `forecast-values` entry: the served forecast trains
+/// `fi_latest_published` on the last FI price strictly before each quarter,
+/// and the TypeScript bodies used the price at or before it.
+const FORECAST_BEFORE_RULE: &str = "the forecast trains fi_latest_published on the last FI price strictly before each quarter, so only the estimate numbers differ; owner decision: https://github.com/jonikanerva/spot-price/issues/120#issuecomment-6246267911, change: https://github.com/jonikanerva/spot-price/pull/130";
+
+/// The forecast entry fields that hold estimate numbers. A `forecast-values`
+/// difference may change only these values.
+const FORECAST_VALUE_FIELDS: [&str; 6] = [
+    "estimatedSpotCentsKwh",
+    "estimatedTotalCentsKwh",
+    "estimatedSpotLowCentsKwh",
+    "estimatedSpotHighCentsKwh",
+    "estimatedTotalLowCentsKwh",
+    "estimatedTotalHighCentsKwh",
+];
+
+const ROOT_HTML_CHART: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -424,6 +492,63 @@ fn session_cookie(got: &Got) -> Option<String> {
             .contains(&name)
             .then(|| pair.to_owned())
     })
+}
+
+/// `body` with each value of [`FORECAST_VALUE_FIELDS`] replaced by `#`.
+/// `None` when a value is not a finite JSON number.
+fn mask_forecast_values(body: &str) -> Option<String> {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    loop {
+        let next = FORECAST_VALUE_FIELDS
+            .iter()
+            .filter_map(|field| {
+                let key = format!("\"{field}\":");
+                rest.find(&key).map(|at| (at, key.len()))
+            })
+            .min();
+        let Some((at, key_len)) = next else {
+            out.push_str(rest);
+            return Some(out);
+        };
+        if rest[..at].ends_with('\\') {
+            return None;
+        }
+        let value_start = at + key_len;
+        let value_len = rest[value_start..]
+            .find(|c: char| !matches!(c, '0'..='9' | '-' | '+' | '.' | 'e' | 'E'))
+            .unwrap_or(rest.len() - value_start);
+        let token = &rest[value_start..value_start + value_len];
+        let number: serde_json::Number = serde_json::from_str(token).ok()?;
+        if !number.as_f64().is_some_and(f64::is_finite) {
+            return None;
+        }
+        out.push_str(&rest[..value_start]);
+        out.push('#');
+        rest = &rest[value_start + value_len..];
+    }
+}
+
+/// The kind of a body difference: `key-order` for equal JSON values,
+/// `forecast-values` for two forecast bodies that are byte for byte equal
+/// after [`mask_forecast_values`], and `body` for any other difference.
+fn body_difference(got: &str, want: &str) -> &'static str {
+    let mine: Option<Value> = serde_json::from_str(got).ok();
+    let theirs: Option<Value> = serde_json::from_str(want).ok();
+    if mine.is_some() && mine == theirs {
+        return "key-order";
+    }
+    let is_forecast = |value: &Option<Value>| {
+        value.as_ref().and_then(|v| v.get("forecast")) == Some(&Value::Bool(true))
+    };
+    if is_forecast(&mine)
+        && is_forecast(&theirs)
+        && let (Some(got), Some(want)) = (mask_forecast_values(got), mask_forecast_values(want))
+        && got == want
+    {
+        return "forecast-values";
+    }
+    "body"
 }
 
 struct Replay<'a> {
@@ -657,14 +782,13 @@ impl Replay<'_> {
             );
             self.mismatch(index, "generated-at", format!("want {theirs} got {mine}"));
         }
-        let same_json = || {
-            let mine: Option<Value> = serde_json::from_str(&body).ok();
-            let theirs: Option<Value> = serde_json::from_str(&want_body).ok();
-            mine.is_some() && mine == theirs
-        };
-        if body != want_body && same_json() {
-            self.mismatch(index, "key-order", "equal JSON values".to_owned());
-        } else if body != want_body {
+        if body == want_body {
+            return;
+        }
+        let kind = body_difference(&body, &want_body);
+        if kind == "key-order" {
+            self.mismatch(index, kind, "equal JSON values".to_owned());
+        } else {
             let at = body
                 .bytes()
                 .zip(want_body.bytes())
@@ -678,7 +802,7 @@ impl Replay<'_> {
             };
             self.mismatch(
                 index,
-                "body",
+                kind,
                 format!(
                     "at byte {at}: want …{}… got …{}…",
                     window(&want_body),
@@ -813,4 +937,61 @@ async fn the_typescript_cases_replay(pool: PgPool) {
         "{} unexpected mismatches:\n{report}\nstale intentional entries: {stale:?}",
         unexpected.len()
     );
+}
+
+/// A forecast body with two entries; `{a}`, `{b}`, and `{rest}` fill in.
+fn forecast_body(a: &str, b: &str, rest: &str) -> String {
+    format!(
+        r#"{{"forecast":true,"area":"FI","available":true,"degraded":false,"entries":[{{"start":"2026-10-25T22:00:00.000Z","estimatedSpotCentsKwh":{a},"estimatedTotalCentsKwh":13.951}},{{"start":"2026-10-25T22:15:00.000Z","estimatedSpotCentsKwh":{b},"estimatedTotalCentsKwh":14.905,"estimatedSpotLowCentsKwh":1.5,"estimatedSpotHighCentsKwh":9}}]{rest}}}"#
+    )
+}
+
+#[test]
+fn forecast_values_accepts_only_changed_estimate_numbers() {
+    let want = forecast_body("6.429", "7.189", "");
+    for got in [
+        forecast_body("6.497", "7.189", ""),
+        forecast_body("-0.5", "1e2", ""),
+        want.replace("13.951", "14.037").replace(":9}", ":10.25}"),
+    ] {
+        assert_eq!(body_difference(&got, &want), "forecast-values", "{got}");
+    }
+}
+
+#[test]
+fn forecast_values_rejects_a_difference_outside_the_estimate_numbers() {
+    let want = forecast_body("6.429", "7.189", "");
+    let changed_number = forecast_body("6.497", "7.189", "");
+    for got in [
+        // Another field changes together with an estimate number.
+        changed_number.replace(r#""degraded":false"#, r#""degraded":true"#),
+        changed_number.replace("22:15:00.000Z", "22:30:00.000Z"),
+        changed_number.replace(r#""area":"FI""#, r#""area":"SE3""#),
+        // An estimate is not a finite JSON number.
+        forecast_body("null", "7.189", ""),
+        forecast_body(r#""6.497""#, "7.189", ""),
+        forecast_body("+6.497", "7.189", ""),
+        // A field, an entry, or a key goes missing, moves, or is added.
+        changed_number.replace(r#","estimatedTotalCentsKwh":13.951"#, ""),
+        changed_number.replace(
+            r#""estimatedSpotCentsKwh":6.497,"estimatedTotalCentsKwh":13.951"#,
+            r#""estimatedTotalCentsKwh":13.951,"estimatedSpotCentsKwh":6.497"#,
+        ),
+        forecast_body("6.497", "7.189", r#","reason":"x""#),
+    ] {
+        assert_eq!(body_difference(&got, &want), "body", "{got}");
+    }
+    // A body that is not a forecast never gets the forecast kind.
+    let plain = |v: &str| format!(r#"{{"estimatedSpotCentsKwh":{v}}}"#);
+    assert_eq!(body_difference(&plain("2"), &plain("1")), "body");
+}
+
+#[test]
+fn equal_json_values_are_still_a_key_order_difference() {
+    let want = forecast_body("6.429", "7.189", "");
+    let got = want.replace(
+        r#""area":"FI","available":true"#,
+        r#""available":true,"area":"FI""#,
+    );
+    assert_eq!(body_difference(&got, &want), "key-order");
 }
