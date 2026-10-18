@@ -14,3 +14,7 @@ The generators are in the Git history of the Rust port PR:
 Check out the commit, run `scripts/test-db.sh start` if needed, and run
 `node --import tsx <generator>` outside the sandbox. The output is
 deterministic.
+
+The served forecast trains with `LatestPublishedRule::Before`. The
+TypeScript service used the at-or-before rule, so the forecast parity tests
+pass `LatestPublishedRule::AtOrBefore` explicitly.

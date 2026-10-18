@@ -12,12 +12,12 @@ mod behaviour {
         FitOptions, ForecastInput, ForecastOptions, GridRecord, HorizonResidual,
         LatestPublishedRule, LinearFitError, MIN_FIT_SAMPLES, MIN_TOTAL_CALIBRATION_SAMPLES,
         NEIGHBOR_AREAS, NOMINAL_COVERAGE, NeighborPrices, PrevDayBasis, PriceTransform, QuarterMap,
-        QuarterStart, SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound, TRAINING_HISTORY_DAYS,
-        TrainingData, UtcHour, align_series, apply_band, apply_within_day_shape, bucket_records,
-        build_artifact, build_feature_vector, build_forecast, build_predicted_series,
-        build_training_matrix, derive_band_offsets, expand_hourly_to_quarters,
-        extend_with_last_week, fit_linear, fit_ridge, observed_coverage_of,
-        sanity_bound_from_history, uncalibrated_bands,
+        QuarterStart, RouteForecast, SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound,
+        TRAINING_HISTORY_DAYS, TrainingData, UtcHour, align_series, apply_band,
+        apply_within_day_shape, bucket_records, build_artifact, build_feature_vector,
+        build_forecast, build_predicted_series, build_training_matrix, derive_band_offsets,
+        expand_hourly_to_quarters, extend_with_last_week, fit_linear, fit_ridge,
+        forecast_for_route, observed_coverage_of, sanity_bound_from_history, uncalibrated_bands,
     };
 
     const QUARTER_MS: i64 = 15 * 60 * 1000;
@@ -482,20 +482,57 @@ mod behaviour {
 
     #[test]
     fn the_latest_published_rule_reaches_the_forecast() {
+        assert_eq!(
+            ForecastOptions::default().latest_published,
+            LatestPublishedRule::Before
+        );
         let s = residual_month();
         let production = run(&s, 3, &ForecastOptions::default());
-        let at_or_before = ForecastOptions {
-            latest_published: LatestPublishedRule::AtOrBefore,
-            ..ForecastOptions::default()
-        };
-        assert_eq!(run(&s, 3, &at_or_before), production);
         let before = ForecastOptions {
             latest_published: LatestPublishedRule::Before,
             ..ForecastOptions::default()
         };
-        let variant = run(&s, 3, &before);
+        assert_eq!(run(&s, 3, &before), production);
+        let at_or_before = ForecastOptions {
+            latest_published: LatestPublishedRule::AtOrBefore,
+            ..ForecastOptions::default()
+        };
+        let variant = run(&s, 3, &at_or_before);
         assert_eq!(variant.diagnostics, production.diagnostics);
         assert!(moved_quarters(&variant, &production) > 0);
+    }
+
+    #[test]
+    fn the_route_serves_the_before_rule() {
+        let s = residual_month();
+        let neighbours = NeighborPrices::new();
+        let input = ForecastInput {
+            spot_prices: &s.spot,
+            neighbor_prices: &neighbours,
+            wind_forecast: &s.wind_forecast,
+            wind_actual: &s.wind_actual,
+            consumption_forecast: &s.cons_forecast,
+            consumption_actual: &s.cons_actual,
+            series_start: ts(s.series_start_ms),
+            series_end: ts(s.series_start_ms + 3 * DAY_MS),
+        };
+        let with_rule = |latest_published| {
+            build_forecast(
+                &input,
+                &ForecastOptions {
+                    sanity_bound: sanity_bound_from_history(&s.spot),
+                    latest_published,
+                    ..ForecastOptions::default()
+                },
+            )
+        };
+        let RouteForecast::Ready { result, .. } = forecast_for_route(&input) else {
+            panic!("the route found no grid data");
+        };
+        assert!(!result.diagnostics.fit_used_default);
+        assert_eq!(result, with_rule(LatestPublishedRule::Before));
+        let at_or_before = with_rule(LatestPublishedRule::AtOrBefore);
+        assert!(moved_quarters(&result, &at_or_before) > 0);
     }
 
     /// A month of history that ends at the CET delivery-day boundary. Each
@@ -923,6 +960,27 @@ mod behaviour {
         assert_eq!(
             build_training_matrix(ts(origin), &ctx.get(), None).targets,
             vec![5.0]
+        );
+    }
+
+    #[test]
+    fn a_default_training_row_reads_the_previous_published_price() {
+        let origin = wed_noon();
+        let mut ctx = Ctx::empty();
+        for i in 1..=8 {
+            ctx.fi.insert(q(origin - i * QUARTER_MS), int(10 * i));
+        }
+        let built = build_training_matrix(ts(origin), &ctx.get(), None);
+        let latest: Vec<f64> = built
+            .rows
+            .iter()
+            .map(|row| row[column("fi_latest_published")])
+            .collect();
+        // The first row has no earlier price, so it takes the mean of 10..=80.
+        assert_eq!(latest, [45.0, 80.0, 70.0, 60.0, 50.0, 40.0, 30.0, 20.0]);
+        assert_eq!(
+            built.targets,
+            [80.0, 70.0, 60.0, 50.0, 40.0, 30.0, 20.0, 10.0]
         );
     }
 
