@@ -264,7 +264,10 @@ result.
   `app_sessions`.
 - **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
   is idempotent and changes nothing on the production schema; the old ledger
-  `_migrations` stays. `0002_app_sessions.sql` adds the session table. The
+  `_migrations` stays. `0002_app_sessions.sql` adds the session table.
+  `0003_drop_redundant_indexes.sql` drops three indexes that duplicate other
+  indexes (#128); after it, the production catalog differs from
+  `fixtures/schema-snapshot.txt` by exactly these three indexes. The
   migration runs as a separate step before the server starts (§15).
   `serve` refuses to start on an unmigrated database. New migrations MUST
   stay compatible with the running release and MUST NOT break the

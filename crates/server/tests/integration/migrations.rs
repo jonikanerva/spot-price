@@ -461,3 +461,52 @@ async fn the_release_precheck_counts_the_settings_that_the_service_rejects(pool:
         "the output must hold no user id"
     );
 }
+
+/// The indexes that migration 3 drops (#128). Each duplicates another index.
+const DROPPED_INDEXES: [&str; 3] = [
+    "idx_fingrid_actuals_dataset_start",
+    "idx_api_keys_user_id",
+    "idx_fingrid_forecasts_issued",
+];
+
+async fn index_exists(pool: &PgPool, name: &str) -> bool {
+    sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = false)]
+async fn the_redundant_indexes_are_dropped_on_a_typescript_database(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    insert_representative_rows(&pool).await;
+    for name in DROPPED_INDEXES {
+        assert!(index_exists(&pool, name).await, "{name} before");
+    }
+    let rows_before = rows(&pool).await;
+
+    db::migrate(&pool).await.unwrap();
+
+    for name in DROPPED_INDEXES {
+        assert!(!index_exists(&pool, name).await, "{name} after");
+    }
+    // The indexes that replace them stay.
+    for name in [
+        "fingrid_actuals_pkey",
+        "idx_api_keys_single_per_user",
+        "fingrid_forecasts_pkey",
+        "idx_fingrid_forecasts_target_issued",
+    ] {
+        assert!(index_exists(&pool, name).await, "{name} stays");
+    }
+    assert_eq!(rows(&pool).await, rows_before);
+}
+
+#[sqlx::test(migrations = false)]
+async fn the_redundant_indexes_are_dropped_on_an_empty_database(pool: PgPool) {
+    db::migrate(&pool).await.unwrap();
+    for name in DROPPED_INDEXES {
+        assert!(!index_exists(&pool, name).await, "{name}");
+    }
+}
