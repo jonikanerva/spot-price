@@ -150,6 +150,9 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   body byte for byte after it masks the `estimated*CentsKwh` values; each
   masked value must be a finite JSON number. The forecast training rule
   (`LatestPublishedRule::Before`) differs from the TypeScript service.
+  The `generated-at` kind sets a differing `generatedAt` of a forecast body
+  to the recorded value before the other body checks, so one step can list
+  both `generated-at` and `forecast-values`.
 - `contract/openapi.json` is the export of `spot-price export-openapi`. The
   `contract:check` task fails on drift. `contract.rs` compares it with the
   TypeScript document field by field.
