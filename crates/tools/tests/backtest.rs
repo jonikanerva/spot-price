@@ -440,7 +440,7 @@ mod backtest {
             sanity_bound_from_history(&inputs.fi_prices)
         );
         assert_eq!(options.latest_published, production.latest_published);
-        assert_eq!(variant.latest_published, LatestPublishedRule::AtOrBefore);
+        assert_eq!(variant.latest_published, LatestPublishedRule::Before);
         assert_eq!(options.prev_day_basis, production.prev_day_basis);
         assert_eq!(variant.prev_day_basis, DayBasis::Utc);
         assert_eq!(BacktestOptions::default().variant, variant);
@@ -493,18 +493,18 @@ mod backtest {
         let data = build_data(0.0);
         let inputs =
             reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
-        let before = ForecastVariant {
-            latest_published: LatestPublishedRule::Before,
+        let at_or_before = ForecastVariant {
+            latest_published: LatestPublishedRule::AtOrBefore,
             ..ForecastVariant::default()
         };
         assert_eq!(
-            before
+            at_or_before
                 .forecast_options(&oslo(), &inputs.fi_prices)
                 .latest_published,
-            LatestPublishedRule::Before
+            LatestPublishedRule::AtOrBefore
         );
         let a = forecast_at_issue_time(&inputs).unwrap();
-        let b = forecast_at_issue_time_with(&inputs, before).unwrap();
+        let b = forecast_at_issue_time_with(&inputs, at_or_before).unwrap();
         assert_eq!(a.series_start_ms, b.series_start_ms);
         assert_eq!(a.predicted.len(), b.predicted.len());
         assert_ne!(a.predicted, b.predicted);
@@ -795,7 +795,17 @@ mod backtest {
     #[test]
     fn a_different_variant_gets_consistent_paired_counts() {
         let data = build_data(0.0);
-        let cmp = compare_variants(&data, ForecastVariant::default(), strong_ridge()).unwrap();
+        // Under the at-or-before rule, B wins on some days of this fixture
+        // and loses on others.
+        let a = ForecastVariant {
+            latest_published: LatestPublishedRule::AtOrBefore,
+            ..ForecastVariant::default()
+        };
+        let b = ForecastVariant {
+            ridge_lambda: strong_ridge().ridge_lambda,
+            ..a
+        };
+        let cmp = compare_variants(&data, a, b).unwrap();
         for (h, label) in HORIZON_LABELS.iter().enumerate() {
             let (a, b) = (
                 &cmp.a.by_horizon[h].by_origin,
@@ -1561,11 +1571,28 @@ mod backtest {
     #[test]
     fn each_arm_and_each_run_reports_its_own_clamped_quarters() {
         let data = build_extreme_data();
+        // Under the at-or-before rule, the two arms clamp a different number
+        // of quarters of this fixture.
         let (variant, variant_options) = clamping_variant();
-        let cmp = compare_variants(&data, ForecastVariant::default(), variant).unwrap();
+        let rule = LatestPublishedRule::AtOrBefore;
+        let a_variant = ForecastVariant {
+            latest_published: rule,
+            ..ForecastVariant::default()
+        };
+        let b_variant = ForecastVariant {
+            latest_published: rule,
+            ..variant
+        };
+        let cmp = compare_variants(&data, a_variant, b_variant).unwrap();
         assert!(cmp.origins_match);
-        let a = served_clamps(&data, &cmp.a, AsOfMode::IssueTime, ForecastOptions::default);
-        let b = served_clamps(&data, &cmp.b, AsOfMode::IssueTime, variant_options);
+        let a = served_clamps(&data, &cmp.a, AsOfMode::IssueTime, || ForecastOptions {
+            latest_published: rule,
+            ..ForecastOptions::default()
+        });
+        let b = served_clamps(&data, &cmp.b, AsOfMode::IssueTime, || ForecastOptions {
+            latest_published: rule,
+            ..variant_options()
+        });
         assert!(a > 0 && b > 0);
         assert_ne!(a, b);
         assert_eq!(cmp.a.sanity_clamped_quarters, a);

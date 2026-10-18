@@ -293,23 +293,23 @@ mod backtest_cli {
     #[test]
     fn ab_parses_the_latest_published_rule() {
         let production = ForecastVariant::default();
-        assert_eq!(production.latest_published, LatestPublishedRule::AtOrBefore);
+        assert_eq!(production.latest_published, LatestPublishedRule::Before);
         assert_eq!(
-            parse_variant("latest_published=before").unwrap(),
+            parse_variant("latest_published=at_or_before").unwrap(),
             ForecastVariant {
-                latest_published: LatestPublishedRule::Before,
+                latest_published: LatestPublishedRule::AtOrBefore,
                 ..production
             }
         );
         assert_eq!(
-            parse_variant("latest_published=at_or_before").unwrap(),
+            parse_variant("latest_published=before").unwrap(),
             production
         );
         assert_eq!(
-            parse_variant("ridge_lambda=2, latest_published=before").unwrap(),
+            parse_variant("ridge_lambda=2, latest_published=at_or_before").unwrap(),
             ForecastVariant {
                 ridge_lambda: 2.0,
-                latest_published: LatestPublishedRule::Before,
+                latest_published: LatestPublishedRule::AtOrBefore,
                 ..production
             }
         );
@@ -322,7 +322,7 @@ mod backtest_cli {
             let err = parse_variant(raw).unwrap_err();
             assert!(
                 err.to_string()
-                    .contains("latest_published must be at_or_before or before"),
+                    .contains("latest_published must be before or at_or_before"),
                 "{raw:?}: {err}"
             );
         }
@@ -344,9 +344,9 @@ mod backtest_cli {
         );
         assert_eq!(parse_variant("prev_day_basis=utc").unwrap(), production);
         assert_eq!(
-            parse_variant("latest_published=before, prev_day_basis=delivery").unwrap(),
+            parse_variant("latest_published=at_or_before, prev_day_basis=delivery").unwrap(),
             ForecastVariant {
-                latest_published: LatestPublishedRule::Before,
+                latest_published: LatestPublishedRule::AtOrBefore,
                 prev_day_basis: DayBasis::Delivery,
                 ..production
             }
@@ -568,13 +568,13 @@ mod backtest_cli {
             "--data",
             file.to_str().unwrap(),
             "--ab",
-            "latest_published=before",
+            "latest_published=at_or_before",
         ]);
         let stdout = got.text(Stream::Stdout);
         assert_eq!(got.code, 0, "{stdout}{}", got.text(Stream::Stderr));
         let (a, b) = (arm_line(&stdout, "A"), arm_line(&stdout, "B"));
-        assert!(a.contains(" latest_published=at_or_before "), "{a}");
-        assert!(b.contains(" latest_published=before "), "{b}");
+        assert!(a.contains(" latest_published=before "), "{a}");
+        assert!(b.contains(" latest_published=at_or_before "), "{b}");
         std::fs::remove_file(file).unwrap();
     }
 
@@ -646,5 +646,6 @@ mod backtest_cli {
         let text = usage.text(Stream::Stderr);
         assert!(text.contains("[--ab <key=value[,key=value]>]"));
         assert!(text.contains("ridge_lambda, wind_extension_weeks, consumption_extension_weeks"));
+        assert!(text.contains("latest_published (before | at_or_before)"));
     }
 }
