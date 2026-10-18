@@ -691,7 +691,7 @@ impl Replay<'_> {
 
 /// The `generatedAt` values of two forecast bodies when they differ. The
 /// Rust service reports the data freshness there, the TypeScript service
-/// reported the request instant (#127).
+/// reported the request instant.
 fn generated_at_pair(got: &str, want: &str) -> Option<(String, String)> {
     let value = |text: &str| -> Option<String> {
         let parsed: Value = serde_json::from_str(text).ok()?;

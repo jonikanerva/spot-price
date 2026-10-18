@@ -50,7 +50,7 @@ pub const ALLOWED_FIELDS: [&str; 31] = [
     "tomorrow_available",
     "applied",
     "user_id",
-    // Instants of public market and grid data (the forecast, #127).
+    // Instants of public market and grid data (the forecast).
     "generated_at",
     "grid_issued_at",
 ];

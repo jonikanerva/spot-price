@@ -3,7 +3,7 @@
 //! The model result does not depend on the user. The handler serves the
 //! precomputed result of [`ForecastCache`] and applies the contract terms
 //! and the time zone of the user per request. When no usable result exists,
-//! it builds one per request, as before (`crate::forecast_cache`).
+//! it builds one per request (`crate::forecast_cache`).
 
 use axum::Extension;
 use axum::extract::{RawQuery, State};

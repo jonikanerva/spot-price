@@ -158,8 +158,8 @@ pub async fn get_latest_delivery_start(
 }
 
 /// The newest `fetched_at` of the prices of `area` with `delivery_start` in
-/// `[start, end)`, if any. The upsert changes `fetched_at` only when a row
-/// changes (STACK.md §5), so this is when the newest price data arrived.
+/// `[start, end)`, if any. The upsert sets `fetched_at` on each write of a
+/// row, also when the price is unchanged, so this is the newest write.
 ///
 /// # Errors
 ///
