@@ -5,7 +5,7 @@
   "caches": {
     "cargo_target": {
       "directory": "target",
-      "type": "shared"
+      "type": "locked"
     }
   },
   "steps": {
