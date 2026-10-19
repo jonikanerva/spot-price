@@ -20,7 +20,7 @@ use crate::config::LogFormat;
 /// The fields whose values may appear in the log. A value of these fields
 /// must never hold an API key, a password, a token, an e-mail address, an IP
 /// address, a request body, or free text from a user.
-pub const ALLOWED_FIELDS: [&str; 31] = [
+pub const ALLOWED_FIELDS: [&str; 33] = [
     "message",
     "request_id",
     "method",
@@ -49,6 +49,9 @@ pub const ALLOWED_FIELDS: [&str; 31] = [
     "areas",
     "tomorrow_available",
     "applied",
+    // The fixed variant and the version number of a migration ledger error.
+    "variant",
+    "version",
     "user_id",
     // Instants of public market and grid data (the forecast).
     "generated_at",
