@@ -157,6 +157,10 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   to `true` when the recorded body has `true`, before the other body checks.
   The Rust service is true only when the store has every quarter of the next
   local day; the TypeScript service was true for any stored row of that day.
+  The `tomorrow-unavailable` kind accepts a `/api/v1/price/tomorrow` body
+  that is exactly the unpublished list where the recorded body is an
+  available list with prices. The Rust route is available only for a
+  complete next local day.
 - `contract/openapi.json` is the export of `spot-price export-openapi`. The
   `contract:check` task fails on drift. `contract.rs` compares it with the
   TypeScript document field by field. The one intentional difference is the

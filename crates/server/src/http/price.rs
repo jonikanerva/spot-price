@@ -353,7 +353,10 @@ async fn list_answer(state: &AppState, user_id: &str, kind: ListKind) -> Answer 
     let rows = load_prices(state, range, settings.area).await?;
     let totals = calculate_total_prices(&intervals(&rows)?, &settings);
     Ok(price_list(&match kind {
-        ListKind::Tomorrow => PriceList::tomorrow_from_totals(totals),
+        ListKind::Tomorrow => {
+            let complete = tomorrow_available(&rows, range);
+            PriceList::tomorrow_from_totals(totals, complete)
+        }
         ListKind::Today | ListKind::All => PriceList::from_totals(totals),
     }))
 }

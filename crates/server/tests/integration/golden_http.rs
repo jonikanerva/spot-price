@@ -270,6 +270,18 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
         TOMORROW_COMPLETE_DAY,
     ),
     (
+        "price-dave-ee-partial-tomorrow",
+        2,
+        "tomorrow-unavailable",
+        TOMORROW_ROUTE_COMPLETE_DAY,
+    ),
+    (
+        "price-eve-fi-stockholm-zero-terms",
+        2,
+        "tomorrow-unavailable",
+        TOMORROW_ROUTE_COMPLETE_DAY,
+    ),
+    (
         "forecast-success",
         0,
         "forecast-values",
@@ -340,6 +352,16 @@ const FORECAST_VALUE_FIELDS: [&str; 6] = [
 /// step 11 the user zone is Europe/Stockholm: tomorrow, 2026-10-25, ends at
 /// 23:00Z, and the FI seed ends at 22:00Z.
 const TOMORROW_COMPLETE_DAY: &str = "tomorrowAvailable is true only when the store has every quarter of the next local day; the TypeScript service set it for any stored row of that day; owner decision: https://github.com/jonikanerva/spot-price/issues/133#issuecomment-6261547267";
+
+/// The reason of each `tomorrow-unavailable` entry. In
+/// `price-dave-ee-partial-tomorrow` step 2 the store has part of tomorrow.
+/// In `price-eve-fi-stockholm-zero-terms` step 2 the user zone is
+/// Europe/Stockholm: tomorrow, 2026-10-25, ends at 23:00Z, and the FI seed
+/// ends at 22:00Z.
+const TOMORROW_ROUTE_COMPLETE_DAY: &str = "/api/v1/price/tomorrow is available only when the store has every quarter of the next local day; the TypeScript service answered available for any stored row of that day; owner decision: https://github.com/jonikanerva/spot-price/issues/145";
+
+/// The body of `/api/v1/price/tomorrow` before the next day is complete.
+const UNPUBLISHED_TOMORROW: &str = r#"{"start":"","end":"","startLocal":"","endLocal":"","minTotalCentsKwh":0,"maxTotalCentsKwh":0,"averageTotalCentsKwh":0,"prices":[],"available":false,"expectedAt":"12:00 UTC"}"#;
 
 const ROOT_HTML_CHART: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels";
 
@@ -565,7 +587,9 @@ fn without_generated_at_description(document: &Value) -> Option<Value> {
 /// `generated-at-description` for a contract document that equals the
 /// recorded one without [`GENERATED_AT_DESCRIPTION`], `forecast-values` for
 /// two forecast bodies that are byte for byte equal after
-/// [`mask_forecast_values`], and `body` for any other difference.
+/// [`mask_forecast_values`], `tomorrow-unavailable` for exactly
+/// [`UNPUBLISHED_TOMORROW`] where the recording is an available price list
+/// with prices, and `body` for any other difference.
 fn body_difference(got: &str, want: &str) -> &'static str {
     let mine: Option<Value> = serde_json::from_str(got).ok();
     let theirs: Option<Value> = serde_json::from_str(want).ok();
@@ -588,7 +612,34 @@ fn body_difference(got: &str, want: &str) -> &'static str {
     {
         return "forecast-values";
     }
+    if got == UNPUBLISHED_TOMORROW
+        && let Some(theirs) = &theirs
+        && theirs.get("available") == Some(&Value::Bool(true))
+        && theirs
+            .get("prices")
+            .and_then(Value::as_array)
+            .is_some_and(|prices| !prices.is_empty())
+    {
+        return "tomorrow-unavailable";
+    }
     "body"
+}
+
+#[test]
+fn tomorrow_unavailable_accepts_only_the_unpublished_body_for_an_available_list() {
+    let available =
+        r#"{"start":"2026-10-24T21:00:00.000Z","prices":[{"totalCentsKwh":1}],"available":true}"#;
+    assert_eq!(
+        body_difference(UNPUBLISHED_TOMORROW, available),
+        "tomorrow-unavailable"
+    );
+    // Another unavailable body, or a recording that was not available.
+    let other = UNPUBLISHED_TOMORROW.replace("12:00 UTC", "13:00 UTC");
+    assert_eq!(body_difference(&other, available), "body");
+    let empty = r#"{"start":"","prices":[],"available":true}"#;
+    assert_eq!(body_difference(UNPUBLISHED_TOMORROW, empty), "body");
+    let unavailable = r#"{"start":"x","prices":[{"totalCentsKwh":1}],"available":false}"#;
+    assert_eq!(body_difference(UNPUBLISHED_TOMORROW, unavailable), "body");
 }
 
 struct Replay<'a> {

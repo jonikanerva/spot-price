@@ -43,15 +43,18 @@ impl PriceList {
         build_price_window(totals).map_or(Self::Unavailable { expected_at: None }, Self::Available)
     }
 
-    /// The list of `/price/tomorrow`.
+    /// The list of `/price/tomorrow`. `complete` must be true only when the
+    /// totals cover every quarter of the next local day; a partial day is
+    /// unavailable.
     #[must_use]
-    pub fn tomorrow_from_totals(totals: Vec<TotalPrice>) -> Self {
-        build_price_window(totals).map_or(
-            Self::Unavailable {
-                expected_at: Some(TOMORROW_EXPECTED_AT),
-            },
-            Self::Available,
-        )
+    pub fn tomorrow_from_totals(totals: Vec<TotalPrice>, complete: bool) -> Self {
+        let unavailable = Self::Unavailable {
+            expected_at: Some(TOMORROW_EXPECTED_AT),
+        };
+        if !complete {
+            return unavailable;
+        }
+        build_price_window(totals).map_or(unavailable, Self::Available)
     }
 }
 
@@ -260,10 +263,25 @@ mod tests {
             PriceList::Unavailable { expected_at: None }
         );
         assert_eq!(
-            PriceList::tomorrow_from_totals(Vec::new()),
+            PriceList::tomorrow_from_totals(Vec::new(), true),
             PriceList::Unavailable {
                 expected_at: Some("12:00 UTC")
             }
         );
+    }
+
+    #[test]
+    fn a_partial_tomorrow_is_unavailable() {
+        let totals = calculate_total_prices(&quarters(&[10.0, 20.0, 30.0, 40.0]), &settings());
+        assert_eq!(
+            PriceList::tomorrow_from_totals(totals.clone(), false),
+            PriceList::Unavailable {
+                expected_at: Some("12:00 UTC")
+            }
+        );
+        assert!(matches!(
+            PriceList::tomorrow_from_totals(totals, true),
+            PriceList::Available(_)
+        ));
     }
 }
