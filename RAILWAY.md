@@ -7,7 +7,7 @@ page is a short checklist.
 
 1. Create a Railway project from this repository.
 2. Add one service for the app. Railpack builds it from `railpack.json`
-   (Rust provider).
+   (Rust provider). Do not pin the Railpack version; Railway selects it.
 3. Add a PostgreSQL service. Railway sets `DATABASE_URL`.
 
 ## Required environment variables
@@ -20,10 +20,13 @@ page is a short checklist.
 
 Railway sets `PORT`.
 
-## Before the first release
+## Before a release
 
-Run these checks read-only against production
-(`STACK.md → Release procedure`):
+Record the active deployment as the known-good version.
+
+Before the merge of a release that adds a migration, or that changes the
+database connection, `BETTER_AUTH_URL`, or the start command, run these
+checks read-only against production (`STACK.md → Release procedure`):
 
 ```bash
 PGOPTIONS='-c default_transaction_read_only=on' \
@@ -33,7 +36,9 @@ PGOPTIONS='-c default_transaction_read_only=on' \
   psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
 ```
 
-- The snapshot shows no difference.
+- The snapshot differs only by the Rust migrations that production already
+  has. Through migration 3, that is the three indexes that migration 3 drops
+  (`STACK.md` §5).
 - The precheck prints `typescript_migrations|1,2,3,4,5,6,7` and `0` for each
   `user_settings_invalid_*` count.
 - `DATABASE_URL` has no `sslmode`, or `sslmode=prefer` or `sslmode=disable`.

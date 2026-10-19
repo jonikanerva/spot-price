@@ -312,9 +312,10 @@ VINTAGE_BACKFILL_HOURS` (6 h). Pruned by `issued_at` beyond
   sorts every in-range issuance to disk and breaks the §4 budget.
 - **`weather_forecasts`, `weather_daily_forecasts`:** append-only per
   issuance; never collapse to the latest issuance. `target_date` is the UTC
-  calendar date of `dt`. Pruned beyond `WEATHER_RETENTION_DAYS` (400). If the
-  weather-feature work is closed at its checkpoint, the daily table is
-  dropped in the same PR.
+  calendar date of `dt`. Pruned beyond `WEATHER_RETENTION_DAYS` (400). The
+  weather-feature work gets its first honest look on 2026-12-13. That date
+  is not a kill checkpoint, and the date alone closes nothing. If the work
+  is closed later, the daily table is dropped in the same PR.
 - **Accounts:** `"user"`, `"account"`, `usernames`, `user_settings`,
   `api_keys` (plaintext keys, `VISION.md`). The Better Auth `"session"` and
   `"verification"` tables stay untouched for the revert path.
@@ -522,7 +523,7 @@ evidence blocks merge. There is no CI.
 | P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | Isolated PostgreSQL 18.6; production: `postgres-ssl:18` |
 | P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                     |
 | P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                             |
-| P7: release                   | Before merge: Railpack plan, owner-run schema snapshot and precheck. After release: §15 checks                           | A local macOS build is not the Linux artifact           |
+| P7: release                   | Before merge: Railpack plan; owner-run schema snapshot and precheck when §15 asks for them. After release: §15 checks    | A local macOS build is not the Linux artifact           |
 | P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                             | Separate reviewer context                               |
 
 ### Golden files
@@ -586,8 +587,10 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 
 ### Release procedure
 
-1. Before the merge of the first Rust release, the owner checks production
-   read-only:
+1. Record the active deployment as the known-good version.
+2. Before the merge of a release that adds a migration, or that changes the
+   database connection, `BETTER_AUTH_URL`, or the start command, the owner
+   checks production read-only:
    - Run both scripts with the public database URL:
 
      ```bash
@@ -598,8 +601,9 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
        psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
      ```
 
-   - The snapshot shows no difference. After migration 3, the only
-     difference is the three indexes that it drops (§5). The precheck prints
+   - The snapshot differs only by the Rust migrations that production
+     already has. Through migration 3, that is the three indexes that
+     migration 3 drops (§5). The precheck prints
      `typescript_migrations|1,2,3,4,5,6,7`, the server version, and `0` for
      each `user_settings_invalid_*` count. A non-zero count is a user for
      whom the Rust service answers 500. It blocks the merge until the owner
@@ -613,11 +617,10 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 </dev/null 2>/dev/null | openssl x509 -noout -text | grep Version`.
    - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
      slash, no path. The `Origin` check compares it byte for byte.
-   - Record the active deployment as the known-good version.
 
-2. Merge. Watch the build log: Rust 1.99.1, the offline build, `migrations
-are up to date`, and a passing healthcheck.
-3. Run the post-release checks.
+3. Merge. Watch the build log: the Railpack version, Rust 1.99.1, the
+   offline build, `migrations are up to date`, and a passing healthcheck.
+4. Run the post-release checks.
 
 ### Post-release checks (read-only)
 
@@ -625,7 +628,6 @@ are up to date`, and a passing healthcheck.
 - `GET https://spot.calmdonut.com/health` gives `{"status":"ok","db":"connected"}`.
 - The next scheduled price fetch appears in the log without errors.
 - The owner calls one price route with their own API key.
-- Railway metrics: memory after one hour, compared with §4.
 
 Never run `scripts/smoke-local.sh` against production: it creates an account
 and an API key.
@@ -660,11 +662,12 @@ and an API key.
   Keep test and production PostgreSQL on the same major version (§5).
 
   Do not pin Railpack or its runtime image. Do not set `RAILPACK_VERSION`
-  on the service. Each build uses the latest Railpack release. A failed build
-  leaves the active deployment in service. When a new Railpack release breaks
-  the build, fix the repository in a `fix/` PR. When the new image breaks the
-  running service, roll back first (Rollback and recovery), then fix the
-  repository.
+  on the service. Each build uses the Railpack version that Railway selects
+  by default. That default can be older than the latest Railpack release;
+  the build log shows the version. A failed build leaves the active
+  deployment in service. When a new Railpack version breaks the build, fix
+  the repository in a `fix/` PR. When the new image breaks the running
+  service, roll back first (Rollback and recovery), then fix the repository.
 
 - **Dependencies:** apply `DOCTRINE.md` P7. The minimum release age is 1440
   minutes. `pnpm-workspace.yaml` enforces it for npm packages. For crates and
