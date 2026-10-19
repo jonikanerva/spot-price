@@ -96,8 +96,8 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
     (
         "openapi-and-docs",
         0,
-        "key-order",
-        "the document is deep-equal to the TypeScript one; serde_json writes object keys in sorted order",
+        "generated-at-description",
+        "the document is deep-equal to the TypeScript one after the removal of the generatedAt description of the forecast response; serde_json writes object keys in sorted order; owner decision: https://github.com/jonikanerva/spot-price/issues/136#issuecomment-6261547559",
     ),
     (
         "session-signup-full-flow",
@@ -547,14 +547,36 @@ fn mask_forecast_values(body: &str) -> Option<String> {
     }
 }
 
+/// The JSON pointer of the one description that the Rust contract document
+/// adds to the TypeScript document.
+const GENERATED_AT_DESCRIPTION: &str =
+    "/components/schemas/ForecastResponse/properties/generatedAt/description";
+
+/// `document` without the [`GENERATED_AT_DESCRIPTION`] value. `None` when
+/// the value is not a string.
+fn without_generated_at_description(document: &Value) -> Option<Value> {
+    let (parent, key) = GENERATED_AT_DESCRIPTION.rsplit_once('/')?;
+    let mut document = document.clone();
+    let removed = document.pointer_mut(parent)?.as_object_mut()?.remove(key)?;
+    removed.is_string().then_some(document)
+}
+
 /// The kind of a body difference: `key-order` for equal JSON values,
-/// `forecast-values` for two forecast bodies that are byte for byte equal
-/// after [`mask_forecast_values`], and `body` for any other difference.
+/// `generated-at-description` for a contract document that equals the
+/// recorded one without [`GENERATED_AT_DESCRIPTION`], `forecast-values` for
+/// two forecast bodies that are byte for byte equal after
+/// [`mask_forecast_values`], and `body` for any other difference.
 fn body_difference(got: &str, want: &str) -> &'static str {
     let mine: Option<Value> = serde_json::from_str(got).ok();
     let theirs: Option<Value> = serde_json::from_str(want).ok();
     if mine.is_some() && mine == theirs {
         return "key-order";
+    }
+    if let (Some(mine), Some(theirs)) = (&mine, &theirs)
+        && theirs.pointer(GENERATED_AT_DESCRIPTION).is_none()
+        && without_generated_at_description(mine).as_ref() == Some(theirs)
+    {
+        return "generated-at-description";
     }
     let is_forecast = |value: &Option<Value>| {
         value.as_ref().and_then(|v| v.get("forecast")) == Some(&Value::Bool(true))
@@ -1044,6 +1066,45 @@ fn forecast_values_rejects_a_difference_outside_the_estimate_numbers() {
     // A body that is not a forecast never gets the forecast kind.
     let plain = |v: &str| format!(r#"{{"estimatedSpotCentsKwh":{v}}}"#);
     assert_eq!(body_difference(&plain("2"), &plain("1")), "body");
+}
+
+#[test]
+fn generated_at_description_accepts_only_that_description() {
+    let document = |description: Option<&str>, unit: &str| {
+        let mut property =
+            serde_json::json!({"example": "2026-02-28T13:00:00.000Z", "type": "string"});
+        if let Some(text) = description {
+            property["description"] = Value::from(text);
+        }
+        serde_json::json!({"components": {"schemas": {"ForecastResponse": {"properties": {
+            "generatedAt": property,
+            "unit": {"example": unit, "type": "string"},
+        }}}}})
+        .to_string()
+    };
+    let want = document(None, "c/kWh");
+    assert_eq!(
+        body_difference(&document(Some("The data freshness."), "c/kWh"), &want),
+        "generated-at-description"
+    );
+    // Another change together with the description.
+    assert_eq!(
+        body_difference(&document(Some("The data freshness."), "EUR"), &want),
+        "body"
+    );
+    // A description that is not text, or a description in the recording.
+    let not_text = want.replacen(
+        r#""type":"string"}"#,
+        r#""type":"string","description":1}"#,
+        1,
+    );
+    assert_ne!(not_text, want);
+    assert_eq!(body_difference(&not_text, &want), "body");
+    let recorded = document(Some("Old."), "c/kWh");
+    assert_eq!(
+        body_difference(&document(Some("New."), "c/kWh"), &recorded),
+        "body"
+    );
 }
 
 #[test]

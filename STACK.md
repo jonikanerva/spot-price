@@ -159,7 +159,10 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   local day; the TypeScript service was true for any stored row of that day.
 - `contract/openapi.json` is the export of `spot-price export-openapi`. The
   `contract:check` task fails on drift. `contract.rs` compares it with the
-  TypeScript document field by field.
+  TypeScript document field by field. The one intentional difference is the
+  `description` of `generatedAt` in the forecast response schema. The golden
+  kind `generated-at-description` accepts only that difference in the
+  recorded OpenAPI body.
 - `/api/docs` serves the Scalar reference page of the TypeScript service. It
   loads Scalar from the jsDelivr CDN in the browser.
 - A breaking change needs `/api/v2` (`VISION.md`).

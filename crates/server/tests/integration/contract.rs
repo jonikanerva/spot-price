@@ -3,8 +3,8 @@
 //! - `contract/openapi.json` is the export of `spot-price export-openapi`.
 //! - The document has the meaning of the TypeScript document
 //!   (`golden/http/openapi.ts.json`): equal paths, methods, parameters,
-//!   schemas, responses, tags, security, servers, and info. Only the JSON key
-//!   order differs.
+//!   schemas, responses, tags, security, servers, and info. The JSON key
+//!   order and the entries of [`INTENTIONAL`] differ.
 //! - The setup page is byte-identical to `fixtures/ui-home.html`. The
 //!   fixture is the TypeScript `renderHomePage()` with the chart fix of the
 //!   setup page; the HTTP golden replay lists that difference.
@@ -16,6 +16,12 @@ use spot_price_server::http::ui::render_home;
 const CONTRACT: &str = include_str!("../../../../contract/openapi.json");
 const TS_DOCUMENT: &str = include_str!("../golden/http/openapi.ts.json");
 const HOME: &str = include_str!("../fixtures/ui-home.html");
+
+/// The differences from the TypeScript document, by design, as
+/// [`differences`] reports them. The test fails on any other difference and
+/// on a listed difference that no longer occurs.
+const INTENTIONAL: [&str; 1] =
+    ["/components/schemas/ForecastResponse/properties/generatedAt/description: extra"];
 
 /// Every difference between two JSON values, as `<pointer>: <detail>`.
 fn differences(want: &Value, got: &Value, at: &str, out: &mut Vec<String>) {
@@ -56,11 +62,7 @@ fn the_document_means_the_typescript_document() {
     let want: Value = serde_json::from_str(TS_DOCUMENT).unwrap();
     let mut found = Vec::new();
     differences(&want, &document().unwrap(), "", &mut found);
-    assert!(
-        found.is_empty(),
-        "OpenAPI differences:\n{}",
-        found.join("\n")
-    );
+    assert_eq!(found, INTENTIONAL, "OpenAPI differences");
 }
 
 #[test]
