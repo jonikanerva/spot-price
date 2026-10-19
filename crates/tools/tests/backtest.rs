@@ -1323,6 +1323,125 @@ mod backtest {
         assert!(cmp.origins_match);
     }
 
+    // Origins without grid data
+
+    const GAP_START: &str = "2026-02-01T00:00:00Z";
+    const GAP_PRICE_DAYS: i64 = 60;
+
+    /// [`GAP_PRICE_DAYS`] days of prices with Fingrid data only in the first
+    /// 10 days. The served window of a later origin has no Fingrid record.
+    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
+    fn build_grid_gap_data() -> BacktestData {
+        let start = ms(GAP_START);
+        let mut data = BacktestData::default();
+        let (mut wind75, mut cons124, mut wind245, mut cons165) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for q in 0..GAP_PRICE_DAYS * 96 {
+            let at = start + q * QUARTER_MS;
+            let consumption = 8000.0 + (q % 96) as f64 * 15.0;
+            let wind = 2000.0 + ((q * 131) % 1800) as f64;
+            data.prices
+                .push(price("FI", at, 0.0012 * (consumption - wind) + 2.0));
+            if q < 10 * 96 {
+                cons124.push(actual(at, consumption, 124));
+                wind75.push(actual(at, wind, 75));
+                cons165.push(vintage(at, consumption, 165, at - 2 * HOUR_MS));
+                wind245.push(vintage(at, wind, 245, at - 2 * HOUR_MS));
+            }
+        }
+        data.actuals = BTreeMap::from([(75, wind75), (124, cons124)]);
+        data.vintages = BTreeMap::from([(245, wind245), (165, cons165)]);
+        data
+    }
+
+    /// The daily 13:00 UTC issue times of [`build_grid_gap_data`], split by
+    /// the served route answer: `(no grid data, ready)`.
+    fn gap_origins_by_route(data: &BacktestData) -> (BTreeSet<i64>, BTreeSet<i64>) {
+        let mut no_grid = BTreeSet::new();
+        let mut ready = BTreeSet::new();
+        for day in 0..GAP_PRICE_DAYS {
+            let t = ms(GAP_START) + day * DAY_MS + 13 * HOUR_MS;
+            let inputs = reconstruct_issue_time(data, t, AsOfMode::IssueTime).unwrap();
+            let owned = RouteInputs::of(&inputs);
+            match forecast_for_route(&owned.input(&inputs)) {
+                RouteForecast::NoGridData => no_grid.insert(t),
+                RouteForecast::Ready { .. } => ready.insert(t),
+            };
+        }
+        (no_grid, ready)
+    }
+
+    #[test]
+    fn skips_and_counts_the_origins_where_the_route_has_no_grid_data() {
+        let data = build_grid_gap_data();
+        let (no_grid, ready) = gap_origins_by_route(&data);
+        assert!(!no_grid.is_empty());
+        assert!(!ready.is_empty());
+
+        let summary = run_backtest(&data, &BacktestOptions::default()).unwrap();
+        assert_eq!(summary.pre_vintage_origins, 0);
+        assert_eq!(summary.no_grid_data_origins, no_grid.len());
+        assert!(summary.origins > 0);
+        assert!(summary.scored_origins_ms.is_subset(&ready));
+        assert!(summary.scored_origins_ms.is_disjoint(&no_grid));
+    }
+
+    #[test]
+    fn a_restricted_run_also_skips_the_origins_without_grid_data() {
+        let data = build_grid_gap_data();
+        let (no_grid, ready) = gap_origins_by_route(&data);
+        let summary = run_backtest(
+            &data,
+            &BacktestOptions {
+                restrict_origins_ms: Some(no_grid.union(&ready).copied().collect()),
+                ..BacktestOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(summary.no_grid_data_origins, no_grid.len());
+        assert!(summary.scored_origins_ms.is_disjoint(&no_grid));
+    }
+
+    #[test]
+    fn both_comparisons_score_only_the_origins_with_grid_data() {
+        let data = build_grid_gap_data();
+        let (no_grid, _) = gap_origins_by_route(&data);
+
+        let cmp = compare_variants(&data, ForecastVariant::default(), strong_ridge()).unwrap();
+        assert_eq!(cmp.a.no_grid_data_origins, no_grid.len());
+        assert_eq!(cmp.b.no_grid_data_origins, 0);
+        assert!(cmp.a.scored_origins_ms.is_disjoint(&no_grid));
+        assert!(cmp.origins_match);
+
+        let cmp = compare_optimism(&data).unwrap();
+        assert_eq!(cmp.honest.no_grid_data_origins, no_grid.len());
+        assert_eq!(cmp.leaked.no_grid_data_origins, 0);
+        assert!(cmp.honest.scored_origins_ms.is_disjoint(&no_grid));
+        assert_eq!(cmp.leaked.scored_origins_ms, cmp.honest.scored_origins_ms);
+    }
+
+    #[test]
+    fn the_reports_print_the_origins_without_grid_data() {
+        let data = build_grid_gap_data();
+        let (no_grid, _) = gap_origins_by_route(&data);
+        let n = no_grid.len();
+
+        let mut out = Output::default();
+        print_report(&data, &mut out).unwrap();
+        let line = format!("\n  no-grid-data origins: {n}\n");
+        assert!(out.text(Stream::Stdout).contains(&line), "{line}");
+
+        let mut out = Output::default();
+        print_compare(&data, &mut out).unwrap();
+        let line = format!("\n  no-grid-data origins: honest {n}  leaked 0\n");
+        assert!(out.text(Stream::Stdout).contains(&line), "{line}");
+
+        let mut out = Output::default();
+        print_variant_compare(&data, strong_ridge(), &mut out).unwrap();
+        let line = format!("\n  no-grid-data origins: A {n}  B 0\n");
+        assert!(out.text(Stream::Stdout).contains(&line), "{line}");
+    }
+
     // Served sanity bound
 
     /// The issue time of the extreme fixture. Its series starts at

@@ -132,15 +132,21 @@ pub enum RouteForecast {
     },
 }
 
+/// False when all four Fingrid inputs are empty. Then the endpoint answers
+/// [`RouteForecast::NoGridData`]; the backtest skips such an origin.
+#[must_use]
+pub const fn has_grid_data(input: &ForecastInput<'_>) -> bool {
+    !(input.wind_forecast.is_empty()
+        && input.wind_actual.is_empty()
+        && input.consumption_forecast.is_empty()
+        && input.consumption_actual.is_empty())
+}
+
 /// The endpoint sequence after the reads: the grid-data check, the sanity
 /// bound from the FI history, the pipeline, and the assessment.
 #[must_use]
 pub fn forecast_for_route(input: &ForecastInput<'_>) -> RouteForecast {
-    let grid_records = input.wind_forecast.len()
-        + input.wind_actual.len()
-        + input.consumption_forecast.len()
-        + input.consumption_actual.len();
-    if grid_records == 0 {
+    if !has_grid_data(input) {
         return RouteForecast::NoGridData;
     }
     let opts = ForecastOptions {

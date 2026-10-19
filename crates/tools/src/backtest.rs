@@ -14,7 +14,8 @@ use spot_price_domain::forecast::{
     CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
     ForecastOptions, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices,
     PrevDayBasis, QuarterMap, QuarterStart, UtcHour, build_artifact, build_forecast,
-    derive_band_offsets, observed_coverage_of, sanity_bound_from_history, uncalibrated_bands,
+    derive_band_offsets, has_grid_data, observed_coverage_of, sanity_bound_from_history,
+    uncalibrated_bands,
 };
 use spot_price_domain::time::{next_calendar_day, start_of_local_day_utc};
 
@@ -432,7 +433,9 @@ pub fn forecast_at_issue_time(inputs: &IssueTimeInputs) -> Result<IssueForecast,
     forecast_at_issue_time_with(inputs, ForecastVariant::default())
 }
 
-/// Runs the forecast of `variant` with the issue-time inputs.
+/// Runs the forecast of `variant` with the issue-time inputs. It runs even
+/// when the served route would answer `NoGridData`; [`run_backtest`] skips
+/// such an origin first.
 ///
 /// # Errors
 /// [`BacktestError`] when the series window leaves the `Timestamp` range or
@@ -441,29 +444,62 @@ pub fn forecast_at_issue_time_with(
     inputs: &IssueTimeInputs,
     variant: ForecastVariant,
 ) -> Result<IssueForecast, BacktestError> {
+    let records = IssueRecords::of(inputs);
+    forecast_of_input(&records.input(inputs)?, inputs, variant)
+}
+
+/// The owned records of the [`ForecastInput`] of one issue time.
+struct IssueRecords {
+    neighbor_prices: NeighborPrices,
+    wind_forecast: Vec<GridRecord>,
+    wind_actual: Vec<GridRecord>,
+    consumption_forecast: Vec<GridRecord>,
+    consumption_actual: Vec<GridRecord>,
+}
+
+impl IssueRecords {
+    fn of(inputs: &IssueTimeInputs) -> Self {
+        Self {
+            // The forecast reads only the neighbour areas it knows by exact code.
+            neighbor_prices: inputs
+                .neighbor_prices
+                .iter()
+                .filter_map(|(code, series)| Area::from_str(code).ok().map(|a| (a, series.clone())))
+                .collect(),
+            wind_forecast: forecast_records(inputs, DATASET_WIND_FORECAST),
+            wind_actual: actual_records(inputs, DATASET_WIND_ACTUAL),
+            consumption_forecast: forecast_records(inputs, DATASET_CONSUMPTION_FORECAST),
+            consumption_actual: actual_records(inputs, DATASET_CONSUMPTION_ACTUAL),
+        }
+    }
+
+    fn input<'a>(
+        &'a self,
+        inputs: &'a IssueTimeInputs,
+    ) -> Result<ForecastInput<'a>, BacktestError> {
+        let (_, series_end_ms) = served_window_ms(inputs.origin_ms);
+        Ok(ForecastInput {
+            spot_prices: &inputs.fi_prices,
+            neighbor_prices: &self.neighbor_prices,
+            wind_forecast: &self.wind_forecast,
+            wind_actual: &self.wind_actual,
+            consumption_forecast: &self.consumption_forecast,
+            consumption_actual: &self.consumption_actual,
+            series_start: instant(inputs.origin_ms)?,
+            series_end: instant(series_end_ms)?,
+        })
+    }
+}
+
+fn forecast_of_input(
+    input: &ForecastInput<'_>,
+    inputs: &IssueTimeInputs,
+    variant: ForecastVariant,
+) -> Result<IssueForecast, BacktestError> {
     let series_start_ms = inputs.origin_ms;
     let (_, series_end_ms) = served_window_ms(series_start_ms);
-    // The forecast reads only the neighbour areas it knows by exact code.
-    let neighbor_prices: NeighborPrices = inputs
-        .neighbor_prices
-        .iter()
-        .filter_map(|(code, series)| Area::from_str(code).ok().map(|a| (a, series.clone())))
-        .collect();
-    let wind_forecast = forecast_records(inputs, DATASET_WIND_FORECAST);
-    let wind_actual = actual_records(inputs, DATASET_WIND_ACTUAL);
-    let consumption_forecast = forecast_records(inputs, DATASET_CONSUMPTION_FORECAST);
-    let consumption_actual = actual_records(inputs, DATASET_CONSUMPTION_ACTUAL);
     let result = build_forecast(
-        &ForecastInput {
-            spot_prices: &inputs.fi_prices,
-            neighbor_prices: &neighbor_prices,
-            wind_forecast: &wind_forecast,
-            wind_actual: &wind_actual,
-            consumption_forecast: &consumption_forecast,
-            consumption_actual: &consumption_actual,
-            series_start: instant(series_start_ms)?,
-            series_end: instant(series_end_ms)?,
-        },
+        input,
         &variant.forecast_options(&delivery_zone()?, &inputs.fi_prices),
     );
     Ok(IssueForecast {
@@ -579,6 +615,10 @@ pub struct BacktestSummary {
     pub fallback_origins: usize,
     /// Origins skipped because no wind forecast vintage was knowable.
     pub pre_vintage_origins: usize,
+    /// Origins skipped because the served route would answer `NoGridData`:
+    /// all four Fingrid inputs of the served window are empty. A
+    /// pre-vintage origin is counted only as pre-vintage.
+    pub no_grid_data_origins: usize,
     /// Quarters that the sanity bound clamped, summed over the scored
     /// origins. A quarter without a realised price also counts.
     pub sanity_clamped_quarters: usize,
@@ -604,7 +644,7 @@ pub struct BacktestSummary {
 pub struct BacktestOptions {
     pub as_of_mode: Option<AsOfMode>,
     /// When set, only these origins (UTC ms) are scored, and the pre-vintage
-    /// skip does not apply.
+    /// skip does not apply. The no-grid-data skip always applies.
     pub restrict_origins_ms: Option<BTreeSet<i64>>,
     pub variant: ForecastVariant,
 }
@@ -702,7 +742,12 @@ impl Scoring {
         }
     }
 
-    fn into_summary(self, pre_vintage_origins: usize, leak_free: bool) -> BacktestSummary {
+    fn into_summary(
+        self,
+        pre_vintage_origins: usize,
+        no_grid_data_origins: usize,
+        leak_free: bool,
+    ) -> BacktestSummary {
         let model_mae = mae(&self.model_pairs);
         let baseline_mae = PerBaseline {
             last_week: mae(&self.last_week_pairs),
@@ -719,6 +764,7 @@ impl Scoring {
             origins: self.origins,
             fallback_origins: self.fallback_origins,
             pre_vintage_origins,
+            no_grid_data_origins,
             sanity_clamped_quarters: self.sanity_clamped_quarters,
             scored_window_start_ms: first,
             scored_window_end_ms: last,
@@ -761,6 +807,7 @@ pub fn run_backtest(
 
     let mut scoring = Scoring::default();
     let mut pre_vintage_origins = 0;
+    let mut no_grid_data_origins = 0;
     let mut leak_free = true;
     let wind_vintages = data
         .vintages
@@ -783,14 +830,20 @@ pub fn run_backtest(
             }
 
             let inputs = reconstruct_issue_time(data, t_ms, mode)?;
+            let records = IssueRecords::of(&inputs);
+            let input = records.input(&inputs)?;
+            if !has_grid_data(&input) {
+                no_grid_data_origins += 1;
+                continue;
+            }
             if !find_leaking_inputs(&inputs).is_empty() {
                 leak_free = false;
             }
-            let fc = forecast_at_issue_time_with(&inputs, options.variant)?;
+            let fc = forecast_of_input(&input, &inputs, options.variant)?;
             scoring.score_origin(&inputs, &fc, &realized);
         }
     }
-    Ok(scoring.into_summary(pre_vintage_origins, leak_free))
+    Ok(scoring.into_summary(pre_vintage_origins, no_grid_data_origins, leak_free))
 }
 
 /// The mean of the present values; `None` when there are none.
