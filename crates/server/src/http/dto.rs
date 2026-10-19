@@ -384,6 +384,7 @@ pub struct ForecastResponseDto {
     /// Present when available is false or degraded is true
     #[schema(example = "Forecast available for FI only", nullable = false)]
     pub reason: Option<&'static str>,
+    /// The data freshness, not the request time: the later of the newest Fingrid forecast issuance (datasets 245 and 165) and the newest arrival of an FI price in the 30-day price history. If neither exists, the time of the computation. A response without a computation (user settings not found, an area other than FI) has the request time.
     #[schema(example = "2026-02-28T13:00:00.000Z")]
     pub generated_at: String,
     #[schema(example = "c/kWh")]
