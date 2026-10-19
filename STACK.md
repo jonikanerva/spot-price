@@ -23,8 +23,9 @@ grants no authority beyond `CLAUDE.md`.
   money and comfort, not safety. Personal data is limited to one account,
   contract settings, and API keys (`VISION.md → Persistence and Privacy
 Posture`). Price and grid data are public and can be fetched again. Most
-  failures are recoverable by a rollback in minutes. A destructive migration
-  is the main irreversible risk.
+  failures are recoverable by a revert PR or a fix PR within minutes. The
+  database has no backup (§5), so a destructive migration or a database
+  loss is the main irreversible risk.
 - **Change risk:** assess each change against that rationale. Changes to
   price math, the cheapest-window answer, the v1 wire format, sign-in,
   sessions, API keys, migrations, retention, or the release configuration
@@ -324,8 +325,12 @@ VINTAGE_BACKFILL_HOURS` (6 h). Pruned by `issued_at` beyond
 - **Accounts:** `"user"`, `"account"`, `usernames`, `user_settings`,
   `api_keys` (plaintext keys, `VISION.md`). The Better Auth `"session"` and
   `"verification"` tables stay untouched for the revert path.
-- **Recovery:** Railway PostgreSQL backups. Public data can be fetched again
-  within upstream limits.
+- **Recovery:** none for the database. The owner's Railway Hobby plan has
+  no database backups, so there is no restore path. The owner accepts the
+  data-loss risk (2026-10-19). After a loss, the jobs fetch the public price
+  and grid data again within upstream limits. The account, the contract
+  settings, and the API key are lost; the owner creates them again, and the
+  home automations need the new key.
 
 ---
 
@@ -606,7 +611,7 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 
 ### Release procedure
 
-1. Record the active deployment as the known-good version.
+1. Record the active deployment and its commit in the PR.
 2. Before the merge of a release that adds a migration, or that changes the
    database connection, `BETTER_AUTH_URL`, or the start command, the owner
    checks production read-only:
@@ -653,19 +658,18 @@ and an API key.
 
 ### Rollback and recovery
 
-- **Immediate:** roll back to the known-good deployment in Railway. A Rust
-  deployment that does not know every applied migration stops at `migrate`
-  (`migrate_version`), and Railway keeps the active deployment. So after
-  migration 3, a rollback to a Rust deployment before it fails. Then use a
-  forward fix, a code revert that keeps the migration files, or the
-  TypeScript revert.
+- **Bad release:** fix it with a revert PR or a fix PR, through the normal
+  review, merge, and release path. Owner decision (2026-10-19): do not use
+  the Railway rollback after a migration. A deployment that does not know
+  every applied migration stops at `migrate` (`migrate_version`). A failed
+  build or a failed start leaves the active deployment in service.
 - **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. A
   revert of the port removes `railpack.json`, so Railpack detects the Node
   service again. A revert of a later change keeps its migration files.
 - **Data:** a revert needs no data change (docs/adr/0001). Sessions created
   by the Rust service end at a revert; users sign in again. `_sqlx_migrations` and `app_sessions` stay and are
   harmless.
-- **Database loss:** restore a Railway PostgreSQL backup.
+- **Database loss:** no backup and no restore path (§5).
 
 ### Maintenance
 
@@ -686,7 +690,7 @@ and an API key.
   the build log shows the version. A failed build leaves the active
   deployment in service. When a new Railpack version breaks the build, fix
   the repository in a `fix/` PR. When the new image breaks the running
-  service, roll back first (Rollback and recovery), then fix the repository.
+  service, fix it with a revert PR or a fix PR (Rollback and recovery).
 
 - **Dependencies:** apply `DOCTRINE.md` P7. The minimum release age is 1440
   minutes. `pnpm-workspace.yaml` enforces it for npm packages. For crates and
