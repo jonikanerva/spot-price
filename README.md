@@ -37,7 +37,7 @@ All `/api/v1/price/*` endpoints require an API key via `Authorization: Bearer <k
 | ------ | ------------------------ | -------------------------------------------------------------------------------------- |
 | GET    | `/api/v1/price/now`      | Current total price with breakdown                                                     |
 | GET    | `/api/v1/price/today`    | All of today's prices with total cost                                                  |
-| GET    | `/api/v1/price/tomorrow` | Tomorrow's prices (typically available after 12:00 UTC)                                |
+| GET    | `/api/v1/price/tomorrow` | Tomorrow's prices; `available` only once all of tomorrow is known (~12:00 UTC)         |
 | GET    | `/api/v1/price/all`      | All currently-known published prices in one list (today, plus tomorrow once published) |
 | GET    | `/api/v1/price/cheapest` | Cheapest contiguous window for a duration                                              |
 | GET    | `/api/v1/price/history`  | Historical total prices for an inclusive local date range                              |

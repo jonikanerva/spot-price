@@ -17,10 +17,13 @@ const spotSlots = (firstStart: string, count: number) =>
     };
   });
 
+// `tomorrowComplete` is the service rule of `tomorrowAvailable`: true only
+// when `tomorrow` has every quarter of the next local day.
 const showPublicSpot = async (
   page: Page,
   today: ReturnType<typeof spotSlots>,
   tomorrow: ReturnType<typeof spotSlots>,
+  tomorrowComplete = false,
 ) => {
   await page.route("**/api/public/spot", (route) =>
     route.fulfill({
@@ -28,7 +31,7 @@ const showPublicSpot = async (
         area: "FI",
         today,
         tomorrow,
-        tomorrowAvailable: tomorrow.length > 0,
+        tomorrowAvailable: tomorrowComplete,
         unit: "c/kWh",
         resolutionMinutes: 15,
       },

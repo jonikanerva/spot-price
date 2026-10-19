@@ -1,5 +1,6 @@
-//! `tomorrowAvailable` of the public spot prices and the setup chart: true
-//! only when the store has every quarter of the next local day.
+//! `tomorrowAvailable` of the public spot prices and the setup chart, and
+//! `available` of `/api/v1/price/tomorrow`: true only when the store has
+//! every quarter of the next local day.
 
 use std::sync::Arc;
 
@@ -23,9 +24,13 @@ const PUBLISHED_TO: &str = "2026-10-18T22:00:00Z";
 const AUCTION_TO: &str = "2026-10-19T22:00:00Z";
 
 fn app(pool: PgPool) -> Router {
+    app_at(pool, NOW)
+}
+
+fn app_at(pool: PgPool, now: &str) -> Router {
     router(AppState::new(
         pool,
-        Arc::new(FixedClock(ts(NOW))),
+        Arc::new(FixedClock(ts(now))),
         &"http://localhost:3000".parse().unwrap(),
     ))
 }
@@ -48,7 +53,11 @@ async fn store_fi(pool: &PgPool, from: &str, to: &str) {
 async fn get(app: &Router, path: &str, cookie: Option<&str>) -> Value {
     let mut request = Request::get(path);
     if let Some(cookie) = cookie {
-        request = request.header("cookie", cookie);
+        request = if cookie.starts_with("sp_") {
+            request.header("authorization", format!("Bearer {cookie}"))
+        } else {
+            request.header("cookie", cookie)
+        };
     }
     let response = app
         .clone()
@@ -116,4 +125,70 @@ async fn a_missing_quarter_of_tomorrow_is_not_an_available_tomorrow(pool: PgPool
     let app = app(pool);
     let spot = get(&app, "/api/public/spot?area=FI", None).await;
     assert_eq!(days(&spot), (false, 96, 95));
+}
+
+/// A new API key of the account behind `cookie`.
+async fn api_key(app: &Router, cookie: &str) -> String {
+    let request = Request::post("/api/keys/regenerate")
+        .header("cookie", cookie)
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    body["apiKey"].as_str().unwrap().to_owned()
+}
+
+/// `(available, prices)` of `/api/v1/price/tomorrow`.
+async fn tomorrow_route(app: &Router, key: &str) -> (bool, usize) {
+    let body = get(app, "/api/v1/price/tomorrow", Some(key)).await;
+    (
+        body["available"].as_bool().unwrap(),
+        body["prices"].as_array().unwrap().len(),
+    )
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn the_tomorrow_route_is_available_only_for_a_complete_day(pool: PgPool) {
+    // (now, start of today in Helsinki, end of the published CET day, end of
+    // the next CET day, quarters of tomorrow in Helsinki)
+    let days = [
+        (NOW, "2026-10-17T21:00:00Z", PUBLISHED_TO, AUCTION_TO, 96),
+        // Tomorrow is 2026-03-29, a 23-hour day in Helsinki.
+        (
+            "2026-03-28T07:05:00Z",
+            "2026-03-27T22:00:00Z",
+            "2026-03-28T23:00:00Z",
+            "2026-03-29T22:00:00Z",
+            92,
+        ),
+        // Tomorrow is 2026-10-25, a 25-hour day in Helsinki.
+        (
+            "2026-10-24T07:05:00Z",
+            "2026-10-23T21:00:00Z",
+            "2026-10-24T22:00:00Z",
+            "2026-10-25T23:00:00Z",
+            100,
+        ),
+    ];
+    for (now, today_from, published_to, auction_to, quarters) in days {
+        sqlx::query("TRUNCATE prices").execute(&pool).await.unwrap();
+        store_fi(&pool, today_from, published_to).await;
+        let app = app_at(pool.clone(), now);
+        let cookie = sign_up(&app).await;
+        let key = api_key(&app, &cookie).await;
+        assert_eq!(tomorrow_route(&app, &key).await, (false, 0), "{now}");
+
+        store_fi(&pool, published_to, auction_to).await;
+        assert_eq!(tomorrow_route(&app, &key).await, (true, quarters), "{now}");
+        sqlx::query(
+            r#"TRUNCATE "user", account, usernames, user_settings, api_keys, app_sessions CASCADE"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
 }
