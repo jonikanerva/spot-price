@@ -279,6 +279,21 @@ fn failure(kind: MigrationFailureKind) -> MigrationFailure {
         kind,
         sqlstate: None,
         reason: None,
+        variant: None,
+        version: None,
+    }
+}
+
+/// The failure of a ledger error that names `variant` and `version`.
+fn ledger_failure(
+    kind: MigrationFailureKind,
+    variant: &'static str,
+    version: i64,
+) -> MigrationFailure {
+    MigrationFailure {
+        variant: Some(variant),
+        version: Some(version),
+        ..failure(kind)
     }
 }
 
@@ -291,6 +306,8 @@ async fn a_partial_typescript_ledger_fails_with_the_text_of_the_baseline_guard(p
             kind: MigrationFailureKind::Execute,
             sqlstate: Some("P0001".to_owned()),
             reason: Some("the TypeScript migrations 001 to 007 are not all applied".to_owned()),
+            variant: None,
+            version: None,
         })
     );
 }
@@ -307,6 +324,8 @@ async fn a_failed_statement_logs_its_sqlstate_but_no_text(pool: PgPool) {
             kind: MigrationFailureKind::Execute,
             sqlstate: Some("42703".to_owned()),
             reason: None,
+            variant: None,
+            version: None,
         })
     );
 }
@@ -320,7 +339,11 @@ async fn a_modified_migration_fails_as_a_checksum_mismatch(pool: PgPool) {
         .unwrap();
     assert_eq!(
         db::migrate(&pool).await,
-        Err(failure(MigrationFailureKind::Checksum))
+        Err(ledger_failure(
+            MigrationFailureKind::Checksum,
+            "version_mismatch",
+            1
+        ))
     );
 }
 
@@ -336,7 +359,11 @@ async fn an_unknown_applied_migration_fails_as_a_version_mismatch(pool: PgPool) 
     .unwrap();
     assert_eq!(
         db::migrate(&pool).await,
-        Err(failure(MigrationFailureKind::Version))
+        Err(ledger_failure(
+            MigrationFailureKind::Version,
+            "version_missing",
+            9999
+        ))
     );
 }
 
@@ -349,7 +376,7 @@ async fn an_unsuccessful_ledger_row_fails_as_dirty(pool: PgPool) {
         .unwrap();
     assert_eq!(
         db::migrate(&pool).await,
-        Err(failure(MigrationFailureKind::Dirty))
+        Err(ledger_failure(MigrationFailureKind::Dirty, "dirty", 2))
     );
 }
 
@@ -394,6 +421,8 @@ async fn a_missing_database_fails_as_a_connection_failure(pool: PgPool) {
             kind: MigrationFailureKind::Connect,
             sqlstate: Some("3D000".to_owned()),
             reason: None,
+            variant: None,
+            version: None,
         })
     );
 }
@@ -545,6 +574,8 @@ async fn a_held_table_lock_fails_migration_3_and_keeps_the_indexes(pool: PgPool)
             kind: MigrationFailureKind::Execute,
             sqlstate: Some("55P03".to_owned()),
             reason: None,
+            variant: None,
+            version: None,
         })
     );
     assert!(started.elapsed() >= Duration::from_secs(4));

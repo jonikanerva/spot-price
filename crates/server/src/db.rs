@@ -121,6 +121,10 @@ pub struct MigrationFailure {
     /// The SQLSTATE of a database error.
     pub sqlstate: Option<String>,
     pub reason: Option<String>,
+    /// The fixed name of a ledger error, such as `version_missing`.
+    pub variant: Option<&'static str>,
+    /// The migration version that a ledger error names.
+    pub version: Option<i64>,
 }
 
 impl MigrationFailure {
@@ -131,21 +135,47 @@ impl MigrationFailure {
             MigrateError::Execute(inner) | MigrateError::ExecuteMigration(inner, _) => {
                 Self::from_sqlx(inner)
             }
-            MigrateError::VersionMismatch(_) => Self::kind(MigrationFailureKind::Checksum),
-            MigrateError::VersionMissing(_)
-            | MigrateError::VersionNotPresent(_)
-            | MigrateError::VersionTooOld(..)
-            | MigrateError::VersionTooNew(..) => Self::kind(MigrationFailureKind::Version),
-            MigrateError::Dirty(_) => Self::kind(MigrationFailureKind::Dirty),
+            MigrateError::VersionMismatch(version) => {
+                Self::ledger(MigrationFailureKind::Checksum, "version_mismatch", *version)
+            }
+            MigrateError::VersionMissing(version) => {
+                Self::ledger(MigrationFailureKind::Version, "version_missing", *version)
+            }
+            MigrateError::VersionNotPresent(version) => Self::ledger(
+                MigrationFailureKind::Version,
+                "version_not_present",
+                *version,
+            ),
+            MigrateError::VersionTooOld(version, _) => {
+                Self::ledger(MigrationFailureKind::Version, "version_too_old", *version)
+            }
+            MigrateError::VersionTooNew(version, _) => {
+                Self::ledger(MigrationFailureKind::Version, "version_too_new", *version)
+            }
+            MigrateError::Dirty(version) => {
+                Self::ledger(MigrationFailureKind::Dirty, "dirty", *version)
+            }
             _ => Self::kind(MigrationFailureKind::Execute),
         }
     }
 
-    fn kind(kind: MigrationFailureKind) -> Self {
+    const fn kind(kind: MigrationFailureKind) -> Self {
         Self {
             kind,
             sqlstate: None,
             reason: None,
+            variant: None,
+            version: None,
+        }
+    }
+
+    const fn ledger(kind: MigrationFailureKind, variant: &'static str, version: i64) -> Self {
+        Self {
+            kind,
+            sqlstate: None,
+            reason: None,
+            variant: Some(variant),
+            version: Some(version),
         }
     }
 
@@ -176,6 +206,8 @@ impl MigrationFailure {
                     kind,
                     sqlstate,
                     reason,
+                    variant: None,
+                    version: None,
                 }
             }
             _ => Self::kind(MigrationFailureKind::Execute),
@@ -302,6 +334,25 @@ mod tests {
         for (error, expected) in cases {
             assert_eq!(kind_of(&error), expected, "{error}");
         }
+    }
+
+    #[test]
+    fn a_ledger_error_names_its_variant_and_version() {
+        let cases = [
+            (MigrateError::VersionMissing(4), "version_missing", 4),
+            (MigrateError::VersionNotPresent(5), "version_not_present", 5),
+            (MigrateError::VersionTooOld(1, 3), "version_too_old", 1),
+            (MigrateError::VersionTooNew(6, 3), "version_too_new", 6),
+            (MigrateError::VersionMismatch(2), "version_mismatch", 2),
+            (MigrateError::Dirty(3), "dirty", 3),
+        ];
+        for (error, variant, version) in cases {
+            let failure = MigrationFailure::classify(&error);
+            assert_eq!(failure.variant, Some(variant), "{error}");
+            assert_eq!(failure.version, Some(version), "{error}");
+        }
+        let other = MigrationFailure::classify(&MigrateError::Execute(sqlx::Error::PoolClosed));
+        assert_eq!((other.variant, other.version), (None, None));
     }
 
     #[test]

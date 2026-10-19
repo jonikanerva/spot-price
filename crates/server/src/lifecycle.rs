@@ -56,6 +56,8 @@ pub async fn migrate(config: &Config) -> Result<(), &'static str> {
                 stage,
                 code = failure.sqlstate,
                 reason = failure.reason,
+                variant = failure.variant,
+                version = failure.version,
                 "the migration failed"
             );
             Err(stage)
