@@ -22,7 +22,7 @@ Railway sets `PORT`.
 
 ## Before a release
 
-Record the active deployment as the known-good version.
+Record the active deployment and its commit in the PR.
 
 Before the merge of a release that adds a migration, or that changes the
 database connection, `BETTER_AUTH_URL`, or the start command, run these
@@ -47,6 +47,13 @@ PGOPTIONS='-c default_transaction_read_only=on' \
   command). The Rust service rejects a version 1 certificate.
 - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`, with no trailing
   slash.
+
+## Recovery
+
+- Fix a bad release with a revert PR or a fix PR. Do not use the Railway
+  rollback after a migration (owner decision, 2026-10-19).
+- The Railway Hobby plan has no database backups. A lost database cannot be
+  restored; the owner accepts this risk (`STACK.md` §5).
 
 ## Start and health check
 

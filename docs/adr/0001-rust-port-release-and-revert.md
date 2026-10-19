@@ -47,7 +47,9 @@ server start.
 
 - `git revert -m 1` of the merge removes `railpack.json` and the Rust
   sources. Railpack then detects the Node service again. A Railway rollback
-  restores the old image at once.
+  restores the old image at once. Update 2026-10-19: the owner decided not
+  to use the Railway rollback after a migration; a revert PR or a fix PR
+  fixes a bad release (`STACK.md` §15).
 - After a revert, `_sqlx_migrations` and `app_sessions` stay. The TypeScript
   service does not read them. A session created by the Rust service does
   not work after a revert, because the TypeScript service does not read
@@ -66,7 +68,8 @@ server start.
 
 ## Cost of reversal
 
-Low while the revert path holds: a Railway rollback or a code revert.
+Low while the revert path holds: a code revert. Update 2026-10-19: the
+Railway rollback is not used after a migration (`STACK.md` §15).
 
 ## Reassessment
 
