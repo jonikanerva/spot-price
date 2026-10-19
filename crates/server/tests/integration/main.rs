@@ -13,6 +13,7 @@ mod account;
 mod auth_vectors;
 mod common;
 mod contract;
+mod forecast_cache;
 mod golden_http;
 mod health;
 mod jobs;

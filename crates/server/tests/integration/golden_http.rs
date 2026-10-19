@@ -28,6 +28,72 @@ const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/http");
 /// `(case, step, kind, reason)`; `kind` is the first word of the mismatch.
 const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
     (
+        "forecast-success",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-success",
+        1,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-success-stockholm-user",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-success-stockholm-user",
+        1,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-no-fingrid-data",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-one-day-history",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-partial-fingrid-outage",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-actuals-only",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-thin-history-fallback",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-sparse-fingrid",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
+        "forecast-no-fi-prices",
+        0,
+        "generated-at",
+        "generatedAt is the data freshness (newest Fingrid forecast issuance or FI price arrival), not the request instant (#127)",
+    ),
+    (
         "openapi-and-docs",
         0,
         "key-order",
@@ -709,6 +775,13 @@ impl Replay<'_> {
                 }
             }
         }
+        if let Some((mine, theirs)) = generated_at_pair(&body, &want_body) {
+            body = body.replace(
+                &format!("\"generatedAt\":\"{mine}\""),
+                &format!("\"generatedAt\":\"{theirs}\""),
+            );
+            self.mismatch(index, "generated-at", format!("want {theirs} got {mine}"));
+        }
         if body == want_body {
             return;
         }
@@ -738,6 +811,21 @@ impl Replay<'_> {
             );
         }
     }
+}
+
+/// The `generatedAt` values of two forecast bodies when they differ. The
+/// Rust service reports the data freshness there, the TypeScript service
+/// reported the request instant.
+fn generated_at_pair(got: &str, want: &str) -> Option<(String, String)> {
+    let value = |text: &str| -> Option<String> {
+        let parsed: Value = serde_json::from_str(text).ok()?;
+        if parsed.get("forecast") != Some(&Value::Bool(true)) {
+            return None;
+        }
+        parsed.get("generatedAt")?.as_str().map(str::to_owned)
+    };
+    let (mine, theirs) = (value(got)?, value(want)?);
+    (mine != theirs).then_some((mine, theirs))
 }
 
 /// Clears every application table and loads the seed and the case setup.

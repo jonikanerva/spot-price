@@ -254,6 +254,25 @@ pub async fn get_fingrid_forecast_vintages_latest(
         .collect())
 }
 
+/// The newest `issued_at` of one forecast dataset, if any. A backward scan
+/// of the primary key `(dataset_id, issued_at, start_time)`.
+///
+/// # Errors
+///
+/// Returns [`StoreError::Query`] when the query fails.
+pub async fn get_latest_forecast_issued_at(
+    pool: &PgPool,
+    dataset_id: i32,
+) -> Result<Option<Timestamp>, StoreError> {
+    let latest = sqlx::query_scalar!(
+        "SELECT MAX(issued_at) FROM fingrid_forecasts WHERE dataset_id = $1",
+        dataset_id,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(latest.map(jiff_sqlx::Timestamp::to_jiff))
+}
+
 /// The offline read: every archived issuance of one forecast dataset with
 /// `start_time` in `[start, end)`, ordered by `(start_time, issued_at)`.
 ///

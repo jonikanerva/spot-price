@@ -38,6 +38,7 @@ use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::auth::password::PasswordHasher;
 use crate::clock::Clock;
+use crate::forecast_cache::ForecastCache;
 use rate_limit::RateLimits;
 use session::SessionConfig;
 
@@ -50,6 +51,9 @@ pub struct AppState {
     pub limits: Arc<RateLimits>,
     pub passwords: PasswordHasher,
     pub pages: Arc<ui::Pages>,
+    /// The precomputed forecast. Empty until a job or the start-up task
+    /// fills it; the forecast handler then computes per request.
+    pub forecast: ForecastCache,
 }
 
 impl std::fmt::Debug for AppState {
@@ -69,7 +73,16 @@ impl AppState {
             limits: Arc::new(RateLimits::default()),
             passwords: PasswordHasher::default(),
             pages: Arc::new(ui::Pages::render()),
+            forecast: ForecastCache::default(),
         }
+    }
+
+    /// The state with a shared forecast cache, so the jobs and the handlers
+    /// use the same result.
+    #[must_use]
+    pub fn with_forecast(mut self, forecast: ForecastCache) -> Self {
+        self.forecast = forecast;
+        self
     }
 
     /// The current instant at millisecond precision, like JavaScript `Date`.

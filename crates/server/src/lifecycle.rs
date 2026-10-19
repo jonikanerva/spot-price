@@ -10,6 +10,7 @@ use tokio::task::JoinSet;
 use crate::clock::{Clock, SystemClock};
 use crate::config::{Config, RunMode};
 use crate::db::{self, PoolSettings};
+use crate::forecast_cache::ForecastCache;
 use crate::http::{AppState, router};
 use crate::jobs::{self, JobContext, scheduler};
 use crate::upstream::fingrid::FingridClient;
@@ -29,6 +30,9 @@ const MIGRATE_DEADLINE: Duration = Duration::from_secs(120);
 
 /// The deadline of the start-up schema check.
 const SCHEMA_CHECK_DEADLINE: Duration = Duration::from_secs(30);
+
+/// The time limit of the forecast computation at start-up.
+const FORECAST_STARTUP_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Applies the pending migrations and exits. The release runs this before
 /// `serve`.
@@ -105,12 +109,12 @@ pub async fn serve(config: Config) -> Result<(), &'static str> {
         fingrid: FingridClient::new(http.clone(), urls.fingrid),
         weather: WeatherClient::new(http, urls.openweathermap),
         clock: clock.clone(),
+        forecast: ForecastCache::default(),
     };
-    let app = router(AppState::new(
-        pool.clone(),
-        clock.clone(),
-        &config.auth_base_url,
-    ));
+    let app = router(
+        AppState::new(pool.clone(), clock.clone(), &config.auth_base_url)
+            .with_forecast(context.forecast.clone()),
+    );
 
     let listener = TcpListener::bind(config.bind).await.map_err(|_| "bind")?;
     let bound = listener.local_addr().map_err(|_| "bind")?;
@@ -122,7 +126,8 @@ pub async fn serve(config: Config) -> Result<(), &'static str> {
         config.fingrid_api_key.clone(),
         config.openweathermap_api_key.clone(),
     );
-    let tasks = scheduler::start(job_set, &clock, &stopped).map_err(|_| "scheduler")?;
+    let mut tasks = scheduler::start(job_set, &clock, &stopped).map_err(|_| "scheduler")?;
+    tasks.spawn(startup_forecast(context.clone(), stopped.clone()));
 
     let shutdown = async move {
         shutdown_signal().await;
@@ -157,6 +162,28 @@ pub async fn serve(config: Config) -> Result<(), &'static str> {
     }
     tracing::info!(stage = "shutdown", "service stopped");
     outcome
+}
+
+/// Computes the forecast once at start-up, so the first requests use the
+/// precomputed result. A failure or a timeout leaves the cache empty; the
+/// handler then computes per request until the next job run.
+pub async fn startup_forecast(context: JobContext, mut stopped: watch::Receiver<bool>) {
+    let refresh = context
+        .forecast
+        .refresh(&context.pool, context.clock.now(), "startup");
+    tokio::select! {
+        outcome = tokio::time::timeout(FORECAST_STARTUP_DEADLINE, refresh) => {
+            if outcome.is_err() {
+                tracing::warn!(
+                    job = "forecast",
+                    stage = "startup",
+                    code = "deadline",
+                    "the start-up forecast did not finish in time"
+                );
+            }
+        }
+        _ = stopped.wait_for(|stop| *stop) => {}
+    }
 }
 
 /// Waits for the job tasks to stop, then aborts the rest. A job stopped at

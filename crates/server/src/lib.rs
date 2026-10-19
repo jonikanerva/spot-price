@@ -8,6 +8,7 @@ pub mod auth;
 pub mod clock;
 pub mod config;
 pub mod db;
+pub mod forecast_cache;
 pub mod http;
 pub mod jobs;
 pub mod lifecycle;

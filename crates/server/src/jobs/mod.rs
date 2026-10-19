@@ -1,6 +1,8 @@
 //! The background jobs: the Nord Pool price fetch, the Fingrid fetch, and the
 //! weather collection, plus their schedules. These are the only background
-//! tasks of the service (STACK.md §9).
+//! tasks of the service (STACK.md §9). The price and Fingrid jobs also
+//! recompute the precomputed forecast after a run that stored data
+//! (`crate::forecast_cache`).
 //!
 //! Each job logs its own outcome and never returns an error to the
 //! scheduler, so one job's failure cannot affect another job.
@@ -17,6 +19,7 @@ use sqlx::PgPool;
 
 use crate::clock::Clock;
 use crate::config::Secret;
+use crate::forecast_cache::ForecastCache;
 use crate::upstream::fingrid::FingridClient;
 use crate::upstream::nordpool::NordPoolClient;
 use crate::upstream::weather::WeatherClient;
@@ -32,6 +35,9 @@ pub struct JobContext {
     pub fingrid: FingridClient,
     pub weather: WeatherClient,
     pub clock: Arc<dyn Clock>,
+    /// The forecast result that the API serves. The price and Fingrid jobs
+    /// recompute it after a run that stored data.
+    pub forecast: ForecastCache,
 }
 
 impl std::fmt::Debug for JobContext {
@@ -78,11 +84,25 @@ pub fn production_jobs(
     }
 }
 
-/// Runs the price fetch and logs the outcome. Returns whether tomorrow's
-/// prices are stored; a failure returns false.
+/// Recomputes the forecast after a job run. A failure keeps the previous
+/// result; `ForecastCache::refresh` logs it.
+async fn recompute_forecast(context: &JobContext, trigger: &'static str) {
+    // `refresh` logs the outcome.
+    let _logged = context
+        .forecast
+        .refresh(&context.pool, context.clock.now(), trigger)
+        .await;
+}
+
+/// Runs the price fetch and logs the outcome. After a run that stored
+/// prices, it recomputes the forecast. Returns whether tomorrow's prices are
+/// stored; a failure returns false.
 pub async fn price_fetch(context: &JobContext, label: &'static str) -> bool {
     match prices::run_fetch_job(&context.pool, &context.nordpool, context.clock.now()).await {
         Ok(result) => {
+            if result.results.iter().any(|r| r.stored > 0) {
+                recompute_forecast(context, "prices").await;
+            }
             let stored: usize = result.results.iter().map(|r| r.stored).sum();
             tracing::info!(
                 job = "prices",
@@ -111,7 +131,9 @@ pub async fn price_fetch(context: &JobContext, label: &'static str) -> bool {
     }
 }
 
-/// Runs the Fingrid fetch and logs the outcome.
+/// Runs the Fingrid fetch and logs the outcome. After a run that stored
+/// data, it recomputes the forecast. A degraded run writes nothing. A failed
+/// run can store actuals before it fails; the next run recomputes.
 pub async fn fingrid_fetch(context: &JobContext, key: &Secret, label: &'static str) {
     let now = context.clock.now();
     match fingrid::run_forecast_fetch_job(&context.pool, &context.fingrid, key, now).await {
@@ -121,25 +143,28 @@ pub async fn fingrid_fetch(context: &JobContext, key: &Secret, label: &'static s
             vintage_stored,
             vintage_pruned,
             vintage_degraded_reason,
-        }) => match vintage_degraded_reason {
-            None => tracing::info!(
-                job = "fingrid",
-                stage = label,
-                stored,
-                pruned,
-                vintage_stored,
-                vintage_pruned,
-                "Fingrid fetch finished"
-            ),
-            Some(reason) => tracing::warn!(
-                job = "fingrid",
-                stage = label,
-                stored,
-                pruned,
-                reason,
-                "Fingrid fetch finished; vintage archival degraded"
-            ),
-        },
+        }) => {
+            match vintage_degraded_reason {
+                None => tracing::info!(
+                    job = "fingrid",
+                    stage = label,
+                    stored,
+                    pruned,
+                    vintage_stored,
+                    vintage_pruned,
+                    "Fingrid fetch finished"
+                ),
+                Some(reason) => tracing::warn!(
+                    job = "fingrid",
+                    stage = label,
+                    stored,
+                    pruned,
+                    reason,
+                    "Fingrid fetch finished; vintage archival degraded"
+                ),
+            }
+            recompute_forecast(context, "fingrid").await;
+        }
         Ok(ForecastFetchResult::Degraded { reason }) => {
             tracing::warn!(job = "fingrid", stage = label, reason, "Fingrid degraded");
         }
