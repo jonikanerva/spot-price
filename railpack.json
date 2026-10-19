@@ -17,8 +17,7 @@
       "secrets": [],
       "commands": [
         "mkdir -p bin",
-        "SQLX_OFFLINE=true cargo build --release --locked --package spot-price-server",
-        "cp target/release/spot-price bin"
+        "rm -f target/release/spot-price && SQLX_OFFLINE=true cargo build --release --locked --package spot-price-server && cp target/release/spot-price bin"
       ],
       "caches": ["cargo_registry", "cargo_git", "cargo_target"]
     }
