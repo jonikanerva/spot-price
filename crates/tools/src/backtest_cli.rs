@@ -272,6 +272,10 @@ pub fn print_report(data: &BacktestData, out: &mut Output) -> Result<bool, ToolE
         "  sanity-clamped quarters: {}",
         summary.sanity_clamped_quarters
     ));
+    out.log(&format!(
+        "  no-grid-data origins: {}",
+        summary.no_grid_data_origins
+    ));
     out.log(&format!("  leakage-free:        {}", summary.leak_free));
     out.log(&format!(
         "  model MAE  (c/kWh):  {}",
@@ -354,6 +358,10 @@ fn print_compare_header(cmp: &OptimismComparison, out: &mut Output) {
     out.log(&format!(
         "  sanity-clamped quarters: honest {}  leaked {}",
         honest.sanity_clamped_quarters, cmp.leaked.sanity_clamped_quarters
+    ));
+    out.log(&format!(
+        "  no-grid-data origins: honest {}  leaked {}",
+        honest.no_grid_data_origins, cmp.leaked.no_grid_data_origins
     ));
 
     out.log("\n  CAVEATS (read before quoting any number):");
@@ -505,6 +513,10 @@ fn print_variant_header(cmp: &VariantComparison, out: &mut Output) {
     out.log(&format!(
         "  sanity-clamped quarters: A {}  B {}",
         a.sanity_clamped_quarters, b.sanity_clamped_quarters
+    ));
+    out.log(&format!(
+        "  no-grid-data origins: A {}  B {}",
+        a.no_grid_data_origins, b.no_grid_data_origins
     ));
 
     out.log("\n  CAVEATS (read before quoting any number):");

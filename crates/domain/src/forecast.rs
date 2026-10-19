@@ -40,7 +40,7 @@ pub use quarter::{QuarterMap, QuarterStart, iso_millis, quarter_map};
 pub use route::{
     Assessment, Confidence, FLOOR_HISTORY_DAYS, FORECAST_AREA, FORECAST_DAYS, ForecastWindow,
     REASON_FI_ONLY, REASON_FIT_DEFAULT, REASON_NO_GRID_DATA, REASON_SETTINGS_NOT_FOUND,
-    REASON_ZERO_SEEDED, RouteForecast, assess, forecast_for_route,
+    REASON_ZERO_SEEDED, RouteForecast, assess, forecast_for_route, has_grid_data,
 };
 pub use series::{
     BuiltSeries, ForecastSpotPoint, GridRecord, LinearFit, LinearFitError, SANITY_MARGIN_K,

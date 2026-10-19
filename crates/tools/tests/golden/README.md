@@ -30,7 +30,10 @@ commit it. A golden change is a contract change.
 
 ## Rust-only report lines
 
-The Rust backtest report prints the sanity-clamped quarters after the
-fallback origins line. The TypeScript report has no such line. The test of
-the `committedFixture` CLI output adds this one line to the TypeScript text
-and compares the rest byte for byte.
+The Rust backtest report prints the sanity-clamped quarters and the
+no-grid-data origins after the fallback origins line. The TypeScript report
+has no such lines. The test of the `committedFixture` CLI output adds these
+two lines to the TypeScript text and compares the rest byte for byte.
+
+The TypeScript summaries have no `noGridDataOrigins` key. The test reads a
+missing key as 0.

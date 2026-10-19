@@ -317,6 +317,9 @@ mod golden {
             count(&want["preVintageOrigins"]),
             "{what}"
         );
+        // The TypeScript sections have no such key; it reads as 0.
+        let no_grid_data = want.get("noGridDataOrigins").map_or(0, count);
+        assert_eq!(got.no_grid_data_origins, no_grid_data, "{what}");
         let iso = |ms: Option<i64>| ms.map(|ms| iso_millis(ts(ms)));
         assert_eq!(
             iso(got.scored_window_start_ms).as_deref(),
@@ -517,14 +520,15 @@ mod golden {
         let fixture = workspace_root().join("crates/tools/data/fixture.json");
         let got = run_cli(&["backtest", "--data", fixture.to_str().unwrap()]);
         let typescript = &expected()["committedFixture"]["cli"];
-        // The TypeScript report has no clamp count line; the Rust report adds
-        // exactly this line after the fallback line.
+        // The TypeScript report has no clamp count line and no no-grid-data
+        // line; the Rust report adds exactly these lines after the fallback
+        // line.
         let fallback = "\n  fallback origins:    0\n";
         let ts_stdout = typescript["stdout"].as_str().unwrap();
         assert_eq!(ts_stdout.matches(fallback).count(), 1);
         let want_stdout = ts_stdout.replacen(
             fallback,
-            &format!("{fallback}  sanity-clamped quarters: 0\n"),
+            &format!("{fallback}  sanity-clamped quarters: 0\n  no-grid-data origins: 0\n"),
             1,
         );
         assert_eq!(
@@ -995,6 +999,7 @@ mod golden {
             ("origins", int_json(s.origins)),
             ("fallbackOrigins", int_json(s.fallback_origins)),
             ("preVintageOrigins", int_json(s.pre_vintage_origins)),
+            ("noGridDataOrigins", int_json(s.no_grid_data_origins)),
             ("scoredWindowStart", iso_json(s.scored_window_start_ms)),
             ("scoredWindowEnd", iso_json(s.scored_window_end_ms)),
             (

@@ -218,12 +218,13 @@ fn write_artifact(
         summary.residuals.len()
     ));
     out.log(&format!(
-        "  scored window:       {} … {} ({}d, {} origins, {} pre-vintage skipped)",
+        "  scored window:       {} … {} ({}d, {} origins, {} pre-vintage skipped, {} no-grid-data skipped)",
         provenance.scored_window_start.as_deref().unwrap_or("n/a"),
         provenance.scored_window_end.as_deref().unwrap_or("n/a"),
         to_fixed(provenance.scored_window_span_days, 1),
         provenance.scored_origins,
-        summary.pre_vintage_origins
+        summary.pre_vintage_origins,
+        summary.no_grid_data_origins
     ));
     out.log(&format!("  leakage-free:        {}", summary.leak_free));
     out.log(&format!(
