@@ -153,6 +153,10 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   The `generated-at` kind sets a differing `generatedAt` of a forecast body
   to the recorded value before the other body checks, so one step can list
   both `generated-at` and `forecast-values`.
+  The `tomorrow-available` kind sets a `"tomorrowAvailable":false` of a body
+  to `true` when the recorded body has `true`, before the other body checks.
+  The Rust service is true only when the store has every quarter of the next
+  local day; the TypeScript service was true for any stored row of that day.
 - `contract/openapi.json` is the export of `spot-price export-openapi`. The
   `contract:check` task fails on drift. `contract.rs` compares it with the
   TypeScript document field by field.

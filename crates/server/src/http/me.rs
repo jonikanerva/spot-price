@@ -13,7 +13,9 @@ use spot_price_domain::time::{current_and_next_date, utc_range_for_local_date};
 
 use super::dto::{ChartDataDto, ErrorDto, TotalPriceDto, UserSettingsDto};
 use super::input::{self, SettingsBody};
-use super::price::{Internal, domain_settings, intervals, load_prices, out_of_range, resolution};
+use super::price::{
+    Internal, domain_settings, intervals, load_prices, out_of_range, resolution, tomorrow_available,
+};
 use super::session::{self, SignedIn};
 use super::{AppState, wire};
 use crate::store::user_settings::{self, UserSettingsRow};
@@ -164,7 +166,7 @@ async fn chart_answer(state: &AppState, user_id: &str) -> Result<Response, Inter
         StatusCode::OK,
         &ChartDataDto {
             today: totals(&today)?,
-            tomorrow_available: !tomorrow.is_empty(),
+            tomorrow_available: tomorrow_available(&tomorrow, tomorrow_range),
             tomorrow: totals(&tomorrow)?,
             unit: PRICE_UNIT,
             resolution_minutes: resolution(),
