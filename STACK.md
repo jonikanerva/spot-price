@@ -64,6 +64,7 @@ crates/
   server/src/          # config, store, upstream clients, jobs, HTTP, auth, logging, lifecycle
   server/tests/        # integration tests, HTTP golden replay, schema snapshot
   server/sqlx.toml     # SQLx macro type override (TIMESTAMPTZ -> jiff_sqlx::Timestamp)
+  server/build.rs      # rebuild the server when migrations/ changes
   tools/               # offline forecast tools (backtest, regenerate-bands, revision-magnitude)
 migrations/            # SQLx migrations
 .sqlx/                 # committed SQLx query metadata
@@ -558,7 +559,7 @@ reserves merge (`CLAUDE.md`).
 | Builder       | Railpack, Rust provider (`"provider": "rust"`: the root also has `package.json`)                                                                        |
 | Toolchain     | Rust 1.99.1 from `rust-toolchain.toml`                                                                                                                  |
 | Build         | One command: remove the old binary, `SQLX_OFFLINE=true cargo build --release --locked --package spot-price-server`, copy it to `bin/`                   |
-| Caches        | `cargo_registry`, `cargo_git`, `cargo_target`                                                                                                           |
+| Caches        | `cargo_registry`, `cargo_git`, `cargo_target` (`"type": "locked"`: one build at a time)                                                                 |
 | Image content | `bin/spot-price` only                                                                                                                                   |
 | Start         | `./bin/spot-price migrate && exec ./bin/spot-price serve`. The entrypoint is `/bin/bash -c`, so after `exec` the service is PID 1 and receives SIGTERM. |
 | Build context | Without `mise.toml` (local tools only)                                                                                                                  |
@@ -567,7 +568,15 @@ The removal, the build, and the copy run in one command. `target` is a
 Railpack cache mount, and a separate copy command can see a different
 cache state than the build: no binary, or an old binary from another
 build. An old binary can lack a migration, and `migrate` then stops with
-`migrate_version`.
+`migrate_version`. The `cargo_target` cache is `locked`, so an overlapping
+build of the service cannot replace the binary between the build and the
+copy.
+
+`crates/server/build.rs` prints `cargo:rerun-if-changed=../../migrations`.
+`sqlx::migrate!` embeds the migrations, and without the build script Cargo
+does not rebuild the server for a change that only adds a migration file.
+Manual check: add a file to `migrations/` and run `cargo build --package
+spot-price-server`; Cargo must print `Compiling spot-price-server`.
 
 `SQLX_OFFLINE=true` is required: the build gets the service variable
 `DATABASE_URL`, and the SQLx macros would otherwise connect to the
