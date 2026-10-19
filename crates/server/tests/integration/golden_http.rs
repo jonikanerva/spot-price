@@ -1068,6 +1068,62 @@ fn forecast_values_rejects_a_difference_outside_the_estimate_numbers() {
     assert_eq!(body_difference(&plain("2"), &plain("1")), "body");
 }
 
+/// The JSON pointers of the numbers in `value`.
+fn number_pointers(value: &Value, at: &str, out: &mut Vec<String>) {
+    match value {
+        Value::Number(_) => out.push(at.to_owned()),
+        Value::Object(map) => {
+            for (key, value) in map {
+                number_pointers(value, &format!("{at}/{key}"), out);
+            }
+        }
+        Value::Array(items) => {
+            for (index, value) in items.iter().enumerate() {
+                number_pointers(value, &format!("{at}/{index}"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn forecast_values_masks_no_other_number_of_a_recorded_forecast_body() {
+    let recorded: Value =
+        serde_json::from_str(&read("bodies/forecast-success.0.json.body")).unwrap();
+    let want = recorded.to_string();
+    let bump = |body: &mut Value, pointer: &str| {
+        let number = body.pointer_mut(pointer).unwrap();
+        *number = Value::from(number.as_f64().unwrap() + 1.0);
+    };
+    let mut numbers = Vec::new();
+    number_pointers(&recorded, "", &mut numbers);
+    let (estimates, others): (Vec<String>, Vec<String>) =
+        numbers.into_iter().partition(|pointer| {
+            FORECAST_VALUE_FIELDS
+                .iter()
+                .any(|field| pointer.ends_with(&format!("/{field}")))
+        });
+    let estimate = estimates.first().unwrap();
+    for field in ["/resolutionMinutes", "/bands/nominalCoverage"] {
+        assert!(others.iter().any(|pointer| pointer == field), "{field}");
+    }
+
+    let mut got = recorded.clone();
+    bump(&mut got, estimate);
+    assert_eq!(body_difference(&got.to_string(), &want), "forecast-values");
+    // A number outside the estimates changes together with an estimate.
+    for pointer in &others {
+        let mut got = recorded.clone();
+        bump(&mut got, estimate);
+        bump(&mut got, pointer);
+        assert_eq!(
+            body_difference(&got.to_string(), &want),
+            "body",
+            "{pointer}"
+        );
+    }
+}
+
 #[test]
 fn generated_at_description_accepts_only_that_description() {
     let document = |description: Option<&str>, unit: &str| {

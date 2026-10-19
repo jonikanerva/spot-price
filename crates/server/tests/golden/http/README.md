@@ -161,7 +161,11 @@ text in the fixture.
   replaced the value at each pointer with the string `"<volatile>"`. The real
   value matched `pattern`. To compare, parse the Rust body, check each value
   against `pattern`, set it to `"<volatile>"`, serialise it compactly, and
-  compare the bytes. Without `volatile` entries, compare the raw bytes.
+  compare the bytes. Without `volatile` entries, compare the raw bytes. The
+  Rust harness also accepts the intentional differences that
+  `golden_http.rs` lists. For example, the `forecast-values` kind accepts a
+  forecast body that differs only in its `estimated*CentsKwh` numbers
+  (`STACK.md` §2.1).
 - In `setCookie`, every non-empty cookie value is `<volatile>`. The attributes
   are verbatim. An empty value (a cookie that is cleared) is verbatim.
 - The generator fails when a captured random value appears anywhere else in
