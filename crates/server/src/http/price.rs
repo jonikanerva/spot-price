@@ -17,7 +17,7 @@ use spot_price_domain::price::{
 };
 use spot_price_domain::settings::{Hour, UserId, UserSettings};
 use spot_price_domain::time::{
-    CurrentAndNextDate, UserTimeZone, UtcRange, current_and_next_date, local_date,
+    CurrentAndNextDate, UserTimeZone, UtcRange, covers_range, current_and_next_date, local_date,
     utc_range_for_local_date, utc_range_for_local_date_span,
 };
 
@@ -113,6 +113,18 @@ pub async fn load_prices(
         })
 }
 
+/// The `tomorrowAvailable` value: true only when the stored rows cover the
+/// whole local day of `tomorrow`. Before the day-ahead auction, the store
+/// already has the first hour of the next Helsinki day.
+#[must_use]
+pub fn tomorrow_available(rows: &[PriceRow], tomorrow: UtcRange) -> bool {
+    covers_range(
+        rows.iter()
+            .map(|row| (row.delivery_start, row.delivery_end)),
+        tomorrow,
+    )
+}
+
 /// The domain intervals of stored price rows.
 ///
 /// # Errors
@@ -205,7 +217,7 @@ async fn public_spot_answer(state: &AppState, area: Area) -> Answer {
         &PublicSpotDto {
             area: area.code().to_owned(),
             today: today.iter().map(SpotPriceEntryDto::from).collect(),
-            tomorrow_available: !tomorrow.is_empty(),
+            tomorrow_available: tomorrow_available(&tomorrow, tomorrow_range),
             tomorrow: tomorrow.iter().map(SpotPriceEntryDto::from).collect(),
             unit: PRICE_UNIT,
             resolution_minutes: resolution(),

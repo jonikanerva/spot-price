@@ -89,6 +89,8 @@ The service computes the forecast once after each data change (at start-up, afte
 | --------- | -------- | ----------------------------------- |
 | `area`    | No       | Nord Pool area code (default: `FI`) |
 
+The response has the spot prices of today and tomorrow in the time zone of the area. `tomorrowAvailable` is `true` only when every quarter of tomorrow is stored. Before Nord Pool publishes the next day (about 12:00 UTC), `tomorrow` can already hold the first quarters of tomorrow, and `tomorrowAvailable` is `false`.
+
 ### Response types and interactive docs
 
 Full request/response schemas with examples are available in the [Interactive API Documentation](https://spot.calmdonut.com/api/docs). The OpenAPI 3.1 spec is also available at [`/api/v1/openapi.json`](https://spot.calmdonut.com/api/v1/openapi.json).

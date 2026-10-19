@@ -188,6 +188,28 @@ pub fn utc_range_for_local_date_span(
     })
 }
 
+/// True when the half-open periods `(start, end)` cover all of `range`
+/// without a gap. The periods can come in any order and can overlap.
+#[must_use]
+pub fn covers_range(
+    periods: impl IntoIterator<Item = (Timestamp, Timestamp)>,
+    range: UtcRange,
+) -> bool {
+    let mut periods: Vec<(Timestamp, Timestamp)> = periods.into_iter().collect();
+    periods.sort_unstable();
+    let mut covered_to = range.start;
+    for (start, end) in periods {
+        if covered_to >= range.end {
+            break;
+        }
+        if start > covered_to {
+            return false;
+        }
+        covered_to = covered_to.max(end);
+    }
+    covered_to >= range.end
+}
+
 /// `YYYY-MM-DDTHH:MM:SS±HH:MM` of `instant` in `zone`.
 ///
 /// The text has no fraction of a second, and UTC gives `+00:00`. The year has
@@ -429,6 +451,78 @@ mod tests {
                 area.timezone()
             );
         }
+    }
+
+    /// The quarters of `[from, to)` with the quarter starting at `skip`
+    /// left out.
+    fn quarters(
+        from: Timestamp,
+        to: Timestamp,
+        skip: Option<Timestamp>,
+    ) -> Vec<(Timestamp, Timestamp)> {
+        let quarter = jiff::SignedDuration::from_mins(15);
+        let mut out = Vec::new();
+        let mut at = from;
+        while at < to {
+            let end = at.checked_add(quarter).unwrap();
+            if Some(at) != skip {
+                out.push((at, end));
+            }
+            at = end;
+        }
+        out
+    }
+
+    #[test]
+    fn a_full_local_day_of_quarters_covers_the_day() {
+        for day in [date(2026, 2, 25), date(2026, 3, 29), date(2026, 10, 25)] {
+            let r = range(day, "Europe/Helsinki");
+            assert!(covers_range(quarters(r.start, r.end, None), r), "{day}");
+        }
+    }
+
+    #[test]
+    fn the_first_hour_of_the_next_helsinki_day_does_not_cover_the_day() {
+        // Before the auction, the store has 00:00-01:00 Helsinki of the next
+        // day: the last hour of the published CET delivery day.
+        let r = range(date(2026, 10, 19), "Europe/Helsinki");
+        let first_hour = r
+            .start
+            .checked_add(jiff::SignedDuration::from_hours(1))
+            .unwrap();
+        assert!(!covers_range(quarters(r.start, first_hour, None), r));
+        assert!(!covers_range([], r));
+    }
+
+    #[test]
+    fn one_missing_quarter_is_a_gap() {
+        let r = range(date(2026, 2, 25), "Europe/Helsinki");
+        let first = r.start;
+        let middle = ts("2026-02-25T10:00:00Z");
+        let last = r
+            .end
+            .checked_sub(jiff::SignedDuration::from_mins(15))
+            .unwrap();
+        for skip in [first, middle, last] {
+            assert!(
+                !covers_range(quarters(r.start, r.end, Some(skip)), r),
+                "{skip}"
+            );
+        }
+    }
+
+    #[test]
+    fn unordered_overlapping_and_longer_periods_still_cover() {
+        let r = range(date(2026, 2, 25), "Europe/Helsinki");
+        let mut periods = quarters(r.start, r.end, None);
+        periods.reverse();
+        periods.push((r.start, ts("2026-02-25T12:00:00Z")));
+        assert!(covers_range(periods, r));
+        let hourly = ts("2026-02-24T21:00:00Z");
+        assert!(covers_range([(hourly, r.end), (r.start, hourly)], r));
+        // A period that starts before the range and ends inside it.
+        let before = ts("2026-02-24T20:00:00Z");
+        assert!(!covers_range([(before, ts("2026-02-25T05:00:00Z"))], r));
     }
 
     #[test]

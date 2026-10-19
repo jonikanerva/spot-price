@@ -258,6 +258,18 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
     ("root-html", 0, "body", ROOT_HTML_CHART),
     ("root-html", 1, "body", ROOT_HTML_CHART),
     (
+        "public-spot",
+        2,
+        "tomorrow-available",
+        TOMORROW_COMPLETE_DAY,
+    ),
+    (
+        "session-signup-full-flow",
+        11,
+        "tomorrow-available",
+        TOMORROW_COMPLETE_DAY,
+    ),
+    (
         "forecast-success",
         0,
         "forecast-values",
@@ -322,6 +334,12 @@ const FORECAST_VALUE_FIELDS: [&str; 6] = [
     "estimatedTotalLowCentsKwh",
     "estimatedTotalHighCentsKwh",
 ];
+
+/// The reason of each `tomorrow-available` entry. In `public-spot` step 2
+/// the store has 40 quarters of tomorrow. In `session-signup-full-flow`
+/// step 11 the user zone is Europe/Stockholm: tomorrow, 2026-10-25, ends at
+/// 23:00Z, and the FI seed ends at 22:00Z.
+const TOMORROW_COMPLETE_DAY: &str = "tomorrowAvailable is true only when the store has every quarter of the next local day; the TypeScript service set it for any stored row of that day; owner decision: https://github.com/jonikanerva/spot-price/issues/133#issuecomment-6261547267";
 
 const ROOT_HTML_CHART: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels";
 
@@ -782,6 +800,14 @@ impl Replay<'_> {
             );
             self.mismatch(index, "generated-at", format!("want {theirs} got {mine}"));
         }
+        if let Some(narrowed) = tomorrow_available_narrowed(&body, &want_body) {
+            body = narrowed;
+            self.mismatch(
+                index,
+                "tomorrow-available",
+                "want true got false".to_owned(),
+            );
+        }
         if body == want_body {
             return;
         }
@@ -826,6 +852,40 @@ fn generated_at_pair(got: &str, want: &str) -> Option<(String, String)> {
     };
     let (mine, theirs) = (value(got)?, value(want)?);
     (mine != theirs).then_some((mine, theirs))
+}
+
+/// `got` with its one `"tomorrowAvailable":false` set to `true` when `want`
+/// has `true` there. The Rust service is true only for a complete next day;
+/// the rest of the body must still match byte for byte.
+fn tomorrow_available_narrowed(got: &str, want: &str) -> Option<String> {
+    const FALSE: &str = r#""tomorrowAvailable":false"#;
+    const TRUE: &str = r#""tomorrowAvailable":true"#;
+    (got.matches(FALSE).count() == 1 && !got.contains(TRUE) && want.matches(TRUE).count() == 1)
+        .then(|| got.replacen(FALSE, TRUE, 1))
+}
+
+#[test]
+fn tomorrow_available_narrows_only_from_true_to_false() {
+    let body = |value: &str| {
+        format!(r#"{{"area":"FI","today":[],"tomorrowAvailable":{value},"tomorrow":[]}}"#)
+    };
+    assert_eq!(
+        tomorrow_available_narrowed(&body("false"), &body("true")),
+        Some(body("true"))
+    );
+    assert_eq!(
+        tomorrow_available_narrowed(&body("true"), &body("false")),
+        None
+    );
+    assert_eq!(
+        tomorrow_available_narrowed(&body("true"), &body("true")),
+        None
+    );
+    assert_eq!(
+        tomorrow_available_narrowed(&body("false"), &body("false")),
+        None
+    );
+    assert_eq!(tomorrow_available_narrowed("{}", &body("true")), None);
 }
 
 /// Clears every application table and loads the seed and the case setup.

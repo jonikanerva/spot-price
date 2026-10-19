@@ -20,4 +20,5 @@ mod jobs;
 mod migrations;
 mod scheduler;
 mod stores;
+mod tomorrow;
 mod upstream;
