@@ -11,13 +11,13 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
-    CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
-    ForecastOptions, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices,
-    PrevDayBasis, QuarterMap, QuarterStart, UtcHour, build_artifact, build_forecast,
-    derive_band_offsets, has_grid_data, observed_coverage_of, sanity_bound_from_history,
-    uncalibrated_bands,
+    CalibratedBands, DeriveOptions, ExcludedExamples, FLOOR_HISTORY_DAYS, FORECAST_DAYS,
+    ForecastInput, ForecastOptions, GridRecord, GridVintage, HorizonResidual, IssuanceExamples,
+    IssuanceHistory, LatestPublishedRule, NeighborPrices, PrevDayBasis, QuarterMap, QuarterStart,
+    TrainingRule, UtcHour, build_artifact, build_forecast, build_issuance_examples,
+    derive_band_offsets, has_grid_data, observed_coverage_of, publication_horizon,
+    sanity_bound_from_history, uncalibrated_bands,
 };
-use spot_price_domain::time::{next_calendar_day, start_of_local_day_utc};
 
 use crate::data::{
     BacktestData, DATASET_CONSUMPTION_ACTUAL, DATASET_CONSUMPTION_FORECAST, DATASET_WIND_ACTUAL,
@@ -31,7 +31,7 @@ const QUARTER_MS: i64 = 15 * 60 * 1000;
 const HOUR_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * HOUR_MS;
 /// FI day-ahead prices for the next day appear at about 12:00 UTC.
-pub const PUBLICATION_HOUR_UTC: i64 = 12;
+pub const PUBLICATION_HOUR_UTC: i64 = spot_price_domain::forecast::PUBLICATION_HOUR_UTC;
 /// Nord Pool day-ahead delivery days run from 00:00 to 24:00 CET/CEST.
 pub const DELIVERY_DAY_TIME_ZONE: &str = "Europe/Oslo";
 
@@ -124,6 +124,9 @@ pub struct IssueTimeInputs {
     /// One selected vintage per target and forecast dataset, for targets in
     /// the served window `[history_start, series_end)`.
     pub forecast: BTreeMap<DatasetId, Vec<Vintage>>,
+    /// Every vintage per forecast dataset that the mode admits, for targets
+    /// in the served window: the input of issuance training.
+    pub forecast_ladder: BTreeMap<DatasetId, Vec<Vintage>>,
     /// Fingrid actuals in `[history_start, min(t_ms, series_end))`.
     pub actual: BTreeMap<DatasetId, Vec<GridActual>>,
 }
@@ -154,15 +157,7 @@ pub fn delivery_zone() -> Result<TimeZone, BacktestError> {
 /// [`BacktestError`] when the horizon leaves the Jiff range or the
 /// delivery-day time zone is missing.
 pub fn publication_horizon_ms(t_ms: i64) -> Result<i64, BacktestError> {
-    let utc = instant(t_ms)?.to_zoned(TimeZone::UTC);
-    let published_day = if i64::from(utc.hour()) >= PUBLICATION_HOUR_UTC {
-        next_calendar_day(utc.date()).map_err(|_| OutOfRange)?
-    } else {
-        utc.date()
-    };
-    let zone = delivery_zone()?;
-    let next_day = next_calendar_day(published_day).map_err(|_| OutOfRange)?;
-    let end = start_of_local_day_utc(next_day, &zone).map_err(|_| OutOfRange)?;
+    let end = publication_horizon(instant(t_ms)?, &delivery_zone()?).map_err(|_| OutOfRange)?;
     Ok(end.as_millisecond())
 }
 
@@ -219,6 +214,21 @@ pub fn reconstruct_issue_time(
             (*id, selected)
         })
         .collect();
+    let forecast_ladder = data
+        .vintages
+        .iter()
+        .map(|(id, vintages)| {
+            let admitted = vintages
+                .iter()
+                .filter(|v| {
+                    as_of_ms.is_none_or(|bound| v.issued_at.as_millisecond() < bound)
+                        && (history_start_ms..series_end_ms).contains(&v.start.as_millisecond())
+                })
+                .copied()
+                .collect();
+            (*id, admitted)
+        })
+        .collect();
     let actual_end_ms = t_ms.min(series_end_ms);
     let actual = data
         .actuals
@@ -240,6 +250,7 @@ pub fn reconstruct_issue_time(
         fi_prices,
         neighbor_prices,
         forecast,
+        forecast_ladder,
         actual,
     })
 }
@@ -306,6 +317,15 @@ pub fn collect_input_timestamps(inputs: &IssueTimeInputs) -> Vec<InputTimestamp>
             ));
         }
     }
+    for (dataset, records) in &inputs.forecast_ladder {
+        for r in records {
+            out.push(bounded(
+                format!("fingrid_forecast_ladder_{dataset}"),
+                r.issued_at.as_millisecond(),
+                inputs.t_ms,
+            ));
+        }
+    }
     out
 }
 
@@ -331,6 +351,9 @@ pub struct IssueForecast {
     /// Quarters with no profile price: the flat daily level of a model, or
     /// no value of a pure profile.
     pub shape_fallback_quarters: usize,
+    /// Issuance training only: training targets left out for a missing
+    /// wind or consumption value.
+    pub training_excluded: ExcludedExamples,
 }
 
 fn grid_records<'a, I>(records: I) -> Vec<GridRecord>
@@ -375,6 +398,16 @@ pub enum DayBasis {
     Delivery,
 }
 
+/// How a [`ForecastVariant`] builds its training rows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Training {
+    /// [`TrainingRule::Realised`]: the served forecast.
+    #[default]
+    Realised,
+    /// [`TrainingRule::Issuance`] with the vintage ladder of the issue time.
+    Issuance,
+}
+
 /// The forecast options that a backtest can vary. The default is the
 /// production model. Every variant gets the sanity bound of the served
 /// forecast, which can clamp a point prediction. The bands stay at their
@@ -393,6 +426,7 @@ pub struct ForecastVariant {
     pub prev_day_basis: DayBasis,
     /// Local days of the shape profile are in [`DELIVERY_DAY_TIME_ZONE`].
     pub shape_profile: ShapeFamily,
+    pub training: Training,
 }
 
 impl Default for ForecastVariant {
@@ -408,6 +442,10 @@ impl Default for ForecastVariant {
                 PrevDayBasis::DeliveryDay(_) => DayBasis::Delivery,
             },
             shape_profile: ShapeFamily::Served,
+            training: match production.training {
+                TrainingRule::Realised => Training::Realised,
+                TrainingRule::Issuance(_) => Training::Issuance,
+            },
         }
     }
 }
@@ -518,6 +556,69 @@ impl IssueRecords {
     }
 }
 
+/// The owned vintage ladders of one issue time, in the domain type.
+struct IssueLadders {
+    wind: Vec<GridVintage>,
+    consumption: Vec<GridVintage>,
+}
+
+impl IssueLadders {
+    fn of(inputs: &IssueTimeInputs) -> Self {
+        let ladder = |id: DatasetId| {
+            inputs
+                .forecast_ladder
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .map(|v| GridVintage {
+                    issued_at: v.issued_at,
+                    start: v.start,
+                    value: v.value,
+                })
+                .collect()
+        };
+        Self {
+            wind: ladder(DATASET_WIND_FORECAST),
+            consumption: ladder(DATASET_CONSUMPTION_FORECAST),
+        }
+    }
+
+    fn history<'a>(
+        &'a self,
+        inputs: &IssueTimeInputs,
+        zone: &'a TimeZone,
+    ) -> Result<IssuanceHistory<'a>, BacktestError> {
+        Ok(IssuanceHistory {
+            issued_at: instant(inputs.t_ms)?,
+            wind_vintages: &self.wind,
+            consumption_vintages: &self.consumption,
+            delivery_zone: zone,
+        })
+    }
+}
+
+/// The issuance training examples of the forecast of `variant` at this
+/// issue time: the example dataset that issuance training fits on. It does
+/// not depend on `variant.training`.
+///
+/// # Errors
+/// [`BacktestError`] when the series window leaves the `Timestamp` range or
+/// the delivery-day time zone is missing.
+pub fn issuance_examples_at(
+    inputs: &IssueTimeInputs,
+    variant: ForecastVariant,
+) -> Result<IssuanceExamples, BacktestError> {
+    let records = IssueRecords::of(inputs);
+    let input = records.input(inputs)?;
+    let zone = delivery_zone()?;
+    let ladders = IssueLadders::of(inputs);
+    Ok(build_issuance_examples(
+        &input,
+        &variant.forecast_options(&zone, &inputs.fi_prices),
+        &ladders.history(inputs, &zone)?,
+    ))
+}
+
 fn forecast_of_input(
     input: &ForecastInput<'_>,
     inputs: &IssueTimeInputs,
@@ -525,10 +626,14 @@ fn forecast_of_input(
 ) -> Result<IssueForecast, BacktestError> {
     let series_start_ms = inputs.origin_ms;
     let (_, series_end_ms) = served_window_ms(series_start_ms);
-    let result = build_forecast(
-        input,
-        &variant.forecast_options(&delivery_zone()?, &inputs.fi_prices),
-    );
+    let zone = delivery_zone()?;
+    let mut options = variant.forecast_options(&zone, &inputs.fi_prices);
+    let ladders;
+    if variant.training == Training::Issuance {
+        ladders = IssueLadders::of(inputs);
+        options.training = TrainingRule::Issuance(ladders.history(inputs, &zone)?);
+    }
+    let result = build_forecast(input, &options);
     Ok(IssueForecast {
         predicted: result
             .series
@@ -540,6 +645,7 @@ fn forecast_of_input(
         used_fallback: result.diagnostics.fit_used_default,
         sanity_clamped_quarters: result.diagnostics.sanity_clamped_quarters,
         shape_fallback_quarters: result.diagnostics.shape_fallback_quarters,
+        training_excluded: result.diagnostics.training_excluded,
     })
 }
 

@@ -17,8 +17,8 @@ use spot_price_domain::price::eur_mwh_to_cents_kwh;
 
 use crate::backtest::{
     BacktestOptions, DayBasis, ForecastVariant, HORIZON_LABELS, HorizonPairedDelta,
-    OptimismComparison, PRECISION_N_QUARTERS, PairedDelta, VariantComparison, compare_optimism,
-    compare_variants, run_backtest,
+    OptimismComparison, PRECISION_N_QUARTERS, PairedDelta, Training, VariantComparison,
+    compare_optimism, compare_variants, run_backtest,
 };
 use crate::cli::{Context, Output, flag_value, has_flag};
 use crate::data::{BacktestData, DatasetId, GridActual, PricePoint, Vintage, load_fixture};
@@ -53,7 +53,8 @@ const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --
   --ab  paired A/B: A = production model, B = production with these overrides, scored on the same origins.
         keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks,
         latest_published (before | at_or_before), prev_day_basis (utc | delivery),
-        shape_profile (served | prev_day | prev_week | mean2w | mean3w | mean4w). Not with --compare.
+        shape_profile (served | prev_day | prev_week | mean2w | mean3w | mean4w),
+        training (realised | issuance). Not with --compare.
   --eval  the evaluation report: --issuances <h[,h]> (UTC, default 6,13), --cost spot | contract:margin=,day=,night=,tax=,vat=,night_start=,night_end=,
           --split <selection-start>,<test-start> (YYYY-MM-DD), --criteria <file.json>, --seed <n>, --resamples <n>, --block-days <n>. With --ab, B is a second arm. Not with --compare.
           --profiles <family[,family]> adds per family a served-model arm shape_<family> and a pure-profile arm pure_<family>;
@@ -164,9 +165,10 @@ pub fn parse_variant(raw: &str) -> Result<ForecastVariant, ToolError> {
                 variant.shape_profile = ShapeFamily::parse(value)
                     .map_err(|message| ToolError::Argument(format!("--ab {message}")))?;
             }
+            "training" => variant.training = parse_training(value)?,
             _ => {
                 return Err(ToolError::Argument(format!(
-                    "--ab key must be ridge_lambda, wind_extension_weeks, consumption_extension_weeks, latest_published, prev_day_basis, or shape_profile, got \"{key}\""
+                    "--ab key must be ridge_lambda, wind_extension_weeks, consumption_extension_weeks, latest_published, prev_day_basis, shape_profile, or training, got \"{key}\""
                 )));
             }
         }
@@ -229,6 +231,16 @@ fn parse_prev_day_basis(value: &str) -> Result<DayBasis, ToolError> {
         "delivery" => Ok(DayBasis::Delivery),
         _ => Err(ToolError::Argument(format!(
             "--ab prev_day_basis must be utc or delivery, got \"{value}\""
+        ))),
+    }
+}
+
+fn parse_training(value: &str) -> Result<Training, ToolError> {
+    match value {
+        "realised" => Ok(Training::Realised),
+        "issuance" => Ok(Training::Issuance),
+        _ => Err(ToolError::Argument(format!(
+            "--ab training must be realised or issuance, got \"{value}\""
         ))),
     }
 }
@@ -479,9 +491,15 @@ pub fn print_variant_compare(
     Ok(!thin && cmp.origins_match)
 }
 
+/// The options of a variant. The training rule appears only when it is not
+/// the served rule, so the labels of earlier reports stay the same.
 pub(crate) fn variant_label(v: ForecastVariant) -> String {
+    let training = match v.training {
+        Training::Realised => "",
+        Training::Issuance => " training=issuance",
+    };
     let label = format!(
-        "ridge_lambda={} wind_extension_weeks={} consumption_extension_weeks={} latest_published={} prev_day_basis={}",
+        "ridge_lambda={} wind_extension_weeks={} consumption_extension_weeks={} latest_published={} prev_day_basis={}{training}",
         v.ridge_lambda,
         v.wind_extension_weeks,
         v.consumption_extension_weeks,

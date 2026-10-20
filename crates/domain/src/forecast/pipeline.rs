@@ -9,6 +9,7 @@ use super::features::{
     FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule, NeighborPrices, PrevDayBasis,
     build_feature_vector_indexed, build_price_index, training_matrix_at,
 };
+use super::issuance::{self, ExcludedExamples, TrainingRule};
 use super::js::{js_max, js_min};
 use super::model::{DEFAULT_RIDGE_LAMBDA, FitOptions, PriceTransform, TrainingData, fit_ridge};
 use super::quarter::{QUARTER_MS, QuarterMap, QuarterStart};
@@ -56,6 +57,8 @@ pub struct ForecastOptions<'a> {
     pub prev_day_basis: PrevDayBasis<'a>,
     /// The served forecast uses [`ShapeProfile::Served`].
     pub shape_profile: ShapeProfile<'a>,
+    /// The served forecast uses [`TrainingRule::Realised`].
+    pub training: TrainingRule<'a>,
 }
 
 impl Default for ForecastOptions<'static> {
@@ -69,6 +72,7 @@ impl Default for ForecastOptions<'static> {
             latest_published: LatestPublishedRule::Before,
             prev_day_basis: PrevDayBasis::UtcDay,
             shape_profile: ShapeProfile::Served,
+            training: TrainingRule::Realised,
         }
     }
 }
@@ -92,6 +96,8 @@ pub struct ForecastDiagnostics {
     pub band_calibrated: bool,
     /// Quarters that have band bounds.
     pub band_hour_buckets: usize,
+    /// Issuance training only: targets left out for a missing grid value.
+    pub training_excluded: ExcludedExamples,
 }
 
 /// The predicted spot series and its diagnostics.
@@ -102,14 +108,20 @@ pub struct ForecastResult {
 }
 
 /// The grid series after bucketing, tail extension, and merging.
-struct GridSeries {
-    wind: QuarterMap,
-    consumption: QuarterMap,
+pub(super) struct GridSeries {
+    pub(super) wind: QuarterMap,
+    pub(super) consumption: QuarterMap,
+    /// The bucketed forecast records.
+    pub(super) wind_forecast: QuarterMap,
+    pub(super) consumption_forecast: QuarterMap,
+    /// The bucketed forecast records and their tail extension.
+    pub(super) wind_extended: QuarterMap,
+    pub(super) consumption_extended: QuarterMap,
     wind_extended_quarters: usize,
     consumption_extended_quarters: usize,
 }
 
-fn grid_series(
+pub(super) fn grid_series(
     input: &ForecastInput<'_>,
     opts: &ForecastOptions<'_>,
     series_end_ms: i64,
@@ -145,6 +157,10 @@ fn grid_series(
         consumption_extended_quarters: consumption_extended
             .len()
             .saturating_sub(consumption_forecast.len()),
+        wind_forecast,
+        consumption_forecast,
+        wind_extended,
+        consumption_extended,
     }
 }
 
@@ -186,29 +202,45 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
             previous_day: opts.prev_day_basis.into(),
         },
     );
-    let training = training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index));
-    let fitted = fit_ridge(
-        &TrainingData {
-            feature_count: FEATURE_NAMES.len(),
-            rows: &training.rows,
-            targets: &training.targets,
-        },
-        &FitOptions {
-            ridge_lambda: opts.ridge_lambda,
-            price_transform: PriceTransform::Arcsinh,
-        },
-    );
-
     let span_ms = series_end.as_millisecond() - series_start.as_millisecond();
     let num_quarters = usize::try_from((span_ms / QUARTER_MS).max(0)).unwrap_or(0);
 
-    let mut predicted = QuarterMap::new();
-    let mut cursor = series_start;
-    for _ in 0..num_quarters {
-        let features = build_feature_vector_indexed(cursor, &ctx, &index);
-        predicted.insert(cursor, fitted.predict(&features));
-        cursor = cursor.offset(QUARTER_MS);
-    }
+    let (predicted, fit_meta, training_excluded) = match opts.training {
+        TrainingRule::Realised => {
+            let training = training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index));
+            let fitted = fit_ridge(
+                &TrainingData {
+                    feature_count: FEATURE_NAMES.len(),
+                    rows: &training.rows,
+                    targets: &training.targets,
+                },
+                &FitOptions {
+                    ridge_lambda: opts.ridge_lambda,
+                    price_transform: PriceTransform::Arcsinh,
+                },
+            );
+            let mut predicted = QuarterMap::new();
+            let mut cursor = series_start;
+            for _ in 0..num_quarters {
+                let features = build_feature_vector_indexed(cursor, &ctx, &index);
+                predicted.insert(cursor, fitted.predict(&features));
+                cursor = cursor.offset(QUARTER_MS);
+            }
+            (predicted, fitted.meta, ExcludedExamples::default())
+        }
+        TrainingRule::Issuance(history) => issuance::fit_and_predict(
+            input,
+            opts,
+            &history,
+            &issuance::ServedView {
+                grid: &grid,
+                ctx: &ctx,
+                index: &index,
+                series_start,
+                num_quarters,
+            },
+        ),
+    };
 
     let shaped = apply_within_day_shape_with(&predicted, input.spot_prices, opts.shape_profile);
     let mut predicted = shaped.result;
@@ -240,9 +272,9 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
     ForecastResult {
         series,
         diagnostics: ForecastDiagnostics {
-            fit_samples: fitted.meta.sample_count,
-            feature_count: fitted.meta.feature_count,
-            fit_used_default: fitted.meta.used_fallback,
+            fit_samples: fit_meta.sample_count,
+            feature_count: fit_meta.feature_count,
+            fit_used_default: fit_meta.used_fallback,
             consumption_extended_quarters: grid.consumption_extended_quarters,
             wind_extended_quarters: grid.wind_extended_quarters,
             filled_quarters: built.filled_quarters,
@@ -251,6 +283,7 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
             sanity_clamped_quarters,
             band_calibrated: opts.bands.calibrated,
             band_hour_buckets,
+            training_excluded,
         },
     }
 }
