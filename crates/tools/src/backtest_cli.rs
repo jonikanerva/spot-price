@@ -25,6 +25,7 @@ use crate::data::{BacktestData, DatasetId, GridActual, PricePoint, Vintage, load
 use crate::db;
 use crate::error::ToolError;
 use crate::jsfmt::to_fixed;
+use crate::profile::ShapeFamily;
 
 /// The default `--db` window in days back from now.
 pub const DEFAULT_WINDOW_DAYS: i64 = 90;
@@ -51,9 +52,12 @@ pub const MAX_EXTENSION_WEEKS: u32 = (FLOOR_HISTORY_DAYS / 7) as u32;
 const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>] [--compare] [--db-url <url>] [--ab <key=value[,key=value]>]
   --ab  paired A/B: A = production model, B = production with these overrides, scored on the same origins.
         keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks,
-        latest_published (before | at_or_before), prev_day_basis (utc | delivery). Not with --compare.
+        latest_published (before | at_or_before), prev_day_basis (utc | delivery),
+        shape_profile (served | prev_day | prev_week | mean2w | mean3w | mean4w). Not with --compare.
   --eval  the evaluation report: --issuances <h[,h]> (UTC, default 6,13), --cost spot | contract:margin=,day=,night=,tax=,vat=,night_start=,night_end=,
-          --split <selection-start>,<test-start> (YYYY-MM-DD), --criteria <file.json>, --seed <n>, --resamples <n>, --block-days <n>. With --ab, B is a second arm. Not with --compare.";
+          --split <selection-start>,<test-start> (YYYY-MM-DD), --criteria <file.json>, --seed <n>, --resamples <n>, --block-days <n>. With --ab, B is a second arm. Not with --compare.
+          --profiles <family[,family]> adds per family a served-model arm shape_<family> and a pure-profile arm pure_<family>;
+          families prev_day, prev_week, mean2w, mean3w, mean4w.";
 
 /// One stored day-ahead price in EUR/MWh.
 #[derive(Debug, Clone, PartialEq)]
@@ -128,8 +132,8 @@ pub fn parse_window_days(raw: Option<&str>) -> Result<i64, ToolError> {
 /// `--ab <key=value[,key=value]>`: the production options with overrides.
 /// `ridge_lambda` is a finite number ≥ 0. The `*_extension_weeks` keys are
 /// whole numbers in `0..=MAX_EXTENSION_WEEKS`. `latest_published` is
-/// `before` or `at_or_before`. `prev_day_basis` is `utc` or `delivery`. A key
-/// may appear once.
+/// `before` or `at_or_before`. `prev_day_basis` is `utc` or `delivery`.
+/// `shape_profile` is a [`ShapeFamily::token`]. A key may appear once.
 ///
 /// # Errors
 /// [`ToolError::Argument`] for an unknown or repeated key, or a bad value.
@@ -156,9 +160,13 @@ pub fn parse_variant(raw: &str) -> Result<ForecastVariant, ToolError> {
             }
             "latest_published" => variant.latest_published = parse_latest_published(value)?,
             "prev_day_basis" => variant.prev_day_basis = parse_prev_day_basis(value)?,
+            "shape_profile" => {
+                variant.shape_profile = ShapeFamily::parse(value)
+                    .map_err(|message| ToolError::Argument(format!("--ab {message}")))?;
+            }
             _ => {
                 return Err(ToolError::Argument(format!(
-                    "--ab key must be ridge_lambda, wind_extension_weeks, consumption_extension_weeks, latest_published, or prev_day_basis, got \"{key}\""
+                    "--ab key must be ridge_lambda, wind_extension_weeks, consumption_extension_weeks, latest_published, prev_day_basis, or shape_profile, got \"{key}\""
                 )));
             }
         }
@@ -472,14 +480,20 @@ pub fn print_variant_compare(
 }
 
 pub(crate) fn variant_label(v: ForecastVariant) -> String {
-    format!(
+    let label = format!(
         "ridge_lambda={} wind_extension_weeks={} consumption_extension_weeks={} latest_published={} prev_day_basis={}",
         v.ridge_lambda,
         v.wind_extension_weeks,
         v.consumption_extension_weeks,
         latest_published_name(v.latest_published),
         prev_day_basis_name(v.prev_day_basis)
-    )
+    );
+    // The served profile is not named, so the labels of older runs stay.
+    if v.shape_profile == ShapeFamily::Served {
+        label
+    } else {
+        format!("{label} shape_profile={}", v.shape_profile.token())
+    }
 }
 
 fn print_variant_header(cmp: &VariantComparison, out: &mut Output) {

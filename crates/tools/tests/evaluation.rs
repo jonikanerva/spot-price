@@ -15,8 +15,8 @@ mod evaluation {
     use spot_price_tools::criteria::{Criterion, Op, Outcome, Which, check};
     use spot_price_tools::data::{BacktestData, GridActual, PricePoint, Vintage, to_fixture_json};
     use spot_price_tools::evaluation::{
-        EvalOptions, Evaluation, Exclusion, IssueStatus, ModelArm, Segment, Split, Statistic,
-        TargetRecord, TaskKind, evaluate, schedule_arms, statistics,
+        ArmKind, EvalOptions, Evaluation, Exclusion, IssueStatus, ModelArm, Segment, Split,
+        Statistic, TargetRecord, TaskKind, evaluate, schedule_arms, statistics,
     };
     use spot_price_tools::schedule::{CostBasis, Pricer, ScheduleTask};
 
@@ -99,6 +99,7 @@ mod evaluation {
         ModelArm {
             name: name.to_owned(),
             variant,
+            kind: ArmKind::Model,
         }
     }
 

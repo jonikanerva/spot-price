@@ -17,6 +17,7 @@ pub mod eval_cli;
 pub mod evaluation;
 pub mod jsfmt;
 pub mod metrics;
+pub mod profile;
 pub mod revision;
 pub mod revision_cli;
 pub mod schedule;

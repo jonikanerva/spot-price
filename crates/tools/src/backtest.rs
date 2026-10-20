@@ -25,6 +25,7 @@ use crate::data::{
 };
 use crate::jsfmt::{count_f64, js_sum};
 use crate::metrics::{RankMode, median, percentile, precision_at_n, spearman};
+use crate::profile::ShapeFamily;
 
 const QUARTER_MS: i64 = 15 * 60 * 1000;
 const HOUR_MS: i64 = 60 * 60 * 1000;
@@ -130,7 +131,7 @@ pub struct IssueTimeInputs {
 /// The Fingrid read window of the served forecast for a series that starts
 /// at `origin_ms`: `(history_start, series_end)` in UTC ms, the rule of the
 /// domain `ForecastWindow`.
-fn served_window_ms(origin_ms: i64) -> (i64, i64) {
+pub(crate) fn served_window_ms(origin_ms: i64) -> (i64, i64) {
     (
         origin_ms.saturating_sub(FLOOR_HISTORY_DAYS * DAY_MS),
         origin_ms.saturating_add(FORECAST_DAYS * DAY_MS),
@@ -327,6 +328,9 @@ pub struct IssueForecast {
     pub used_fallback: bool,
     /// Quarters that the sanity bound clamped.
     pub sanity_clamped_quarters: usize,
+    /// Quarters with no profile price: the flat daily level of a model, or
+    /// no value of a pure profile.
+    pub shape_fallback_quarters: usize,
 }
 
 fn grid_records<'a, I>(records: I) -> Vec<GridRecord>
@@ -387,6 +391,8 @@ pub struct ForecastVariant {
     pub consumption_extension_weeks: u32,
     pub latest_published: LatestPublishedRule,
     pub prev_day_basis: DayBasis,
+    /// Local days of the shape profile are in [`DELIVERY_DAY_TIME_ZONE`].
+    pub shape_profile: ShapeFamily,
 }
 
 impl Default for ForecastVariant {
@@ -401,13 +407,15 @@ impl Default for ForecastVariant {
                 PrevDayBasis::UtcDay => DayBasis::Utc,
                 PrevDayBasis::DeliveryDay(_) => DayBasis::Delivery,
             },
+            shape_profile: ShapeFamily::Served,
         }
     }
 }
 
 impl ForecastVariant {
     /// The pipeline options of this variant. `delivery_zone` must be the
-    /// [`DELIVERY_DAY_TIME_ZONE`] zone; only [`DayBasis::Delivery`] reads it.
+    /// [`DELIVERY_DAY_TIME_ZONE`] zone; only [`DayBasis::Delivery`] and a
+    /// shape profile other than [`ShapeFamily::Served`] read it.
     /// `fi_prices` must be the FI prices that the forecast gets: the served
     /// forecast takes its sanity bound from them.
     #[must_use]
@@ -426,6 +434,7 @@ impl ForecastVariant {
                 DayBasis::Delivery => PrevDayBasis::DeliveryDay(delivery_zone),
             },
             sanity_bound: sanity_bound_from_history(fi_prices),
+            shape_profile: self.shape_profile.profile(delivery_zone),
             ..ForecastOptions::default()
         }
     }
@@ -530,6 +539,7 @@ fn forecast_of_input(
         series_end_ms,
         used_fallback: result.diagnostics.fit_used_default,
         sanity_clamped_quarters: result.diagnostics.sanity_clamped_quarters,
+        shape_fallback_quarters: result.diagnostics.shape_fallback_quarters,
     })
 }
 
