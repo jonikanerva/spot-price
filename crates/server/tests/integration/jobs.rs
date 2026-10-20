@@ -899,3 +899,41 @@ async fn a_total_weather_outage_reports_failure(pool: PgPool) {
     };
     assert_eq!(failures.len(), 2);
 }
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn the_fingrid_job_prunes_vintages_only_beyond_two_years(pool: PgPool) {
+    let now = ts("2026-04-15T12:34:56Z");
+    let target = ts(FINGRID_NOW);
+    for age_days in [181_i64, 729, 731] {
+        sqlx::query(
+            "INSERT INTO fingrid_forecasts (dataset_id, issued_at, start_time, end_time, value)
+             VALUES (245, $1::timestamptz, $2::timestamptz, $3::timestamptz, 50)",
+        )
+        .bind(days(now, -age_days).to_string())
+        .bind(target.to_string())
+        .bind(minutes(target, 15).to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let server = fingrid_server(vec![record(DATASET_WIND_FORECAST, target, 200.0)]).await;
+
+    let result = run_forecast_fetch_job(&pool, &fingrid(&server), &key(), now)
+        .await
+        .unwrap();
+    let ForecastFetchResult::Stored { vintage_pruned, .. } = result else {
+        panic!("unexpected result {result:?}");
+    };
+    assert_eq!(vintage_pruned, 1);
+    let oldest_kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fingrid_forecasts WHERE dataset_id = 245 AND issued_at < $1::timestamptz",
+    )
+    .bind(days(now, -180).to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        oldest_kept, 2,
+        "issuances older than 180 days and younger than 730 days stay"
+    );
+}
