@@ -30,9 +30,9 @@ const QUARTER_MS: i64 = 15 * 60 * 1000;
 const HOUR_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * HOUR_MS;
 /// FI day-ahead prices for the next day appear at about 12:00 UTC.
-const PUBLICATION_HOUR_UTC: i64 = 12;
+pub const PUBLICATION_HOUR_UTC: i64 = 12;
 /// Nord Pool day-ahead delivery days run from 00:00 to 24:00 CET/CEST.
-const DELIVERY_DAY_TIME_ZONE: &str = "Europe/Oslo";
+pub const DELIVERY_DAY_TIME_ZONE: &str = "Europe/Oslo";
 
 /// Labels of forecast days 0, 1, and 2 after the series start.
 pub const HORIZON_LABELS: [&str; 3] = ["d+1", "d+2", "d+3"];
@@ -137,14 +137,22 @@ fn served_window_ms(origin_ms: i64) -> (i64, i64) {
     )
 }
 
-fn delivery_zone() -> Result<TimeZone, BacktestError> {
+/// The time zone of the Nord Pool delivery day.
+///
+/// # Errors
+/// [`BacktestError::DeliveryDayTimeZone`] when the bundled database lacks it.
+pub fn delivery_zone() -> Result<TimeZone, BacktestError> {
     TimeZone::get(DELIVERY_DAY_TIME_ZONE).map_err(|_| BacktestError::DeliveryDayTimeZone)
 }
 
 /// Prices delivered before this instant are published at issue time `t_ms`.
 /// Delivery day D is published at [`PUBLICATION_HOUR_UTC`] on the UTC date
 /// D − 1, and it ends at 24:00 in [`DELIVERY_DAY_TIME_ZONE`].
-fn publication_horizon_ms(t_ms: i64) -> Result<i64, BacktestError> {
+///
+/// # Errors
+/// [`BacktestError`] when the horizon leaves the Jiff range or the
+/// delivery-day time zone is missing.
+pub fn publication_horizon_ms(t_ms: i64) -> Result<i64, BacktestError> {
     let utc = instant(t_ms)?.to_zoned(TimeZone::UTC);
     let published_day = if i64::from(utc.hour()) >= PUBLICATION_HOUR_UTC {
         next_calendar_day(utc.date()).map_err(|_| OutOfRange)?
@@ -423,6 +431,16 @@ impl ForecastVariant {
     }
 }
 
+/// Whether the served route would have grid data for these inputs. The route
+/// answers `NoGridData` when all four Fingrid inputs of its window are empty.
+///
+/// # Errors
+/// [`BacktestError`] when the series window leaves the `Timestamp` range.
+pub fn issue_has_grid_data(inputs: &IssueTimeInputs) -> Result<bool, BacktestError> {
+    let records = IssueRecords::of(inputs);
+    Ok(has_grid_data(&records.input(inputs)?))
+}
+
 /// Runs the production forecast with the issue-time inputs and the default
 /// options.
 ///
@@ -567,7 +585,10 @@ pub struct PerBaseline<T> {
     pub last_published_day: T,
 }
 
-fn baseline_for(baseline: Baseline, target_ms: i64, inputs: &IssueTimeInputs) -> Option<f64> {
+/// The value of `baseline` for the quarter at `target_ms`, read only from the
+/// issue-time FI prices; `None` when that price is not in the inputs.
+#[must_use]
+pub fn baseline_for(baseline: Baseline, target_ms: i64, inputs: &IssueTimeInputs) -> Option<f64> {
     let key_ms = match baseline {
         Baseline::LastWeek => target_ms - 7 * DAY_MS,
         Baseline::LastPublishedDay => {
