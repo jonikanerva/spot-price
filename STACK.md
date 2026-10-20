@@ -327,9 +327,11 @@ result.
   the UTC hour, not the Fingrid publication time; each row is the newest
   Fingrid version at the fetch. An issuance stores only targets with
   `start_time >= issued_at − VINTAGE_BACKFILL_HOURS` (6 h). Pruned by
-  `issued_at` beyond `VINTAGE_RETENTION_DAYS` (180), for every dataset,
+  `issued_at` beyond `VINTAGE_RETENTION_DAYS` (730), for every dataset,
   after a successful first Fingrid request (§2.3). The served forecast reads
-  only 245 and 165; 166 and 248 are archived for offline evaluation. **Live
+  only 245 and 165; 166 and 248 are archived for offline evaluation. At 730
+  days the table holds about 3.3–4.3 GB. Reassess the retention when the
+  database reaches 4 GB of the 5 GB Hobby volume limit (#168). **Live
   read shape (do not change):** the latest-per-target read is a LATERAL
   skip-scan on `idx_fingrid_forecasts_target_issued`, not `DISTINCT ON`;
   `DISTINCT ON` sorts every in-range issuance to disk and breaks the §4
@@ -684,7 +686,10 @@ and an API key.
 - **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. A
   revert of the port removes `railpack.json`, so Railpack detects the Node
   service again. A revert of a later change keeps its migration files.
-- **Data:** a revert needs no data change (docs/adr/0001). Sessions created
+- **Data:** a revert needs no data change (docs/adr/0001). A revert to a
+  180-day vintage retention, including a revert to the TypeScript service,
+  deletes every Fingrid forecast vintage older than 180 days at its first
+  Fingrid run. That deletion cannot be undone. Sessions created
   by the Rust service end at a revert; users sign in again. `_sqlx_migrations` and `app_sessions` stay and are
   harmless.
 - **Database loss:** no backup and no restore path (§5).

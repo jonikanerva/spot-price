@@ -40,7 +40,7 @@ pub const HISTORY_DAYS: i64 = if FLOOR_HISTORY_DAYS > WIND_EXTENSION_DAYS {
 pub const RETENTION_DAYS: i64 = 730;
 
 /// Retention of the forecast vintages, by `issued_at`.
-pub const VINTAGE_RETENTION_DAYS: i64 = 180;
+pub const VINTAGE_RETENTION_DAYS: i64 = 730;
 
 /// The end of the archive request after now. One hour beyond the 72-h
 /// horizon of datasets 166 and 248, so that a horizon counted from a later
@@ -186,6 +186,10 @@ mod tests {
         assert_eq!(HISTORY_DAYS, 31);
         assert_eq!(FORECAST_DAYS, 3);
         assert_eq!(RETENTION_DAYS, 730);
-        assert_eq!(VINTAGE_RETENTION_DAYS, 180);
+    }
+
+    #[test]
+    fn forecast_vintages_are_kept_for_two_years() {
+        assert_eq!(VINTAGE_RETENTION_DAYS, 730);
     }
 }
