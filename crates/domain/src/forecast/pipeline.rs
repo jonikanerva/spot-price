@@ -13,8 +13,8 @@ use super::js::{js_max, js_min};
 use super::model::{DEFAULT_RIDGE_LAMBDA, FitOptions, PriceTransform, TrainingData, fit_ridge};
 use super::quarter::{QUARTER_MS, QuarterMap, QuarterStart};
 use super::series::{
-    ForecastSpotPoint, GridRecord, SanityBound, apply_within_day_shape, bucket_records,
-    build_predicted_series, expand_hourly_to_quarters, extend_with_last_week,
+    ForecastSpotPoint, GridRecord, SanityBound, ShapeProfile, apply_within_day_shape_with,
+    bucket_records, build_predicted_series, expand_hourly_to_quarters, extend_with_last_week,
 };
 
 /// Wind tail extension: the mean over this many weeks back.
@@ -54,6 +54,8 @@ pub struct ForecastOptions<'a> {
     pub latest_published: LatestPublishedRule,
     /// The served forecast uses [`PrevDayBasis::UtcDay`].
     pub prev_day_basis: PrevDayBasis<'a>,
+    /// The served forecast uses [`ShapeProfile::Served`].
+    pub shape_profile: ShapeProfile<'a>,
 }
 
 impl Default for ForecastOptions<'static> {
@@ -66,6 +68,7 @@ impl Default for ForecastOptions<'static> {
             bands: &CALIBRATED_BANDS,
             latest_published: LatestPublishedRule::Before,
             prev_day_basis: PrevDayBasis::UtcDay,
+            shape_profile: ShapeProfile::Served,
         }
     }
 }
@@ -82,7 +85,7 @@ pub struct ForecastDiagnostics {
     pub wind_extended_quarters: usize,
     pub filled_quarters: usize,
     pub zero_seeded_quarters: usize,
-    /// Quarters with no 1-day or 7-day lag; not a degradation.
+    /// Quarters with no profile price; not a degradation.
     pub shape_fallback_quarters: usize,
     /// Quarters that the sanity bound clamped; expected 0.
     pub sanity_clamped_quarters: usize,
@@ -207,7 +210,7 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
         cursor = cursor.offset(QUARTER_MS);
     }
 
-    let shaped = apply_within_day_shape(&predicted, input.spot_prices);
+    let shaped = apply_within_day_shape_with(&predicted, input.spot_prices, opts.shape_profile);
     let mut predicted = shaped.result;
     let sanity_clamped_quarters = opts
         .sanity_bound

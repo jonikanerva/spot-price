@@ -1,0 +1,158 @@
+{
+  "experiment": "Within-day shape profile mean2w against the served shape (arm A), daily level held constant. Applies when the selection segment selects shape_mean2w.",
+  "declared": "2026-10-20",
+  "success": [
+    {
+      "id": "mae_delta/shape_mean2w-A/06/D+1",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/06/D+2",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/06/D+3",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/13/D+2",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/13/D+3",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/13/D+4",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/13/D+2",
+      "statistic": "ci_high",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/within_day/4h/06",
+      "statistic": "point",
+      "op": "<=",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/within_day/4h/13",
+      "statistic": "point",
+      "op": "<=",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/across_day/4h/06",
+      "statistic": "point",
+      "op": "<=",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/across_day/4h/13",
+      "statistic": "point",
+      "op": "<=",
+      "value": 0
+    }
+  ],
+  "regression": [
+    {
+      "id": "mae_delta/shape_mean2w-A/06/D+1",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/06/D+2",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/06/D+3",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/13/D+2",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/13/D+3",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/shape_mean2w-A/13/D+4",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/within_day/2h/06",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/within_day/2h/13",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/within_day/4h/06",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/within_day/4h/13",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/across_day/2h/06",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/across_day/2h/13",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/across_day/4h/06",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/shape_mean2w-A/across_day/4h/13",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    }
+  ]
+}

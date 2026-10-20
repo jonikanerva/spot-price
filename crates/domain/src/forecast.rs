@@ -43,10 +43,12 @@ pub use route::{
     REASON_ZERO_SEEDED, RouteForecast, assess, forecast_for_route, has_grid_data,
 };
 pub use series::{
-    BuiltSeries, ForecastSpotPoint, GridRecord, LinearFit, LinearFitError, SANITY_MARGIN_K,
-    SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound, ShapedPrediction, align_series,
-    apply_within_day_shape, bucket_records, build_predicted_series, expand_hourly_to_quarters,
-    extend_with_last_week, fit_linear, sanity_bound_from_history,
+    BuiltSeries, ForecastSpotPoint, GridRecord, LinearFit, LinearFitError,
+    PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS, ProfileValues, SANITY_MARGIN_K,
+    SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound, ShapeProfile, ShapedPrediction, align_series,
+    apply_within_day_shape, apply_within_day_shape_with, bucket_records, build_predicted_series,
+    expand_hourly_to_quarters, extend_with_last_week, fit_linear, profile_values,
+    sanity_bound_from_history,
 };
 
 /// A forecast instant outside the range that Jiff supports.

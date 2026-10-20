@@ -19,6 +19,7 @@ use crate::backtest::{
 };
 use crate::bootstrap::{BootstrapOptions, Estimate, UnitSums, estimate, resample_indices};
 use crate::data::{BacktestData, DATASET_CONSUMPTION_FORECAST, DATASET_WIND_FORECAST};
+use crate::profile::{profile_at_issue_time, pure_profile_forecast};
 use crate::schedule::{
     CostBasis, HOUSEHOLD_TIME_ZONE, HouseholdTimeZone, Pricer, QUARTER_MS, ScheduleError,
     ScheduleTask, cheapest_start, run_mean_price,
@@ -60,11 +61,23 @@ impl From<OutOfRange> for EvalError {
     }
 }
 
+/// What an arm forecasts with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ArmKind {
+    /// The forecast model of the variant.
+    #[default]
+    Model,
+    /// Only the shape profile of the variant: historical prices with no
+    /// model level and no learned correction.
+    PureProfile,
+}
+
 /// A forecast model under evaluation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelArm {
     pub name: String,
     pub variant: ForecastVariant,
+    pub kind: ArmKind,
 }
 
 /// The window of a scheduled run, in [`HOUSEHOLD_TIME_ZONE`].
@@ -119,6 +132,11 @@ pub struct ForecastIssue {
     pub expected_quarters: usize,
     /// Per arm: the quarters with a forecast value.
     pub forecast_quarters: Vec<usize>,
+    /// Per arm: the quarters with no profile price.
+    pub shape_fallback: Vec<usize>,
+    /// Per arm: the quarters whose profile source is in the skipped hour of
+    /// a 23-hour day. Always 0 for the fixed offsets of the served profile.
+    pub dst_gap: Vec<usize>,
 }
 
 /// One candidate issuance.
@@ -342,7 +360,16 @@ impl Run<'_> {
             .options
             .arms
             .iter()
-            .map(|arm| forecast_at_issue_time_with(&inputs, arm.variant))
+            .map(|arm| match arm.kind {
+                ArmKind::Model => forecast_at_issue_time_with(&inputs, arm.variant),
+                ArmKind::PureProfile => pure_profile_forecast(&inputs, arm.variant.shape_profile),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let dst_gap = self
+            .options
+            .arms
+            .iter()
+            .map(|arm| profile_at_issue_time(&inputs, arm.variant.shape_profile).map(|p| p.dst_gap))
             .collect::<Result<Vec<_>, _>>()?;
         let predictions: Vec<BTreeMap<i64, f64>> = forecasts
             .iter()
@@ -367,6 +394,11 @@ impl Run<'_> {
                 .collect(),
             expected_quarters,
             forecast_quarters: predictions.iter().map(BTreeMap::len).collect(),
+            shape_fallback: forecasts
+                .iter()
+                .map(|fc| fc.shape_fallback_quarters)
+                .collect(),
+            dst_gap,
         })));
         self.targets(&inputs, hour, &predictions, out)?;
         self.tasks(&inputs, hour, &predictions, out)?;

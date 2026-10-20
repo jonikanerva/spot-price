@@ -8,6 +8,7 @@ use std::path::Path;
 
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
+use spot_price_domain::forecast::PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS;
 use spot_price_domain::js::string_to_number;
 use spot_price_domain::settings::Hour;
 
@@ -19,11 +20,12 @@ use crate::criteria::{DeclaredCriteria, Outcome, Verdict, load_criteria};
 use crate::data::{BacktestData, to_fixture_json};
 use crate::error::ToolError;
 use crate::evaluation::{
-    DEFAULT_ISSUANCE_HOURS_UTC, EVAL_VERSION, EvalOptions, Evaluation, Exclusion, IssueStatus,
-    ModelArm, POWER_KW, SCHEDULE_QUARTERS, Segment, Split, Statistic, TaskKind, day_ahead_label,
-    duration_label, evaluate, fnv1a_hex, statistics,
+    ArmKind, DEFAULT_ISSUANCE_HOURS_UTC, EVAL_VERSION, EvalOptions, Evaluation, Exclusion,
+    IssueStatus, ModelArm, POWER_KW, SCHEDULE_QUARTERS, Segment, Split, Statistic, TaskKind,
+    day_ahead_label, duration_label, evaluate, fnv1a_hex, statistics,
 };
 use crate::metrics::{median, percentile};
+use crate::profile::{ShapeFamily, pooled_mae, pure_arm_name, select, shape_arm_name};
 use crate::schedule::{ContractScenario, CostBasis, HOUSEHOLD_TIME_ZONE};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -251,12 +253,17 @@ pub fn parse_flags(args: &[String]) -> Result<EvalFlags, ToolError> {
     let mut arms = vec![ModelArm {
         name: "A".to_owned(),
         variant: ForecastVariant::default(),
+        kind: ArmKind::Model,
     }];
     if let Some(raw) = value("--ab")? {
         arms.push(ModelArm {
             name: "B".to_owned(),
             variant: parse_variant(raw)?,
+            kind: ArmKind::Model,
         });
+    }
+    if let Some(raw) = value("--profiles")? {
+        arms.extend(profile_arms(&parse_profiles(raw)?));
     }
     let split = value("--split")?.map(parse_split).transpose()?;
     let criteria = value("--criteria")?
@@ -272,6 +279,52 @@ pub fn parse_flags(args: &[String]) -> Result<EvalFlags, ToolError> {
         bootstrap: bootstrap_flags(args)?,
         criteria,
     })
+}
+
+/// `--profiles <family[,family]>`: distinct shape families other than the
+/// served one, which arm A already has.
+///
+/// # Errors
+/// [`ToolError::Argument`] for an empty list, an unknown family, `served`,
+/// or a repeat.
+pub fn parse_profiles(raw: &str) -> Result<Vec<ShapeFamily>, ToolError> {
+    let mut families = Vec::new();
+    for item in raw.split(',') {
+        let family =
+            ShapeFamily::parse(item.trim()).map_err(|m| argument(format!("--profiles {m}")))?;
+        if family == ShapeFamily::Served {
+            return Err(argument(
+                "--profiles cannot list served: arm A is the served forecast".to_owned(),
+            ));
+        }
+        if families.contains(&family) {
+            return Err(argument(format!("--profiles repeats {}", family.token())));
+        }
+        families.push(family);
+    }
+    Ok(families)
+}
+
+/// The arms of `families`: first the served model with each shape profile,
+/// then each pure profile.
+#[must_use]
+pub fn profile_arms(families: &[ShapeFamily]) -> Vec<ModelArm> {
+    let arm = |family: ShapeFamily, kind| ModelArm {
+        name: match kind {
+            ArmKind::Model => shape_arm_name(family),
+            ArmKind::PureProfile => pure_arm_name(family),
+        },
+        variant: ForecastVariant {
+            shape_profile: family,
+            ..ForecastVariant::default()
+        },
+        kind,
+    };
+    families
+        .iter()
+        .map(|f| arm(*f, ArmKind::Model))
+        .chain(families.iter().map(|f| arm(*f, ArmKind::PureProfile)))
+        .collect()
 }
 
 fn hh(hour: u8) -> String {
@@ -328,11 +381,14 @@ fn print_header(data: &BacktestData, flags: &EvalFlags, out: &mut Output) {
             .join(", ")
     ));
     for arm in &options.arms {
-        out.log(&format!(
-            "  arm {}:               {}",
-            arm.name,
-            variant_label(arm.variant)
-        ));
+        let label = match arm.kind {
+            ArmKind::Model => variant_label(arm.variant),
+            ArmKind::PureProfile => format!(
+                "pure profile {}: historical prices only, no model level, no sanity clamp",
+                arm.variant.shape_profile.token()
+            ),
+        };
+        out.log(&format!("  arm {}:               {label}", arm.name));
     }
     out.log(&format!(
         "  cost basis:          {}",
@@ -366,6 +422,103 @@ fn print_header(data: &BacktestData, flags: &EvalFlags, out: &mut Output) {
         "   - A5 horizons: D+k is the {DELIVERY_DAY_TIME_ZONE} delivery day of the target minus the delivery day of the issue time. Schedule windows and local issue hours are in {HOUSEHOLD_TIME_ZONE}."
     ));
     out.log("   - A6 forecast error is scored only on targets after the last published quarter; every schedule arm gets the same published prices.");
+    if has_profile_arms(options) {
+        print_profile_rules(out);
+    }
+}
+
+fn has_profile_arms(options: &EvalOptions) -> bool {
+    options
+        .arms
+        .iter()
+        .any(|a| a.kind == ArmKind::PureProfile || a.variant.shape_profile != ShapeFamily::Served)
+}
+
+fn print_profile_rules(out: &mut Output) {
+    out.log("\n  SHAPE PROFILES (the within-day shape of an arm):");
+    out.log("   - P1 level: a shape_* arm is the served model with another profile. It keeps the daily level of the model, the UTC-day mean of the prediction; only the profile changes.");
+    out.log("   - P2 served (arm A): the published price 24 h earlier, else 168 h earlier (fixed offsets). The first unpublished day gets the previous day; later days get the previous week.");
+    out.log(&format!(
+        "   - P3 prev_day: the same local time on the latest earlier {DELIVERY_DAY_TIME_ZONE} day with a price for every quarter, up to {PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS} days back."
+    ));
+    out.log(&format!(
+        "   - P4 prev_week and mean<k>w: the same local time on the same weekday 1 or k weeks back ({DELIVERY_DAY_TIME_ZONE} calendar days). A mean needs every week; a missing week leaves no value, not a shorter mean."
+    ));
+    out.log("   - P5 DST: a local time in the skipped hour of a 23-hour source day has no profile price (DST gap). In the repeated hour of a 25-hour source day, the source has the UTC offset of the target, else the earlier instant.");
+    out.log("   - P6 unavailable: a shape_* arm keeps the flat daily level on a quarter without a profile price. A pure_* arm has no value there, so no arm is paired on that target.");
+    out.log("   - P7 the last_week and last_published_day baselines keep their fixed 168 h and 24 h offsets.");
+}
+
+fn profile_availability(
+    evaluation: &Evaluation,
+    segment: Segment,
+    split: Option<Split>,
+    out: &mut Output,
+) {
+    out.log("\n  profile availability (quarters of the forecast issuances with no profile price; DST gap is part of it):");
+    for &hour in &evaluation.issuance_hours_utc {
+        let forecasts: Vec<_> = evaluation
+            .issues
+            .iter()
+            .filter(|i| i.hour_utc == hour && segment.contains(i.t_ms, split))
+            .filter_map(|i| match &i.status {
+                IssueStatus::Forecast(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        let expected: usize = forecasts.iter().map(|f| f.expected_quarters).sum();
+        out.log(&format!(
+            "    {}  issuances {}  quarters {expected}",
+            hh(hour),
+            forecasts.len()
+        ));
+        for (a, name) in evaluation.arm_names.iter().enumerate() {
+            let sum = |v: fn(&crate::evaluation::ForecastIssue) -> &Vec<usize>| -> usize {
+                forecasts
+                    .iter()
+                    .map(|f| v(f).get(a).copied().unwrap_or(0))
+                    .sum()
+            };
+            out.log(&format!(
+                "      {name:<19} no profile {:>7}  DST gap {:>5}",
+                sum(|f| &f.shape_fallback),
+                sum(|f| &f.dst_gap)
+            ));
+        }
+    }
+}
+
+fn profile_selection(
+    evaluation: &Evaluation,
+    segment: Segment,
+    split: Option<Split>,
+    out: &mut Output,
+) {
+    let rows = pooled_mae(evaluation, segment, split);
+    let reference = evaluation.arm_names.first().map_or("A", String::as_str);
+    let chosen = select(&rows, reference);
+    out.log(&format!(
+        "\n  profile selection on segment {} (pooled MAE over every paired target of both issuance hours and every horizon; lower wins; a tie takes fewer weeks or keeps {reference}):",
+        segment.label()
+    ));
+    for row in &rows {
+        out.log(&format!(
+            "    {:<19} pooled MAE {}  paired targets {}",
+            row.arm,
+            fmt(row.mae, 4),
+            row.targets
+        ));
+    }
+    let name = |v: &Option<String>| v.clone().unwrap_or_else(|| "none".to_owned());
+    out.log(&format!(
+        "    selected weekday-mean window: {}  (pure: {})",
+        name(&chosen.weekday_mean),
+        name(&chosen.pure_weekday_mean)
+    ));
+    out.log(&format!(
+        "    selected candidate: {}  (among {reference}, shape_prev_day, shape_prev_week, and the selected window)",
+        name(&chosen.candidate)
+    ));
 }
 
 fn status_counts(
@@ -710,6 +863,18 @@ fn print_segment(
         fmt(Some(span), 0)
     ));
     status_counts(evaluation, segment, flags.split, out);
+    if has_profile_arms(&flags.options) {
+        profile_availability(evaluation, segment, flags.split, out);
+        // Only `--profiles` adds the arms that the selection compares.
+        let compared = flags
+            .options
+            .arms
+            .iter()
+            .any(|a| a.kind == ArmKind::PureProfile);
+        if segment == Segment::Selection && compared {
+            profile_selection(evaluation, segment, flags.split, out);
+        }
+    }
     target_tables(evaluation, segment, flags.split, out);
     accuracy_table(evaluation, stats, out);
     schedule_tables(evaluation, stats, segment, flags.split, out);
