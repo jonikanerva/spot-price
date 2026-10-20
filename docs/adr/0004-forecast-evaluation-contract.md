@@ -40,9 +40,17 @@ revision. The vintage archive covers only a few months.
    days, longer than the target span of one issuance. The interval is the
    95 % percentile interval.
 6. `--split <selection-start>,<test-start>` divides issuances by issue
-   time. The test segment stays sealed until `--criteria` declares the
-   success and regression criteria. The report prints the digest of the
-   criteria file. A criteria file looks like this:
+   time. A segment scores a target only when the target is delivered
+   before the next segment starts. It scores a schedule task only when the
+   task deadline is at or before that start. The report counts the other
+   targets and tasks as `crosses segment boundary`. So the train and
+   selection reports never show a price of a later segment. The test
+   segment stays sealed until `--criteria` declares the success and
+   regression criteria. The report prints the digest of the criteria file.
+   The seal applies only with `--split`, and the `declared` field is
+   self-reported. So each experiment publishes its criteria file digest
+   outside the tool, for example in an issue comment, before the test run.
+   A criteria file looks like this:
 
    ```json
    {
@@ -90,6 +98,8 @@ revision. The vintage archive covers only a few months.
 - The reconstruction assumptions of the data stay visible in every report.
 - A comparison of a variant uses `--eval --ab`, so both arms get the same
   issuances, targets, and tasks.
+- Limitation: the last-published-day baseline uses a fixed 24-hour offset.
+  Across a DST change, it is one local hour off.
 
 ## Cost of reversal
 

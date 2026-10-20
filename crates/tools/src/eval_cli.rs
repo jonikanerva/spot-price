@@ -436,10 +436,11 @@ fn target_tables(
 ) {
     out.log("\n  targets, lead hours, and inputs (paired = realised price, every arm, and both baselines):");
     out.log(&format!(
-        "    {:<5}  {:<7}  {:>7}  {:>6}  {:>9}  {:>18}  {:>8}  {:>8}  {:>10}  {:>8}  {:>8}  {:>8}",
+        "    {:<5}  {:<7}  {:>7}  {:>8}  {:>6}  {:>9}  {:>18}  {:>8}  {:>8}  {:>10}  {:>8}  {:>8}  {:>8}",
         "hour",
         "horizon",
         "targets",
+        "crossing",
         "paired",
         "issuances",
         "lead h min/med/max",
@@ -458,7 +459,10 @@ fn target_tables(
     {
         groups.entry((t.hour_utc, t.day_ahead)).or_default().push(t);
     }
-    for ((hour, day_ahead), targets) in groups {
+    for ((hour, day_ahead), all) in groups {
+        let (targets, crossing): (Vec<_>, Vec<_>) = all
+            .into_iter()
+            .partition(|t| segment.holds_target(t, split));
         let paired: Vec<_> = targets.iter().filter(|t| t.complete()).collect();
         let leads: Vec<f64> = paired.iter().map(|t| t.lead_hours()).collect();
         let issuances: BTreeSet<i64> = paired.iter().map(|t| t.t_ms).collect();
@@ -472,10 +476,11 @@ fn target_tables(
             targets.iter().filter(|t| f(t)).count()
         };
         out.log(&format!(
-            "    {:<5}  {:<7}  {:>7}  {:>6}  {:>9}  {:>18}  {:>8}  {:>8}  {:>10}  {:>8}  {:>8}  {:>8}",
+            "    {:<5}  {:<7}  {:>7}  {:>8}  {:>6}  {:>9}  {:>18}  {:>8}  {:>8}  {:>10}  {:>8}  {:>8}  {:>8}",
             hh(hour),
             day_ahead_label(day_ahead),
             targets.len(),
+            crossing.len(),
             paired.len(),
             issuances.len(),
             format!(
@@ -493,6 +498,7 @@ fn target_tables(
         ));
     }
     out.log("    noRealised counts targets after the last stored price or in a price gap. The last issuances of a window have no stored next day, so their series start early and their targets are not paired.");
+    out.log("    crossing counts targets delivered at or after the start of the next segment; they are left out of this segment (crosses segment boundary).");
 }
 
 fn stat_map(stats: &[Statistic]) -> BTreeMap<&str, &Statistic> {
@@ -556,6 +562,9 @@ fn accuracy_table(evaluation: &Evaluation, stats: &[Statistic], out: &mut Output
     }
 }
 
+/// A task of a segment's issuance that ends after the next segment starts.
+const CROSSES_SEGMENT_BOUNDARY: &str = "crosses segment boundary";
+
 const fn exclusion_label(e: Exclusion) -> &'static str {
     match e {
         Exclusion::FullyPublished => "fully published",
@@ -593,7 +602,10 @@ fn schedule_tables(
                 if tasks.is_empty() {
                     continue;
                 }
-                let scored: Vec<_> = tasks.iter().filter(|t| t.outcome.is_ok()).collect();
+                let scored: Vec<_> = tasks
+                    .iter()
+                    .filter(|t| t.outcome.is_ok() && segment.holds_task(t, split))
+                    .collect();
                 let leads: Vec<f64> = scored.iter().map(|t| t.lead_hours()).collect();
                 #[expect(clippy::cast_precision_loss, reason = "small counts")]
                 let published: Vec<f64> = scored
@@ -602,7 +614,9 @@ fn schedule_tables(
                     .collect();
                 let mut exclusions: BTreeMap<&str, usize> = BTreeMap::new();
                 for t in &tasks {
-                    if let Err(e) = t.outcome {
+                    if !segment.holds_task(t, split) {
+                        *exclusions.entry(CROSSES_SEGMENT_BOUNDARY).or_default() += 1;
+                    } else if let Err(e) = t.outcome {
                         *exclusions.entry(exclusion_label(e)).or_default() += 1;
                     }
                 }

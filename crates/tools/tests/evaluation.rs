@@ -634,6 +634,71 @@ mod evaluation {
         assert!(stat(&test, id).n < stat(&all, id).n);
     }
 
+    #[test]
+    fn a_segment_never_scores_targets_or_tasks_in_the_next_segment_period() {
+        let eval = default_eval(&build("2026-02-01T00:00:00Z", 24, None));
+        let (selection_start, test_start) =
+            (ms("2026-02-09T00:00:00Z"), ms("2026-02-17T00:00:00Z"));
+        let split = Some(Split {
+            selection_start_ms: selection_start,
+            test_start_ms: test_start,
+        });
+        for (segment, from, end) in [
+            (Segment::Train, i64::MIN, selection_start),
+            (Segment::Selection, selection_start, test_start),
+        ] {
+            let issued = |t_ms: i64| (from..end).contains(&t_ms);
+            // The issuances near the boundary do score targets after it, so
+            // the check below is not empty.
+            assert!(
+                eval.targets
+                    .iter()
+                    .any(|t| issued(t.t_ms) && t.complete() && t.target_ms >= end)
+            );
+            let stats = statistics(&eval, segment, split, &FAST);
+            for key in ["06/D+1", "06/D+3", "13/D+2", "13/D+4"] {
+                let day_ahead: i64 = key[4..].parse().unwrap();
+                let hour: u8 = key[..2].parse().unwrap();
+                let inside = eval
+                    .targets
+                    .iter()
+                    .filter(|t| {
+                        issued(t.t_ms)
+                            && t.hour_utc == hour
+                            && t.day_ahead == day_ahead
+                            && t.complete()
+                            && t.target_ms < end
+                    })
+                    .count();
+                let got = stats
+                    .iter()
+                    .find(|s| s.id == format!("mae/A/{key}"))
+                    .map_or(0, |s| s.n);
+                assert_eq!(got, inside, "{segment:?} mae/A/{key}");
+            }
+            for kind in [TaskKind::WithinDay, TaskKind::AcrossDay] {
+                let key = format!("{}/4h/13", kind.label());
+                let inside = eval
+                    .tasks
+                    .iter()
+                    .filter(|t| {
+                        issued(t.t_ms)
+                            && t.hour_utc == 13
+                            && t.kind == kind
+                            && t.task.quarters == 16
+                            && t.outcome.is_ok()
+                            && t.task.deadline_ms <= end
+                    })
+                    .count();
+                let got = stats
+                    .iter()
+                    .find(|s| s.id == format!("cost/A/{key}"))
+                    .map_or(0, |s| s.n);
+                assert_eq!(got, inside, "{segment:?} cost/A/{key}");
+            }
+        }
+    }
+
     // CLI
 
     fn temp_file(name: &str) -> PathBuf {
@@ -730,6 +795,7 @@ mod evaluation {
         assert!(stdout.contains("== segment: train"));
         assert!(stdout.contains("== segment: selection"));
         assert!(stdout.contains("SEALED"));
+        assert!(stdout.contains("crosses segment boundary"));
         assert!(!stdout.contains("== segment: test  issuance days"));
 
         let criteria = temp_file("criteria.json");

@@ -603,6 +603,35 @@ impl Segment {
             (Self::Test, Some(s)) => t_ms >= s.test_start_ms,
         }
     }
+
+    /// The start of the next segment; `None` for the last segment.
+    #[must_use]
+    pub const fn end_ms(self, split: Option<Split>) -> Option<i64> {
+        match (self, split) {
+            (Self::Train, Some(s)) => Some(s.selection_start_ms),
+            (Self::Selection, Some(s)) => Some(s.test_start_ms),
+            _ => None,
+        }
+    }
+
+    /// Whether a target of an issuance in this segment is delivered before
+    /// the next segment starts. A later target belongs to a later segment's
+    /// period, so this segment never scores it.
+    #[must_use]
+    pub fn holds_target(self, target: &TargetRecord, split: Option<Split>) -> bool {
+        self.contains(target.t_ms, split)
+            && self.end_ms(split).is_none_or(|end| target.target_ms < end)
+    }
+
+    /// Whether a task of an issuance in this segment ends by the start of
+    /// the next segment. See [`Segment::holds_target`].
+    #[must_use]
+    pub fn holds_task(self, task: &TaskRecord, split: Option<Split>) -> bool {
+        self.contains(task.t_ms, split)
+            && self
+                .end_ms(split)
+                .is_none_or(|end| task.task.deadline_ms <= end)
+    }
 }
 
 /// One named statistic of a segment. Criteria refer to the `id`.
@@ -740,7 +769,8 @@ impl Sums {
 }
 
 /// Every statistic of the issuances in `segment`, with its interval. All
-/// statistics use the same resampled days.
+/// statistics use the same resampled days. A target or task that crosses
+/// into the next segment's period is left out.
 #[must_use]
 pub fn statistics(
     evaluation: &Evaluation,
@@ -751,13 +781,13 @@ pub fn statistics(
     let mut sums = Sums::default();
     let arms = &evaluation.arm_names;
     for target in &evaluation.targets {
-        if segment.contains(target.t_ms, split) {
+        if segment.holds_target(target, split) {
             sums.add_target(arms, target);
         }
     }
     let schedule_arms = evaluation.schedule_arm_names();
     for task in &evaluation.tasks {
-        if segment.contains(task.t_ms, split) {
+        if segment.holds_task(task, split) {
             sums.add_task(arms, &schedule_arms, task);
         }
     }
