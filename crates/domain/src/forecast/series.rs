@@ -1,14 +1,17 @@
 //! Series helpers of the forecast pipeline: bucketing, tail extension, the
 //! within-day shape, the output sanity bound, and the predicted series.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use jiff::Timestamp;
+use jiff::civil::Date;
+use jiff::tz::{AmbiguousOffset, TimeZone};
+use jiff::{Span, Timestamp};
 
 use super::conformal::SpotBand;
 use super::js::{count_f64, js_min};
 use super::quarter::{DAY_MS, QUARTER_MS, QuarterMap, QuarterStart, WEEK_MS};
 use crate::js::round3;
+use crate::time::{next_calendar_day, start_of_local_day_utc};
 
 /// Multiplier on the observed price spread that widens the output sanity clamp.
 pub const SANITY_MARGIN_K: f64 = 3.0;
@@ -161,6 +164,182 @@ fn persistence_at(key: QuarterStart, spot_prices: &QuarterMap) -> Option<f64> {
         .copied()
 }
 
+/// How far back [`ShapeProfile::PreviousPublishedDay`] looks for a complete
+/// local day.
+pub const PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS: i64 = 7;
+
+/// The price profile that gives the within-day shape. The daily level is the
+/// same for every profile; only the lagged price per quarter changes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ShapeProfile<'a> {
+    /// The served rule: the price 24 h earlier, else 168 h earlier.
+    #[default]
+    Served,
+    /// The same local time on the latest earlier local day in the zone that
+    /// has a price for every quarter.
+    PreviousPublishedDay(&'a TimeZone),
+    /// The mean of the same local time on the same weekday of each of the last
+    /// `weeks` weeks. Every week must have a price; `weeks = 1` is the
+    /// previous week's same weekday.
+    WeekdayMean { zone: &'a TimeZone, weeks: u8 },
+}
+
+/// The profile prices of some quarters; see [`profile_values`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileValues {
+    pub values: QuarterMap,
+    /// Quarters with no profile price.
+    pub missing: usize,
+    /// Missing quarters whose local time does not exist on a source day: the
+    /// skipped hour of a 23-hour day.
+    pub dst_gap: usize,
+}
+
+/// Why a quarter has no source quarter on an earlier local day.
+enum SourceMiss {
+    /// The local time is in the skipped hour of the source day.
+    Gap,
+    /// The source date or instant is outside the Jiff range.
+    OutOfRange,
+}
+
+/// The quarter at the same local wall-clock time `days_back` local days
+/// before `key`. In the repeated hour of a 25-hour source day, it takes the
+/// instant with the UTC offset of `key`, else the earlier one.
+fn same_local_time_days_back(
+    key: QuarterStart,
+    zone: &TimeZone,
+    days_back: i64,
+) -> Result<QuarterStart, SourceMiss> {
+    let zoned = key
+        .timestamp()
+        .map_err(|_| SourceMiss::OutOfRange)?
+        .to_zoned(zone.clone());
+    let date = Span::new()
+        .try_days(days_back)
+        .and_then(|span| zoned.date().checked_sub(span))
+        .map_err(|_| SourceMiss::OutOfRange)?;
+    let ambiguous = zone.to_ambiguous_timestamp(date.to_datetime(zoned.time()));
+    let source = match ambiguous.offset() {
+        AmbiguousOffset::Unambiguous { .. } => ambiguous.compatible(),
+        AmbiguousOffset::Gap { .. } => return Err(SourceMiss::Gap),
+        AmbiguousOffset::Fold { after, .. } if after == zoned.offset() => ambiguous.later(),
+        AmbiguousOffset::Fold { .. } => ambiguous.earlier(),
+    };
+    source
+        .map(QuarterStart::floor)
+        .map_err(|_| SourceMiss::OutOfRange)
+}
+
+/// Whether `prices` has every quarter of the local day `date` in `zone`.
+fn complete_local_day(date: Date, zone: &TimeZone, prices: &QuarterMap) -> bool {
+    let bounds = start_of_local_day_utc(date, zone).and_then(|start| {
+        next_calendar_day(date)
+            .and_then(|next| start_of_local_day_utc(next, zone))
+            .map(|end| (start.as_millisecond(), end.as_millisecond()))
+    });
+    let Ok((start, end)) = bounds else {
+        return false;
+    };
+    let mut cursor = start;
+    while cursor < end {
+        if !prices.contains_key(&QuarterStart::from_millisecond(cursor)) {
+            return false;
+        }
+        cursor += QUARTER_MS;
+    }
+    start < end
+}
+
+/// The profile price of each key. A key without one is counted, not filled.
+#[must_use]
+pub fn profile_values<I>(
+    profile: ShapeProfile<'_>,
+    keys: I,
+    spot_prices: &QuarterMap,
+) -> ProfileValues
+where
+    I: IntoIterator<Item = QuarterStart>,
+{
+    let mut out = ProfileValues {
+        values: QuarterMap::new(),
+        missing: 0,
+        dst_gap: 0,
+    };
+    let mut complete_days: HashMap<Date, bool> = HashMap::new();
+    for key in keys {
+        let value = match profile {
+            ShapeProfile::Served => Ok(persistence_at(key, spot_prices)),
+            ShapeProfile::PreviousPublishedDay(zone) => {
+                previous_published_day_at(key, zone, spot_prices, &mut complete_days)
+            }
+            ShapeProfile::WeekdayMean { zone, weeks } => {
+                weekday_mean_at(key, zone, weeks, spot_prices)
+            }
+        };
+        match value {
+            Ok(Some(price)) => {
+                out.values.insert(key, price);
+            }
+            Ok(None) | Err(SourceMiss::OutOfRange) => out.missing += 1,
+            Err(SourceMiss::Gap) => {
+                out.missing += 1;
+                out.dst_gap += 1;
+            }
+        }
+    }
+    out
+}
+
+fn previous_published_day_at(
+    key: QuarterStart,
+    zone: &TimeZone,
+    spot_prices: &QuarterMap,
+    complete_days: &mut HashMap<Date, bool>,
+) -> Result<Option<f64>, SourceMiss> {
+    let target_date = key
+        .timestamp()
+        .map_err(|_| SourceMiss::OutOfRange)?
+        .to_zoned(zone.clone())
+        .date();
+    for days_back in 1..=PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS {
+        let Ok(date) = Span::new()
+            .try_days(days_back)
+            .and_then(|span| target_date.checked_sub(span))
+        else {
+            return Err(SourceMiss::OutOfRange);
+        };
+        let complete = *complete_days
+            .entry(date)
+            .or_insert_with(|| complete_local_day(date, zone, spot_prices));
+        if complete {
+            let source = same_local_time_days_back(key, zone, days_back)?;
+            return Ok(spot_prices.get(&source).copied());
+        }
+    }
+    Ok(None)
+}
+
+fn weekday_mean_at(
+    key: QuarterStart,
+    zone: &TimeZone,
+    weeks: u8,
+    spot_prices: &QuarterMap,
+) -> Result<Option<f64>, SourceMiss> {
+    if weeks == 0 {
+        return Ok(None);
+    }
+    let mut sum = 0.0;
+    for week in 1..=i64::from(weeks) {
+        let source = same_local_time_days_back(key, zone, 7 * week)?;
+        let Some(price) = spot_prices.get(&source) else {
+            return Ok(None);
+        };
+        sum += price;
+    }
+    Ok(Some(sum / f64::from(weeks)))
+}
+
 #[derive(Debug, Default)]
 struct DayAggregate {
     ridge_sum: f64,
@@ -173,7 +352,7 @@ struct DayAggregate {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShapedPrediction {
     pub result: QuarterMap,
-    /// Quarters with no 1-day or 7-day lag; they keep the flat daily level.
+    /// Quarters with no profile price; they keep the flat daily level.
     pub shape_fallback_quarters: usize,
 }
 
@@ -185,12 +364,24 @@ pub fn apply_within_day_shape(
     predicted: &QuarterMap,
     spot_prices: &QuarterMap,
 ) -> ShapedPrediction {
+    apply_within_day_shape_with(predicted, spot_prices, ShapeProfile::Served)
+}
+
+/// [`apply_within_day_shape`] with the persistence price of `profile`. The
+/// day mean of the prediction, the daily level, stays on the UTC day.
+#[must_use]
+pub fn apply_within_day_shape_with(
+    predicted: &QuarterMap,
+    spot_prices: &QuarterMap,
+    profile: ShapeProfile<'_>,
+) -> ShapedPrediction {
+    let profile = profile_values(profile, predicted.keys().copied(), spot_prices).values;
     let mut by_day: BTreeMap<i64, DayAggregate> = BTreeMap::new();
     for (&key, &value) in predicted {
         let day = by_day.entry(key.utc_day_start_ms()).or_default();
         day.ridge_sum += value;
         day.ridge_count += 1;
-        if let Some(persistence) = persistence_at(key, spot_prices) {
+        if let Some(&persistence) = profile.get(&key) {
             day.persistence_sum += persistence;
             day.persistence_count += 1;
         }
@@ -207,8 +398,8 @@ pub fn apply_within_day_shape(
             continue;
         };
         let ridge_daily_mean = day.ridge_sum / count_f64(day.ridge_count);
-        match persistence_at(key, spot_prices) {
-            Some(persistence) if day.persistence_count > 0 => {
+        match profile.get(&key) {
+            Some(&persistence) if day.persistence_count > 0 => {
                 let persistence_daily_mean = day.persistence_sum / count_f64(day.persistence_count);
                 result.insert(
                     key,
