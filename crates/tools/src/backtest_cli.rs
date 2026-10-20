@@ -51,7 +51,9 @@ pub const MAX_EXTENSION_WEEKS: u32 = (FLOOR_HISTORY_DAYS / 7) as u32;
 const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --db [--window <days>] [--export <fixture.json>] [--compare] [--db-url <url>] [--ab <key=value[,key=value]>]
   --ab  paired A/B: A = production model, B = production with these overrides, scored on the same origins.
         keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks,
-        latest_published (before | at_or_before), prev_day_basis (utc | delivery). Not with --compare.";
+        latest_published (before | at_or_before), prev_day_basis (utc | delivery). Not with --compare.
+  --eval  the evaluation report: --issuances <h[,h]> (UTC, default 6,13), --cost spot | contract:margin=,day=,night=,tax=,vat=,night_start=,night_end=,
+          --split <selection-start>,<test-start> (YYYY-MM-DD), --criteria <file.json>, --seed <n>, --resamples <n>, --block-days <n>. With --ab, B is a second arm. Not with --compare.";
 
 /// One stored day-ahead price in EUR/MWh.
 #[derive(Debug, Clone, PartialEq)]
@@ -469,7 +471,7 @@ pub fn print_variant_compare(
     Ok(!thin && cmp.origins_match)
 }
 
-fn variant_label(v: ForecastVariant) -> String {
+pub(crate) fn variant_label(v: ForecastVariant) -> String {
     format!(
         "ridge_lambda={} wind_extension_weeks={} consumption_extension_weeks={} latest_published={} prev_day_basis={}",
         v.ridge_lambda,
@@ -670,11 +672,56 @@ pub(crate) fn database_url(
         .ok_or(ToolError::MissingDatabaseUrl(command))
 }
 
+/// Reads the `--db` window and writes the `--export` snapshot when asked.
+fn read_db(
+    args: &[String],
+    ctx: &Context<'_>,
+    out: &mut Output,
+) -> Result<BacktestData, ToolError> {
+    let window_days = parse_window_days(flag_value(args, "--window"))?;
+    let url = database_url(args, ctx, "spot-price-tools backtest --db")?;
+    let data = db::block_on(db::fetch_backtest_data(&url, window_days, ctx.now))??;
+
+    if let Some(file) = flag_value(args, "--export") {
+        std::fs::write(file, crate::data::to_fixture_json(&data)).map_err(|source| {
+            ToolError::Write {
+                path: file.to_owned(),
+                source,
+            }
+        })?;
+        out.log(&format!("Exported {} prices → {file}", data.prices.len()));
+    }
+    Ok(data)
+}
+
+/// `backtest --eval`: every flag is checked before any data is read.
+fn run_eval(args: &[String], ctx: &Context<'_>, out: &mut Output) -> Result<i32, ToolError> {
+    if has_flag(args, "--compare") {
+        return Err(ToolError::Argument(
+            "--eval and --compare cannot be used together".to_owned(),
+        ));
+    }
+    let flags = crate::eval_cli::parse_flags(args)?;
+    let data = if let Some(file) = flag_value(args, "--data") {
+        load_fixture(Path::new(file))?
+    } else if has_flag(args, "--db") {
+        read_db(args, ctx, out)?
+    } else {
+        out.error(USAGE);
+        return Ok(2);
+    };
+    let ok = crate::eval_cli::print_evaluation(&data, &flags, out)?;
+    Ok(i32::from(!ok))
+}
+
 /// Runs `backtest` with the arguments after the subcommand.
 ///
 /// # Errors
 /// [`ToolError`] for an unreadable fixture, a bad flag, or a database error.
 pub fn run(args: &[String], ctx: &Context<'_>, out: &mut Output) -> Result<i32, ToolError> {
+    if has_flag(args, "--eval") {
+        return run_eval(args, ctx, out);
+    }
     let variant = if has_flag(args, "--ab") {
         let raw = flag_value(args, "--ab")
             .ok_or_else(|| ToolError::Argument("--ab needs a key=value list".to_owned()))?;
@@ -702,19 +749,7 @@ pub fn run(args: &[String], ctx: &Context<'_>, out: &mut Output) -> Result<i32, 
         return Ok(2);
     }
 
-    let window_days = parse_window_days(flag_value(args, "--window"))?;
-    let url = database_url(args, ctx, "spot-price-tools backtest --db")?;
-    let data = db::block_on(db::fetch_backtest_data(&url, window_days, ctx.now))??;
-
-    if let Some(file) = flag_value(args, "--export") {
-        std::fs::write(file, crate::data::to_fixture_json(&data)).map_err(|source| {
-            ToolError::Write {
-                path: file.to_owned(),
-                source,
-            }
-        })?;
-        out.log(&format!("Exported {} prices → {file}", data.prices.len()));
-    }
+    let data = read_db(args, ctx, out)?;
 
     let ok = if let Some(variant) = variant {
         print_variant_compare(&data, variant, out)?
