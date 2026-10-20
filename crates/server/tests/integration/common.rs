@@ -130,8 +130,9 @@ pub fn nordpool(server: &FakeServer) -> NordPoolClient {
     )
 }
 
+/// A Fingrid client without request spacing.
 pub fn fingrid(server: &FakeServer) -> FingridClient {
-    FingridClient::new(http_client(), server.url("/api/data"))
+    FingridClient::new(http_client(), server.url("/api/data")).with_request_spacing(Duration::ZERO)
 }
 
 pub fn weather(server: &FakeServer) -> WeatherClient {

@@ -197,8 +197,13 @@ connect timeout 10 s, a 30 s deadline per attempt that covers the body, and a
 
 - **Nord Pool:** `GET dataportal-api.nordpoolgroup.com/api/DayAheadPrices`
   for all 21 areas in one call; 3 attempts, 7 s apart.
-- **Fingrid:** `GET data.fingrid.fi/api/data`, datasets 245, 75, 165, 124,
-  header `x-api-key`; no retry, never throws.
+- **Fingrid:** `GET data.fingrid.fi/api/data`, header `x-api-key`; no
+  retry, never throws. Each run sends two requests, 2 s apart, because
+  Fingrid allows one request every 2 s per key. The first request gets
+  datasets 245, 75, 165, 124 for the served forecast. The second request
+  gets datasets 166 (consumption forecast, 72 h) and 248 (solar forecast,
+  72 h) for `[issued_at − 6 h, now + 73 h)`. A failure of one request does
+  not affect the other request.
 - **OpenWeatherMap:** One Call 3.0 for two fixed FI points; the key is in the
   query, so errors never include the URL.
 
@@ -317,13 +322,18 @@ result.
   change guard: `DO UPDATE … WHERE (end_time, value) IS DISTINCT FROM
 (EXCLUDED.end_time, EXCLUDED.value)`. `fetched_at` means last changed, not
   last seen. Pruned beyond `RETENTION_DAYS` (730).
-- **`fingrid_forecasts`:** append-only per issuance (`ON CONFLICT DO
-NOTHING`). An issuance stores only targets with `start_time >= issued_at −
-VINTAGE_BACKFILL_HOURS` (6 h). Pruned by `issued_at` beyond
-  `VINTAGE_RETENTION_DAYS` (180). **Live read shape (do not change):** the
-  latest-per-target read is a LATERAL skip-scan on
-  `idx_fingrid_forecasts_target_issued`, not `DISTINCT ON`; `DISTINCT ON`
-  sorts every in-range issuance to disk and breaks the §4 budget.
+- **`fingrid_forecasts`:** datasets 245, 165, 166, and 248. Append-only per
+  issuance (`ON CONFLICT DO NOTHING`). `issued_at` is the fetch time cut to
+  the UTC hour, not the Fingrid publication time; each row is the newest
+  Fingrid version at the fetch. An issuance stores only targets with
+  `start_time >= issued_at − VINTAGE_BACKFILL_HOURS` (6 h). Pruned by
+  `issued_at` beyond `VINTAGE_RETENTION_DAYS` (180), for every dataset,
+  after a successful first Fingrid request (§2.3). The served forecast reads
+  only 245 and 165; 166 and 248 are archived for offline evaluation. **Live
+  read shape (do not change):** the latest-per-target read is a LATERAL
+  skip-scan on `idx_fingrid_forecasts_target_issued`, not `DISTINCT ON`;
+  `DISTINCT ON` sorts every in-range issuance to disk and breaks the §4
+  budget.
 - **`weather_forecasts`, `weather_daily_forecasts`:** append-only per
   issuance; never collapse to the latest issuance. `target_date` is the UTC
   calendar date of `dt`. Pruned beyond `WEATHER_RETENTION_DAYS` (400). The
@@ -434,12 +444,12 @@ or the request path. Runs of one job never overlap. All jobs run once at
 start. These are the only allowed background tasks; a new one needs an
 entry here.
 
-| Job                | Schedule                                                                          | Work                                                                                                                                                                                             |
-| ------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Day-ahead prices   | `0 */2 * * *` UTC, plus `*/10 12-13 * * *` Europe/Oslo until tomorrow is complete | Nord Pool for today and tomorrow (UTC dates); skip a date when every area has at least `MIN_ENTRIES_PER_AREA` (23) rows. After a run that stored prices, recompute the forecast. Deadline 300 s. |
-| Fingrid grid data  | `0 * * * *` UTC, only with `FINGRID_API_KEY`                                      | Actuals (75, 124) upsert and prune; forecast vintages (245, 165) append and prune (§5). After a run that stored data, recompute the forecast. Deadline 120 s.                                    |
-| OpenWeatherMap     | `0 * * * *` UTC, only with `OPENWEATHERMAP_API_KEY`                               | Hourly and daily blocks for two FI points, stored separately; no pruning when every point failed. About 48 calls per day. Deadline 120 s.                                                        |
-| Forecast recompute | Once at start (deadline 60 s), then after the price and Fingrid runs above        | Read the forecast inputs (§5), run the model, and swap the result into `ForecastCache` (`std::sync::RwLock<Option<Arc<Snapshot>>>`). A failure keeps the previous result and logs a warning.     |
+| Job                | Schedule                                                                          | Work                                                                                                                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Day-ahead prices   | `0 */2 * * *` UTC, plus `*/10 12-13 * * *` Europe/Oslo until tomorrow is complete | Nord Pool for today and tomorrow (UTC dates); skip a date when every area has at least `MIN_ENTRIES_PER_AREA` (23) rows. After a run that stored prices, recompute the forecast. Deadline 300 s.                                       |
+| Fingrid grid data  | `0 * * * *` UTC, only with `FINGRID_API_KEY`                                      | Actuals (75, 124) upsert and prune; forecast vintages (245, 165) append and prune (§5). After a run that stored data, recompute the forecast. Then archive vintages of 166 and 248 (§2.3); this step never recomputes. Deadline 120 s. |
+| OpenWeatherMap     | `0 * * * *` UTC, only with `OPENWEATHERMAP_API_KEY`                               | Hourly and daily blocks for two FI points, stored separately; no pruning when every point failed. About 48 calls per day. Deadline 120 s.                                                                                              |
+| Forecast recompute | Once at start (deadline 60 s), then after the price and Fingrid runs above        | Read the forecast inputs (§5), run the model, and swap the result into `ForecastCache` (`std::sync::RwLock<Option<Arc<Snapshot>>>`). A failure keeps the previous result and logs a warning.                                           |
 
 - **Precomputed forecast:** the model result does not depend on the
   user. `GET /api/v1/price/forecast` serves the result of `ForecastCache` and

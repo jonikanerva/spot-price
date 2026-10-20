@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 use spot_price_domain::areas::{ALL_AREAS, Area};
 use spot_price_server::config::Secret;
 use spot_price_server::jobs::fingrid::{
-    FORECAST_DAYS, ForecastFetchResult, HISTORY_DAYS, RETENTION_DAYS, VINTAGE_RETENTION_DAYS,
-    run_forecast_fetch_job,
+    ARCHIVE_HORIZON_HOURS, ArchiveFetchResult, FORECAST_DAYS, ForecastFetchResult, HISTORY_DAYS,
+    RETENTION_DAYS, VINTAGE_RETENTION_DAYS, run_forecast_fetch_job, run_vintage_archive_job,
 };
 use spot_price_server::jobs::prices::{
     FetchJobError, FetchResult, all_areas_present, run_fetch_job,
@@ -17,9 +17,10 @@ use spot_price_server::jobs::weather::{
     PointFailure, WEATHER_RETENTION_DAYS, WeatherJobResult, run_weather_fetch_job,
 };
 use spot_price_server::store::fingrid::{
-    DATASET_CONSUMPTION_FORECAST, DATASET_WIND_ACTUAL, DATASET_WIND_FORECAST, FingridRecord,
-    VINTAGE_BACKFILL_HOURS, get_fingrid_forecast_vintages_latest, get_fingrid_records_by_range,
-    store_fingrid_forecast_vintages, store_fingrid_records,
+    DATASET_CONSUMPTION_FORECAST, DATASET_CONSUMPTION_FORECAST_72H, DATASET_SOLAR_FORECAST,
+    DATASET_WIND_ACTUAL, DATASET_WIND_FORECAST, FingridRecord, VINTAGE_BACKFILL_HOURS,
+    get_fingrid_forecast_vintages_all, get_fingrid_forecast_vintages_latest,
+    get_fingrid_records_by_range, store_fingrid_forecast_vintages, store_fingrid_records,
 };
 use spot_price_server::store::prices::{PriceRow, store_prices};
 use spot_price_server::store::weather::{
@@ -422,6 +423,157 @@ async fn a_vintage_failure_keeps_the_committed_actuals(pool: PgPool) {
             .await
             .unwrap();
     assert_eq!(actuals, [record(DATASET_WIND_ACTUAL, now, 700.0)]);
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn the_archive_job_stores_only_the_archived_datasets(pool: PgPool) {
+    let now = ts("2026-04-15T12:34:56Z");
+    let issued_at = ts("2026-04-15T12:00:00Z");
+    let too_old = minutes(hours(issued_at, -VINTAGE_BACKFILL_HOURS), -15);
+    let server = fingrid_server(vec![
+        record(DATASET_CONSUMPTION_FORECAST_72H, hours(now, 71), 9000.0),
+        record(DATASET_SOLAR_FORECAST, hours(now, 2), 300.0),
+        record(DATASET_SOLAR_FORECAST, too_old, 100.0),
+        // A body that also holds other datasets must not write them.
+        record(DATASET_WIND_FORECAST, hours(now, 2), 200.0),
+        record(DATASET_WIND_ACTUAL, now, 700.0),
+    ])
+    .await;
+
+    let result = run_vintage_archive_job(&pool, &fingrid(&server), &key(), now)
+        .await
+        .unwrap();
+    assert_eq!(result, ArchiveFetchResult::Stored { vintage_stored: 2 });
+    assert_eq!(
+        count_vintages(&pool, DATASET_CONSUMPTION_FORECAST_72H).await,
+        1
+    );
+    assert_eq!(count_vintages(&pool, DATASET_SOLAR_FORECAST).await, 1);
+    assert_eq!(count_vintages(&pool, DATASET_WIND_FORECAST).await, 0);
+    assert_eq!(count_vintages(&pool, DATASET_WIND_ACTUAL).await, 0);
+    let actuals =
+        get_fingrid_records_by_range(&pool, DATASET_WIND_ACTUAL, days(now, -1), days(now, 1))
+            .await
+            .unwrap();
+    assert_eq!(actuals.len(), 0);
+    let issued: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fingrid_forecasts WHERE issued_at = '2026-04-15T12:00:00Z'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        issued, 2,
+        "the issuance is the fetch time cut to the UTC hour"
+    );
+
+    let requests = server.recorded();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.param("datasets").as_deref(), Some("166,248"));
+    assert_eq!(
+        request.param("startTime").as_deref(),
+        Some("2026-04-15T06:00:00.000Z")
+    );
+    assert_eq!(
+        request.param("endTime").as_deref(),
+        Some("2026-04-18T13:34:56.000Z")
+    );
+    assert_eq!(ARCHIVE_HORIZON_HOURS, 73);
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn repeated_archive_runs_keep_one_version_per_issuance(pool: PgPool) {
+    let target = ts("2026-04-16T10:00:00Z");
+    for (now, value, inserted) in [
+        ("2026-04-15T12:10:00Z", 1.0, 1),
+        ("2026-04-15T13:10:00Z", 2.0, 1),
+        // The same fetch hour again: the first version of the hour stays.
+        ("2026-04-15T13:40:00Z", 3.0, 0),
+    ] {
+        let server = fingrid_server(vec![
+            record(DATASET_SOLAR_FORECAST, target, value),
+            record(DATASET_CONSUMPTION_FORECAST_72H, target, value * 1000.0),
+        ])
+        .await;
+        let result = run_vintage_archive_job(&pool, &fingrid(&server), &key(), ts(now))
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            ArchiveFetchResult::Stored {
+                vintage_stored: 2 * inserted
+            },
+            "{now}"
+        );
+    }
+    let all = get_fingrid_forecast_vintages_all(
+        &pool,
+        DATASET_SOLAR_FORECAST,
+        days(target, -1),
+        days(target, 1),
+    )
+    .await
+    .unwrap();
+    let versions: Vec<_> = all.iter().map(|v| (v.issued_at, v.value)).collect();
+    assert_eq!(
+        versions,
+        [
+            (ts("2026-04-15T12:00:00Z"), 1.0),
+            (ts("2026-04-15T13:00:00Z"), 2.0),
+        ]
+    );
+    assert_eq!(
+        count_vintages(&pool, DATASET_CONSUMPTION_FORECAST_72H).await,
+        2
+    );
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_degraded_archive_fetch_writes_nothing(pool: PgPool) {
+    let server = FakeServer::start(|_| raw(StatusCode::SERVICE_UNAVAILABLE, "{}")).await;
+    let result = run_vintage_archive_job(&pool, &fingrid(&server), &key(), ts(FINGRID_NOW))
+        .await
+        .unwrap();
+    assert_eq!(
+        result,
+        ArchiveFetchResult::Degraded {
+            reason: "Fingrid returned HTTP 503".to_owned()
+        }
+    );
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fingrid_forecasts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 0);
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn the_fingrid_job_prunes_archived_datasets_by_issuance(pool: PgPool) {
+    let now = ts(FINGRID_NOW);
+    let expired = days(now, -(VINTAGE_RETENTION_DAYS + 1));
+    for dataset_id in [DATASET_CONSUMPTION_FORECAST_72H, DATASET_SOLAR_FORECAST] {
+        store_fingrid_forecast_vintages(&pool, expired, &[record(dataset_id, expired, 1.0)])
+            .await
+            .unwrap();
+        store_fingrid_forecast_vintages(&pool, now, &[record(dataset_id, now, 2.0)])
+            .await
+            .unwrap();
+    }
+    let server = fingrid_server(vec![record(DATASET_WIND_ACTUAL, now, 700.0)]).await;
+
+    let result = run_forecast_fetch_job(&pool, &fingrid(&server), &key(), now)
+        .await
+        .unwrap();
+    let ForecastFetchResult::Stored { vintage_pruned, .. } = result else {
+        panic!("expected a stored result: {result:?}");
+    };
+    assert_eq!(vintage_pruned, 2);
+    assert_eq!(
+        count_vintages(&pool, DATASET_CONSUMPTION_FORECAST_72H).await,
+        1
+    );
+    assert_eq!(count_vintages(&pool, DATASET_SOLAR_FORECAST).await, 1);
 }
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
