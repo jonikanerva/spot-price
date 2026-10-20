@@ -448,6 +448,7 @@ mod evaluation {
             fi_prices,
             neighbor_prices: BTreeMap::new(),
             forecast: BTreeMap::new(),
+            forecast_ladder: BTreeMap::new(),
             actual: BTreeMap::new(),
         };
         (inputs, realised)
