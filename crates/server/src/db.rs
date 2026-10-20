@@ -16,6 +16,13 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 #[derive(Debug, Clone, Copy)]
 pub struct PoolSettings {
     pub max_connections: u32,
+    /// The connections that the pool keeps open, idle or in use. A new
+    /// connection costs about 100 ms, so without them the first request
+    /// after 10 idle minutes opens one or two connections on the request
+    /// path (#150).
+    /// Three cover the longest serial query chain of one request while the
+    /// pool pings the released connection in the background.
+    pub min_connections: u32,
     pub acquire_timeout: Duration,
     /// PostgreSQL `statement_timeout` of each connection.
     pub statement_timeout: Duration,
@@ -25,6 +32,7 @@ impl Default for PoolSettings {
     fn default() -> Self {
         Self {
             max_connections: 10,
+            min_connections: 3,
             acquire_timeout: Duration::from_secs(10),
             statement_timeout: Duration::from_secs(30),
         }
@@ -64,7 +72,9 @@ impl From<sqlx::Error> for StoreError {
     }
 }
 
-/// Creates a lazy pool. No connection opens before the first query.
+/// Creates a lazy pool. No connection opens before the first query. The
+/// pool keeps `min_connections` open from its first close of an idle
+/// connection on.
 ///
 /// # Errors
 ///
@@ -76,6 +86,7 @@ pub fn connect_lazy(database_url: &Secret, settings: PoolSettings) -> Result<PgP
         .options([("statement_timeout", statement_timeout.as_str())]);
     Ok(PgPoolOptions::new()
         .max_connections(settings.max_connections)
+        .min_connections(settings.min_connections)
         .acquire_timeout(settings.acquire_timeout)
         .connect_lazy_with(options))
 }
@@ -272,6 +283,32 @@ mod tests {
         assert_eq!(failure.sqlstate, None);
         assert_eq!(failure.reason, None);
         failure.kind
+    }
+
+    #[test]
+    fn the_default_pool_keeps_three_connections_open() {
+        let settings = PoolSettings::default();
+        assert_eq!(settings.min_connections, 3);
+        assert_eq!(settings.max_connections, 10);
+        assert!(settings.min_connections <= settings.max_connections);
+    }
+
+    #[tokio::test]
+    async fn the_lazy_pool_uses_the_pool_settings() {
+        let url = Secret::new("postgres://user@localhost:5432/spot".to_owned());
+        let settings = PoolSettings {
+            max_connections: 7,
+            min_connections: 2,
+            acquire_timeout: Duration::from_secs(4),
+            statement_timeout: Duration::from_secs(30),
+        };
+        let pool = connect_lazy(&url, settings).unwrap();
+        let options = pool.options();
+        assert_eq!(options.get_min_connections(), 2);
+        assert_eq!(options.get_max_connections(), 7);
+        assert_eq!(options.get_acquire_timeout(), Duration::from_secs(4));
+        assert_eq!(pool.size(), 0, "a lazy pool opens no connection at start");
+        pool.close().await;
     }
 
     #[test]
