@@ -297,13 +297,14 @@ result.
   offline tools use runtime queries with bound parameters.
 - **Connection:** over the Railway private network. Pool of 10 connections,
   acquire timeout 10 s, `statement_timeout` 30 s. The pool keeps at least 3
-  idle connections (`min_connections`). A new connection costs about 100 ms
-  in production. Without idle connections, the first request after 10 idle
-  minutes opened one or two connections and took 110–250 ms (#150). The
-  cost is 3 idle PostgreSQL backends. The other pool options are the SQLx
-  defaults: `idle_timeout` 10 min, `max_lifetime` 30 min, and a ping before
-  each acquire. The lazy pool keeps the minimum from its first close of an
-  idle connection on, about 10–20 min after start.
+  connections open, idle or in use (`min_connections`). A new connection
+  costs about 100 ms in production. Without idle connections, the first
+  request after 10 idle minutes opened one or two connections and took
+  110–250 ms (#150). The cost is 3 PostgreSQL backends that stay open
+  between the requests. The other pool options are the SQLx defaults:
+  `idle_timeout` 10 min, `max_lifetime` 30 min, and a ping before each
+  acquire. The lazy pool keeps the minimum from its first close of an idle
+  connection on, about 10–20 min after start.
 - **TLS:** SQLx with rustls (`tls-rustls-aws-lc-rs`). With the default
   `sslmode=prefer`, SQLx asks for TLS. It uses plain text only when the
   server declines TLS. When the server accepts, a failed handshake fails

@@ -16,9 +16,10 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 #[derive(Debug, Clone, Copy)]
 pub struct PoolSettings {
     pub max_connections: u32,
-    /// The idle connections that the pool keeps open. A new connection
-    /// costs about 100 ms, so without them the first request after 10 idle
-    /// minutes opens one or two connections on the request path (#150).
+    /// The connections that the pool keeps open, idle or in use. A new
+    /// connection costs about 100 ms, so without them the first request
+    /// after 10 idle minutes opens one or two connections on the request
+    /// path (#150).
     /// Three cover the longest serial query chain of one request while the
     /// pool pings the released connection in the background.
     pub min_connections: u32,
@@ -285,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_pool_keeps_three_idle_connections() {
+    fn the_default_pool_keeps_three_connections_open() {
         let settings = PoolSettings::default();
         assert_eq!(settings.min_connections, 3);
         assert_eq!(settings.max_connections, 10);
