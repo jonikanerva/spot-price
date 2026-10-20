@@ -165,6 +165,15 @@ impl PriceIndex {
     pub const fn neutral(&self) -> f64 {
         self.neutral
     }
+
+    /// Whether the previous-day statistics of `at` come from prices, not
+    /// from the neutral fill.
+    pub(crate) fn has_previous_day(&self, at: QuarterStart) -> bool {
+        self.rules
+            .previous_day
+            .previous_day_start_ms(at)
+            .is_some_and(|day_start| self.stats_by_day_start.contains_key(&day_start))
+    }
 }
 
 /// The shared price index of a forecast run with the default feature rules.
