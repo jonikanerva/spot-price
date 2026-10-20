@@ -1,8 +1,9 @@
 //! Public Fingrid grid series (STACK.md §5).
 //!
 //! The actual datasets (75, 124) live in `fingrid_actuals`, upsert-latest.
-//! The forecast datasets (245, 165) live only in `fingrid_forecasts`,
-//! append-only per issuance. The two writes never share a transaction.
+//! The forecast datasets (245, 165, 166, 248) live only in
+//! `fingrid_forecasts`, append-only per issuance. The two writes never share
+//! a transaction. The served forecast reads only 245 and 165.
 
 use jiff::{SignedDuration, Timestamp};
 use jiff_sqlx::ToSqlx as _;
@@ -18,14 +19,23 @@ pub const DATASET_WIND_ACTUAL: i32 = 75;
 pub const DATASET_CONSUMPTION_FORECAST: i32 = 165;
 /// Actual consumption.
 pub const DATASET_CONSUMPTION_ACTUAL: i32 = 124;
+/// Consumption forecast, 15 min, about 72 h ahead. Archived only.
+pub const DATASET_CONSUMPTION_FORECAST_72H: i32 = 166;
+/// Solar power forecast, 15 min, about 72 h ahead. Archived only.
+pub const DATASET_SOLAR_FORECAST: i32 = 248;
 
-/// All four datasets, in the order of the Fingrid request.
+/// The four datasets of the served forecast, in the order of their Fingrid
+/// request.
 pub const FORECAST_DATASETS: [i32; 4] = [
     DATASET_WIND_FORECAST,
     DATASET_WIND_ACTUAL,
     DATASET_CONSUMPTION_FORECAST,
     DATASET_CONSUMPTION_ACTUAL,
 ];
+
+/// The forecast datasets that are archived as vintages only, in the order of
+/// their own Fingrid request. The served forecast must not read them.
+pub const ARCHIVED_DATASETS: [i32; 2] = [DATASET_CONSUMPTION_FORECAST_72H, DATASET_SOLAR_FORECAST];
 
 /// How far before the issuance a target may lie and still be archived as a
 /// vintage. A value below `REFERENCE_MAX_LEAD_H` of the revision-magnitude
@@ -51,10 +61,12 @@ pub struct ForecastVintageRecord {
     pub value: f64,
 }
 
-/// Whether `dataset_id` is a forecast dataset (245 or 165).
+/// Whether `dataset_id` is a forecast dataset (245, 165, 166, or 248).
 #[must_use]
 pub fn is_forecast_dataset(dataset_id: i32) -> bool {
-    dataset_id == DATASET_WIND_FORECAST || dataset_id == DATASET_CONSUMPTION_FORECAST
+    dataset_id == DATASET_WIND_FORECAST
+        || dataset_id == DATASET_CONSUMPTION_FORECAST
+        || ARCHIVED_DATASETS.contains(&dataset_id)
 }
 
 /// Upserts actual records in one transaction. Returns the number of records

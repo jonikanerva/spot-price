@@ -23,7 +23,7 @@ use crate::forecast_cache::ForecastCache;
 use crate::upstream::fingrid::FingridClient;
 use crate::upstream::nordpool::NordPoolClient;
 use crate::upstream::weather::WeatherClient;
-use fingrid::ForecastFetchResult;
+use fingrid::{ArchiveFetchResult, ForecastFetchResult};
 use scheduler::Jobs;
 use weather::{DailySummary, PointFailure, WeatherJobResult};
 
@@ -134,8 +134,23 @@ pub async fn price_fetch(context: &JobContext, label: &'static str) -> bool {
 /// Runs the Fingrid fetch and logs the outcome. After a run that stored
 /// data, it recomputes the forecast. A degraded run writes nothing. A failed
 /// run can store actuals before it fails; the next run recomputes.
+///
+/// The archive request of `ARCHIVED_DATASETS` runs last, with the same
+/// `now`, whatever the outcome of the first request. It never triggers a
+/// recompute.
 pub async fn fingrid_fetch(context: &JobContext, key: &Secret, label: &'static str) {
     let now = context.clock.now();
+    served_fingrid_fetch(context, key, label, now).await;
+    context.fingrid.wait_request_spacing().await;
+    archive_fingrid_fetch(context, key, label, now).await;
+}
+
+async fn served_fingrid_fetch(
+    context: &JobContext,
+    key: &Secret,
+    label: &'static str,
+    now: jiff::Timestamp,
+) {
     match fingrid::run_forecast_fetch_job(&context.pool, &context.fingrid, key, now).await {
         Ok(ForecastFetchResult::Stored {
             stored,
@@ -176,6 +191,34 @@ pub async fn fingrid_fetch(context: &JobContext, key: &Secret, label: &'static s
                 "Fingrid fetch failed"
             );
         }
+    }
+}
+
+async fn archive_fingrid_fetch(
+    context: &JobContext,
+    key: &Secret,
+    label: &'static str,
+    now: jiff::Timestamp,
+) {
+    match fingrid::run_vintage_archive_job(&context.pool, &context.fingrid, key, now).await {
+        Ok(ArchiveFetchResult::Stored { vintage_stored }) => tracing::info!(
+            job = "fingrid",
+            stage = label,
+            vintage_stored,
+            "Fingrid vintage archive finished"
+        ),
+        Ok(ArchiveFetchResult::Degraded { reason }) => tracing::warn!(
+            job = "fingrid",
+            stage = label,
+            reason,
+            "Fingrid vintage archive degraded"
+        ),
+        Err(error) => tracing::error!(
+            job = "fingrid",
+            stage = label,
+            code = error.code(),
+            "Fingrid vintage archive failed"
+        ),
     }
 }
 

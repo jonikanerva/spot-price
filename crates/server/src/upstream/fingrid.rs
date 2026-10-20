@@ -1,8 +1,10 @@
-//! The Fingrid Open Data adapter: public wind and consumption series.
+//! The Fingrid Open Data adapter: public wind, consumption, and solar series.
 //!
 //! A fetch never fails with an error value that can stop a caller: every
 //! failure is a [`Degraded`] reason, and the forecast job continues without
 //! new data.
+
+use std::time::Duration;
 
 use jiff::Timestamp;
 use reqwest::header::{ACCEPT, HeaderValue};
@@ -16,6 +18,10 @@ use crate::store::fingrid::{FORECAST_DATASETS, FingridRecord};
 /// The page size of the request; one page holds the whole fetch window.
 const MAX_PAGE_SIZE: u32 = 20_000;
 
+/// The wait between two requests of one run. Fingrid allows one request
+/// every two seconds per API key.
+pub const REQUEST_SPACING: Duration = Duration::from_secs(2);
+
 /// The reason of a degraded fetch. The text holds no URL or key.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
@@ -26,31 +32,67 @@ pub struct Degraded(pub String);
 pub struct FingridClient {
     http: HttpClient,
     url: Url,
+    request_spacing: Duration,
 }
 
 impl FingridClient {
     #[must_use]
     pub fn new(http: HttpClient, url: Url) -> Self {
-        Self { http, url }
+        Self {
+            http,
+            url,
+            request_spacing: REQUEST_SPACING,
+        }
     }
 
-    /// The records of the four forecast datasets with `startTime` in
-    /// `[start, end)`.
+    /// The same client with another wait between two requests of one run.
+    #[must_use]
+    pub fn with_request_spacing(self, request_spacing: Duration) -> Self {
+        Self {
+            request_spacing,
+            ..self
+        }
+    }
+
+    /// Waits for the request spacing. Call it between two requests of one run.
+    pub async fn wait_request_spacing(&self) {
+        tokio::time::sleep(self.request_spacing).await;
+    }
+
+    /// The records of the four datasets of the served forecast with
+    /// `startTime` in `[start, end)`.
     ///
     /// # Errors
     ///
-    /// Returns [`Degraded`] for an auth failure, another HTTP error status, a
-    /// transport failure, or a body that fails validation.
+    /// Returns [`Degraded`] as [`Self::fetch_datasets`] does.
     pub async fn fetch_series(
         &self,
         api_key: &Secret,
         start: Timestamp,
         end: Timestamp,
     ) -> Result<Vec<FingridRecord>, Degraded> {
+        self.fetch_datasets(api_key, &FORECAST_DATASETS, start, end)
+            .await
+    }
+
+    /// The records of `dataset_ids` with `startTime` in `[start, end)`, in
+    /// one request. The body is not filtered by dataset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Degraded`] for an auth failure, another HTTP error status, a
+    /// transport failure, or a body that fails validation.
+    pub async fn fetch_datasets(
+        &self,
+        api_key: &Secret,
+        dataset_ids: &[i32],
+        start: Timestamp,
+        end: Timestamp,
+    ) -> Result<Vec<FingridRecord>, Degraded> {
         let mut key = HeaderValue::from_str(api_key.expose())
             .map_err(|_| Degraded("Fingrid API key is not a valid header value".to_owned()))?;
         key.set_sensitive(true);
-        let datasets = FORECAST_DATASETS
+        let datasets = dataset_ids
             .iter()
             .map(i32::to_string)
             .collect::<Vec<_>>()

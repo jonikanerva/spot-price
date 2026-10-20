@@ -366,6 +366,114 @@ async fn a_fingrid_run_that_stores_data_recomputes_the_forecast(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn an_archive_failure_keeps_the_served_fingrid_run(pool: PgPool) {
+    seed(&pool).await;
+    let start = ts("2026-10-24T09:00:00Z");
+    let body = serde_json::json!({"data": [
+        {"datasetId": 245, "startTime": start.to_string(),
+         "endTime": minutes(start, 15).to_string(), "value": 500.0},
+        {"datasetId": 75, "startTime": start.to_string(),
+         "endTime": minutes(start, 15).to_string(), "value": 1000.0}
+    ]});
+    let server = FakeServer::start(move |request| {
+        if request.param("datasets").as_deref() == Some("166,248") {
+            raw(StatusCode::INTERNAL_SERVER_ERROR, "")
+        } else {
+            json(StatusCode::OK, &body)
+        }
+    })
+    .await;
+    let context = context(&pool, &server);
+    jobs::fingrid_fetch(&context, &Secret::new("test-key".to_owned()), "test").await;
+
+    let datasets: Vec<_> = server
+        .recorded()
+        .iter()
+        .map(|r| r.param("datasets").unwrap())
+        .collect();
+    assert_eq!(datasets, ["245,75,165,124", "166,248"]);
+    assert_eq!(archived_rows(&pool).await, 0);
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM fingrid_forecasts \
+         WHERE dataset_id = 245 AND issued_at = '2026-10-24T09:00:00Z'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, 1);
+    let snapshot = context.forecast.current().unwrap();
+    assert_eq!(snapshot.generated_at, ts("2026-10-24T09:00:00Z"));
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_degraded_served_fingrid_run_still_archives(pool: PgPool) {
+    seed(&pool).await;
+    let start = ts("2026-10-24T12:00:00Z");
+    let body = serde_json::json!({"data": [
+        {"datasetId": 248, "startTime": start.to_string(),
+         "endTime": minutes(start, 15).to_string(), "value": 300.0}
+    ]});
+    let server = FakeServer::start(move |request| {
+        if request.param("datasets").as_deref() == Some("166,248") {
+            json(StatusCode::OK, &body)
+        } else {
+            raw(StatusCode::UNAUTHORIZED, "{}")
+        }
+    })
+    .await;
+    let context = context(&pool, &server);
+    jobs::fingrid_fetch(&context, &Secret::new("test-key".to_owned()), "test").await;
+
+    assert_eq!(archived_rows(&pool).await, 1);
+    // The archive run never recomputes the forecast.
+    assert!(context.forecast.current().is_none());
+}
+
+async fn archived_rows(pool: &PgPool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM fingrid_forecasts WHERE dataset_id IN (166, 248)")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn archived_datasets_change_neither_the_forecast_nor_its_freshness(pool: PgPool) {
+    seed(&pool).await;
+    let cache = filled(&pool, NOW).await;
+    let before = cache.current().unwrap();
+    let (_, cached_before) = forecast(&app(&pool, NOW, Some(&cache)), ALICE).await;
+    let (_, computed_before) = forecast(&app(&pool, NOW, None), ALICE).await;
+
+    // Newer issuances than the seed, with other values, for every seeded
+    // target of the served datasets.
+    sqlx::query(
+        "INSERT INTO fingrid_forecasts (dataset_id, issued_at, start_time, end_time, value) \
+         SELECT d.id, '2026-10-24T09:00:00Z', f.start_time, f.end_time, f.value * 3 + 17 \
+         FROM (SELECT DISTINCT start_time, end_time, value FROM fingrid_forecasts) f \
+         CROSS JOIN (VALUES (166), (248)) AS d(id) \
+         ON CONFLICT DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(archived_rows(&pool).await > 0);
+
+    cache.refresh(&pool, ts(NOW), "test").await.unwrap();
+    let after = cache.current().unwrap();
+    assert_eq!(after.generated_at, before.generated_at);
+    assert_eq!(after.grid_issued_at, before.grid_issued_at);
+    // Stale by the seed issuance (08:00), fresh by the archived one (09:00).
+    let late = ts("2026-10-24T10:30:00Z");
+    assert!(before.is_stale(late));
+    assert!(after.is_stale(late));
+    let (_, cached_after) = forecast(&app(&pool, NOW, Some(&cache)), ALICE).await;
+    let (_, computed_after) = forecast(&app(&pool, NOW, None), ALICE).await;
+    assert_eq!(cached_after, cached_before);
+    assert_eq!(computed_after, computed_before);
+    assert_eq!(generated_at(&cached_after), SEED_ISSUED);
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
 async fn a_degraded_fingrid_run_keeps_the_forecast(pool: PgPool) {
     seed(&pool).await;
     let server = FakeServer::start(|_| raw(StatusCode::UNAUTHORIZED, "{}")).await;
