@@ -2,9 +2,11 @@
 //! issuance and one target quarter of its forecast window. Its features use
 //! only what the forecast had at that issuance: FI and neighbour prices
 //! published by then, Fingrid forecast vintages issued strictly before it,
-//! and Fingrid actuals that started strictly before it. A value that was not
-//! available takes the fill of the served prediction, and an indicator
-//! column marks it. The prediction rows use the same assembly.
+//! and Fingrid actuals that started strictly before it. A price lag that was
+//! not available takes the fill of the served prediction, and an indicator
+//! column marks it. An example without a wind or consumption value is left
+//! out and counted, because a served prediction always has both. The
+//! prediction rows use the same assembly.
 
 use std::collections::BTreeMap;
 
@@ -179,6 +181,36 @@ pub struct IssuanceSummary {
     pub examples: usize,
     /// Target quarters in the training window without a published price.
     pub targets_without_price: usize,
+    /// Targets with a price that are not examples: no wind or consumption
+    /// value.
+    pub excluded: ExcludedExamples,
+}
+
+/// Targets left out because a wind or consumption value is missing. A
+/// target with both values missing counts once, under `outside_input` when
+/// either reason is that one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExcludedExamples {
+    /// The issuance had no vintage of the dataset at all, and the tail
+    /// extension has no forecast to extend: before the archive started.
+    pub no_vintage: usize,
+    /// The tail extension needs actuals from before the input: the input
+    /// starts [`FLOOR_HISTORY_DAYS`] before the run's series start, so an
+    /// old issuance lacks the actuals of its extension.
+    pub outside_input: usize,
+}
+
+impl ExcludedExamples {
+    /// The sum of both reasons.
+    #[must_use]
+    pub const fn total(self) -> usize {
+        self.no_vintage + self.outside_input
+    }
+
+    fn add(&mut self, other: Self) {
+        self.no_vintage += other.no_vintage;
+        self.outside_input += other.outside_input;
+    }
 }
 
 /// The training examples of a forecast run and the issuances they come from.
@@ -188,6 +220,18 @@ pub struct IssuanceExamples {
     pub issuances: Vec<IssuanceSummary>,
     /// In issuance order, then target order.
     pub examples: Vec<TrainingExample>,
+}
+
+impl IssuanceExamples {
+    /// The excluded targets of every issuance.
+    #[must_use]
+    pub fn excluded(&self) -> ExcludedExamples {
+        let mut total = ExcludedExamples::default();
+        for summary in &self.issuances {
+            total.add(summary.excluded);
+        }
+        total
+    }
 }
 
 /// The vintages of one dataset by target start (UTC ms), each list sorted
@@ -476,6 +520,7 @@ impl IssuanceInputs {
             has_grid_data,
             examples: 0,
             targets_without_price: 0,
+            excluded: ExcludedExamples::default(),
         }
     }
 }
@@ -512,6 +557,22 @@ fn issuance_examples(
     while q < inputs.series_end.min(run_start) {
         if let Some(&realised) = input.spot_prices.get(&q) {
             let (features, wind, consumption, lags) = example_row(q, &view);
+            let missing = |source, vintages: &BTreeMap<QuarterStart, Timestamp>| {
+                (source == InputSource::Missing).then_some(vintages.is_empty())
+            };
+            let reasons = [
+                missing(wind, &inputs.wind_issued),
+                missing(consumption, &inputs.consumption_issued),
+            ];
+            if reasons.iter().any(Option::is_some) {
+                if reasons.contains(&Some(false)) {
+                    summary.excluded.outside_input += 1;
+                } else {
+                    summary.excluded.no_vintage += 1;
+                }
+                q = q.offset(QUARTER_MS);
+                continue;
+            }
             out.push(TrainingExample {
                 issued_at: inputs.issued_at,
                 series_start: inputs.series_start,
@@ -608,7 +669,7 @@ pub(super) fn fit_and_predict(
     opts: &ForecastOptions<'_>,
     history: &IssuanceHistory<'_>,
     served: &ServedView<'_>,
-) -> (QuarterMap, FitMeta) {
+) -> (QuarterMap, FitMeta, ExcludedExamples) {
     let examples = build_issuance_examples(input, opts, history);
     let rows: Vec<Vec<f64>> = examples
         .examples
@@ -642,5 +703,5 @@ pub(super) fn fit_and_predict(
         predicted.insert(cursor, fitted.predict(&features));
         cursor = cursor.offset(QUARTER_MS);
     }
-    (predicted, fitted.meta)
+    (predicted, fitted.meta, examples.excluded())
 }

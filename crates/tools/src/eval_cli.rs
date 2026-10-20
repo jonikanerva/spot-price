@@ -8,11 +8,11 @@ use std::path::Path;
 
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
-use spot_price_domain::forecast::PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS;
+use spot_price_domain::forecast::{ExcludedExamples, PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS};
 use spot_price_domain::js::string_to_number;
 use spot_price_domain::settings::Hour;
 
-use crate::backtest::{DELIVERY_DAY_TIME_ZONE, ForecastVariant, PUBLICATION_HOUR_UTC};
+use crate::backtest::{DELIVERY_DAY_TIME_ZONE, ForecastVariant, PUBLICATION_HOUR_UTC, Training};
 use crate::backtest_cli::{MIN_SCOREABLE_ORIGINS, fmt, iso_or_na, parse_variant, variant_label};
 use crate::bootstrap::{BootstrapOptions, DEFAULT_BOOTSTRAP, MIN_OVERLAP_BLOCK_DAYS};
 use crate::cli::{Output, flag_value, has_flag};
@@ -521,6 +521,41 @@ fn profile_selection(
     ));
 }
 
+/// The training targets of issuance training that the fit left out,
+/// summed over the forecast issuances of the segment.
+fn training_exclusions(
+    evaluation: &Evaluation,
+    segment: Segment,
+    split: Option<Split>,
+    out: &mut Output,
+) {
+    out.log("\n  issuance training: training targets left out for a missing wind or consumption value (summed over issuances):");
+    for &hour in &evaluation.issuance_hours_utc {
+        let mut totals = vec![ExcludedExamples::default(); evaluation.arm_names.len()];
+        for issue in evaluation
+            .issues
+            .iter()
+            .filter(|i| i.hour_utc == hour && segment.contains(i.t_ms, split))
+        {
+            let IssueStatus::Forecast(f) = &issue.status else {
+                continue;
+            };
+            for (total, excluded) in totals.iter_mut().zip(&f.training_excluded) {
+                total.no_vintage += excluded.no_vintage;
+                total.outside_input += excluded.outside_input;
+            }
+        }
+        for (name, total) in evaluation.arm_names.iter().zip(&totals) {
+            out.log(&format!(
+                "    {}  {name:<19} no vintage {:>8}  outside input {:>8}",
+                hh(hour),
+                total.no_vintage,
+                total.outside_input
+            ));
+        }
+    }
+}
+
 fn status_counts(
     evaluation: &Evaluation,
     segment: Segment,
@@ -863,6 +898,14 @@ fn print_segment(
         fmt(Some(span), 0)
     ));
     status_counts(evaluation, segment, flags.split, out);
+    if flags
+        .options
+        .arms
+        .iter()
+        .any(|a| a.variant.training == Training::Issuance)
+    {
+        training_exclusions(evaluation, segment, flags.split, out);
+    }
     if has_profile_arms(&flags.options) {
         profile_availability(evaluation, segment, flags.split, out);
         // Only `--profiles` adds the arms that the selection compares.

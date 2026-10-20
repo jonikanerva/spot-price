@@ -4,7 +4,7 @@
 
 use jiff::tz::TimeZone;
 use spot_price_domain::forecast::{
-    FLOOR_HISTORY_DAYS, ProfileValues, QuarterStart, ShapeProfile, profile_values,
+    ExcludedExamples, FLOOR_HISTORY_DAYS, ProfileValues, QuarterStart, ShapeProfile, profile_values,
 };
 
 use crate::backtest::{BacktestError, IssueForecast, IssueTimeInputs, served_window_ms};
@@ -131,6 +131,7 @@ pub fn pure_profile_forecast(
         used_fallback: false,
         sanity_clamped_quarters: 0,
         shape_fallback_quarters: profile.missing,
+        training_excluded: ExcludedExamples::default(),
     })
 }
 

@@ -30,10 +30,10 @@ pub use features::{
     build_price_index_with, build_training_matrix,
 };
 pub use issuance::{
-    GridVintage, ISSUANCE_EXTRA_FEATURE_NAMES, ISSUANCE_FEATURE_COUNT, InputSource,
-    IssuanceExamples, IssuanceHistory, IssuanceSummary, LagAvailability, PUBLICATION_HOUR_UTC,
-    TrainingExample, TrainingRule, build_issuance_examples, issuance_feature_names,
-    publication_horizon,
+    ExcludedExamples, GridVintage, ISSUANCE_EXTRA_FEATURE_NAMES, ISSUANCE_FEATURE_COUNT,
+    InputSource, IssuanceExamples, IssuanceHistory, IssuanceSummary, LagAvailability,
+    PUBLICATION_HOUR_UTC, TrainingExample, TrainingRule, build_issuance_examples,
+    issuance_feature_names, publication_horizon,
 };
 pub use model::{
     DEFAULT_RIDGE_LAMBDA, FALLBACK_PREDICTION, FitMeta, FitOptions, FittedModel, MIN_FIT_SAMPLES,

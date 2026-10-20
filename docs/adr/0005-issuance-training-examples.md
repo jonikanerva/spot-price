@@ -38,8 +38,15 @@ issuance. They must not each build their own rule.
    vintage-source indicators, and five missing-lag indicators. One ridge fit
    covers all leads. The estimator, the within-day shape, and the clamp do
    not change.
-6. The prediction rows use the same assembly at the issue time of the run.
-7. `build_issuance_examples` returns the examples with their issuance,
+6. A served prediction always has a wind and a consumption value. A
+   training target without one of them is left out of the fit, not filled
+   with 0 MW. `IssuanceSummary.excluded` counts it by reason: no vintage at
+   the issuance (before the archive started), or a tail extension that
+   needs actuals from before the input (an issuance more than about 23
+   days back; the consumption extension reads the same quarter 1 week
+   earlier). The evaluation report shows the sums per arm.
+7. The prediction rows use the same assembly at the issue time of the run.
+8. `build_issuance_examples` returns the examples with their issuance,
    series start, target, lead, input sources, lag availability, features,
    and target price. Later experiments reuse it.
 
@@ -51,7 +58,12 @@ issuance. They must not each build their own rule.
 - **A wider price window for the training issuances.** Rejected for this
   comparison: arm B would read other data than arm A and the served
   forecast. An old issuance sees only the part of its window inside the
-  served window; its summary shows that.
+  served window; its summary shows that. The same holds for the actuals of
+  the tail extension: targets that need older actuals are left out
+  (item 6).
+- **Fill a missing grid value and add an indicator column.** Rejected: an
+  indicator corrects only an additive shift. The 0 MW value would still
+  enter `residual_mw` and `wind_x_consumption`.
 - **Hourly training issuances.** Rejected for now: the rows grow 24 times
   for little new information.
 

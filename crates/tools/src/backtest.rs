@@ -11,12 +11,12 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
-    CalibratedBands, DeriveOptions, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
-    ForecastOptions, GridRecord, GridVintage, HorizonResidual, IssuanceExamples, IssuanceHistory,
-    LatestPublishedRule, NeighborPrices, PrevDayBasis, QuarterMap, QuarterStart, TrainingRule,
-    UtcHour, build_artifact, build_forecast, build_issuance_examples, derive_band_offsets,
-    has_grid_data, observed_coverage_of, publication_horizon, sanity_bound_from_history,
-    uncalibrated_bands,
+    CalibratedBands, DeriveOptions, ExcludedExamples, FLOOR_HISTORY_DAYS, FORECAST_DAYS,
+    ForecastInput, ForecastOptions, GridRecord, GridVintage, HorizonResidual, IssuanceExamples,
+    IssuanceHistory, LatestPublishedRule, NeighborPrices, PrevDayBasis, QuarterMap, QuarterStart,
+    TrainingRule, UtcHour, build_artifact, build_forecast, build_issuance_examples,
+    derive_band_offsets, has_grid_data, observed_coverage_of, publication_horizon,
+    sanity_bound_from_history, uncalibrated_bands,
 };
 
 use crate::data::{
@@ -351,6 +351,9 @@ pub struct IssueForecast {
     /// Quarters with no profile price: the flat daily level of a model, or
     /// no value of a pure profile.
     pub shape_fallback_quarters: usize,
+    /// Issuance training only: training targets left out for a missing
+    /// wind or consumption value.
+    pub training_excluded: ExcludedExamples,
 }
 
 fn grid_records<'a, I>(records: I) -> Vec<GridRecord>
@@ -642,6 +645,7 @@ fn forecast_of_input(
         used_fallback: result.diagnostics.fit_used_default,
         sanity_clamped_quarters: result.diagnostics.sanity_clamped_quarters,
         shape_fallback_quarters: result.diagnostics.shape_fallback_quarters,
+        training_excluded: result.diagnostics.training_excluded,
     })
 }
 

@@ -8,11 +8,11 @@ mod issuance {
     use std::path::PathBuf;
 
     use jiff::Timestamp;
-    use spot_price_domain::forecast::{ISSUANCE_FEATURE_COUNT, InputSource};
+    use spot_price_domain::forecast::{ExcludedExamples, ISSUANCE_FEATURE_COUNT, InputSource};
     use spot_price_tools::backtest::{
-        AsOfMode, ForecastVariant, Training, find_leaking_inputs, forecast_at_issue_time,
-        forecast_at_issue_time_with, issuance_examples_at, reconstruct_issue_time,
-        select_vintages_as_of,
+        AsOfMode, ForecastVariant, IssueTimeInputs, Training, find_leaking_inputs,
+        forecast_at_issue_time, forecast_at_issue_time_with, issuance_examples_at,
+        reconstruct_issue_time, select_vintages_as_of,
     };
     use spot_price_tools::backtest_cli::parse_variant;
     use spot_price_tools::cli::{Context, Output, Stream, run};
@@ -201,6 +201,8 @@ mod issuance {
         assert_eq!(a, served);
         let b = forecast_at_issue_time_with(&inputs, issuance()).unwrap();
         assert!(!b.used_fallback);
+        assert_eq!(a.training_excluded.total(), 0);
+        assert_eq!(b.training_excluded, examples_excluded(&inputs));
         assert_eq!(a.predicted.len(), b.predicted.len());
         assert_ne!(a.predicted, b.predicted);
 
@@ -221,8 +223,13 @@ mod issuance {
                     assert!(issued_at.unwrap().as_millisecond() < issued);
                 }
                 assert_ne!(source, InputSource::Actual);
+                assert_ne!(source, InputSource::Missing);
             }
         }
+    }
+
+    fn examples_excluded(inputs: &IssueTimeInputs) -> ExcludedExamples {
+        issuance_examples_at(inputs, issuance()).unwrap().excluded()
     }
 
     fn temp_file(name: &str) -> PathBuf {
@@ -279,6 +286,16 @@ mod issuance {
         let stdout = got.text(Stream::Stdout);
         assert!(stdout.contains("training=issuance"), "{stdout}");
         assert!(stdout.contains("== criteria on segment test"), "{stdout}");
+        assert!(
+            stdout.contains("issuance training: training targets left out"),
+            "{stdout}"
+        );
+        let excluded_line = stdout
+            .lines()
+            .find(|l| l.contains(" B ") && l.contains("outside input"))
+            .unwrap();
+        let outside: usize = excluded_line.rsplit(' ').next().unwrap().parse().unwrap();
+        assert_ne!(outside, 0, "{excluded_line}");
         assert!(!stdout.contains("MISSING"), "{stdout}");
         assert!(!stdout.contains("UNDETERMINED"), "{stdout}");
     }

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
-use spot_price_domain::forecast::FORECAST_DAYS;
+use spot_price_domain::forecast::{ExcludedExamples, FORECAST_DAYS};
 use spot_price_domain::time::{local_hour, next_calendar_day, start_of_local_day_utc};
 
 use crate::backtest::{
@@ -137,6 +137,8 @@ pub struct ForecastIssue {
     /// Per arm: the quarters whose profile source is in the skipped hour of
     /// a 23-hour day. Always 0 for the fixed offsets of the served profile.
     pub dst_gap: Vec<usize>,
+    /// Per arm: issuance-training targets left out for a missing grid value.
+    pub training_excluded: Vec<ExcludedExamples>,
 }
 
 /// One candidate issuance.
@@ -394,6 +396,7 @@ impl Run<'_> {
                 .collect(),
             expected_quarters,
             forecast_quarters: predictions.iter().map(BTreeMap::len).collect(),
+            training_excluded: forecasts.iter().map(|fc| fc.training_excluded).collect(),
             shape_fallback: forecasts
                 .iter()
                 .map(|fc| fc.shape_fallback_quarters)

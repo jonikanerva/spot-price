@@ -330,7 +330,10 @@ mod issuance {
             // The fixture has every quarter, so the series start is the horizon.
             assert_eq!(summary.series_start, q(horizon), "issuance {k}");
             assert!(summary.has_grid_data);
-            assert_eq!(summary.examples > 0, summary.price_quarters > 0);
+            assert_eq!(
+                summary.examples + summary.excluded.total() > 0,
+                summary.price_quarters > 0
+            );
         }
         let start = |t: &str| {
             examples
@@ -563,29 +566,88 @@ mod issuance {
         let s = store(t - 45 * DAY_MS, t + 2 * DAY_MS, t - 20 * DAY_MS);
         let run = run_at(&s, t);
         let examples = run.examples(&zone);
-        let mut pre_archive = 0;
         for e in &examples.examples {
             assert!(e.target.as_millisecond() >= e.issued_at.as_millisecond());
             assert_ne!(e.wind, InputSource::Actual);
             assert_ne!(e.consumption, InputSource::Actual);
-            if e.issued_at.as_millisecond() <= t - 21 * DAY_MS {
-                pre_archive += 1;
-                // The tail extension needs a forecast to extend, as in the
-                // served forecast.
-                assert_eq!(e.wind, InputSource::Missing);
-                assert_eq!(e.features[column("wind_mw")], 0.0);
-                assert_eq!(e.features[column("wind_from_vintage")], 0.0);
-            }
+            assert!(e.issued_at.as_millisecond() > t - 21 * DAY_MS);
         }
-        assert!(pre_archive > 0);
-        let old = examples
+        // Without a vintage, the tail extension has no forecast to extend,
+        // as in the served forecast. Such targets are left out and counted.
+        let old: Vec<_> = examples
             .issuances
             .iter()
-            .filter(|s| s.issued_at.as_millisecond() <= t - 21 * DAY_MS);
+            .filter(|s| {
+                s.issued_at.as_millisecond() <= t - 21 * DAY_MS
+                    && s.price_quarters > 0
+                    && s.has_grid_data
+            })
+            .collect();
+        assert_ne!(old.len(), 0);
         for summary in old {
             assert_eq!(summary.wind_vintage_targets, 0);
             assert_eq!(summary.consumption_vintage_targets, 0);
+            assert_eq!(summary.examples, 0);
+            assert_ne!(summary.excluded.no_vintage, 0, "{summary:?}");
         }
+    }
+
+    #[test]
+    fn no_example_has_a_missing_grid_value() {
+        let zone = oslo();
+        let (_, run) = fixture();
+        let examples = run.examples(&zone);
+        let window = q(run.start_ms - 30 * DAY_MS)..q(run.start_ms);
+        for e in &examples.examples {
+            assert_ne!(e.wind, InputSource::Missing, "{:?}", e.target);
+            assert_ne!(e.consumption, InputSource::Missing, "{:?}", e.target);
+            assert_ne!(e.features[column("consumption_mw")], 0.0);
+        }
+        for (k, summary) in (1_i64..).zip(&examples.issuances) {
+            if summary.price_quarters == 0 {
+                continue;
+            }
+            // Every target of the window is an example, has no price, or is
+            // left out with a reason.
+            let start = summary.series_start;
+            let end = start.offset(3 * DAY_MS);
+            let targets = run
+                .fi
+                .range(start.max(window.start)..end.min(window.end))
+                .count();
+            assert_eq!(
+                summary.examples + summary.targets_without_price + summary.excluded.total(),
+                targets,
+                "issuance {k}"
+            );
+            assert_eq!(summary.excluded.no_vintage, 0, "issuance {k}");
+            // The 1-week consumption extension of a target before S − 23
+            // days needs actuals from before the input.
+            if k <= 23 {
+                assert_eq!(summary.excluded.outside_input, 0, "issuance {k}");
+            }
+            if (27..=30).contains(&k) {
+                assert_ne!(summary.excluded.outside_input, 0, "issuance {k}");
+            }
+        }
+        let excluded = examples.excluded();
+        assert_ne!(excluded.outside_input, 0);
+        let input = run.input();
+        let result = build_forecast(
+            &input,
+            &ForecastOptions {
+                training: TrainingRule::Issuance(run.history(&zone)),
+                ..ForecastOptions::default()
+            },
+        );
+        assert_eq!(result.diagnostics.training_excluded, excluded);
+        assert_eq!(
+            build_forecast(&input, &ForecastOptions::default())
+                .diagnostics
+                .training_excluded
+                .total(),
+            0
+        );
     }
 
     #[test]

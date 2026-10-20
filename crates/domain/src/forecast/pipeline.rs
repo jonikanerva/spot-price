@@ -9,7 +9,7 @@ use super::features::{
     FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule, NeighborPrices, PrevDayBasis,
     build_feature_vector_indexed, build_price_index, training_matrix_at,
 };
-use super::issuance::{self, TrainingRule};
+use super::issuance::{self, ExcludedExamples, TrainingRule};
 use super::js::{js_max, js_min};
 use super::model::{DEFAULT_RIDGE_LAMBDA, FitOptions, PriceTransform, TrainingData, fit_ridge};
 use super::quarter::{QUARTER_MS, QuarterMap, QuarterStart};
@@ -96,6 +96,8 @@ pub struct ForecastDiagnostics {
     pub band_calibrated: bool,
     /// Quarters that have band bounds.
     pub band_hour_buckets: usize,
+    /// Issuance training only: targets left out for a missing grid value.
+    pub training_excluded: ExcludedExamples,
 }
 
 /// The predicted spot series and its diagnostics.
@@ -203,7 +205,7 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
     let span_ms = series_end.as_millisecond() - series_start.as_millisecond();
     let num_quarters = usize::try_from((span_ms / QUARTER_MS).max(0)).unwrap_or(0);
 
-    let (predicted, fit_meta) = match opts.training {
+    let (predicted, fit_meta, training_excluded) = match opts.training {
         TrainingRule::Realised => {
             let training = training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index));
             let fitted = fit_ridge(
@@ -224,7 +226,7 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
                 predicted.insert(cursor, fitted.predict(&features));
                 cursor = cursor.offset(QUARTER_MS);
             }
-            (predicted, fitted.meta)
+            (predicted, fitted.meta, ExcludedExamples::default())
         }
         TrainingRule::Issuance(history) => issuance::fit_and_predict(
             input,
@@ -281,6 +283,7 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
             sanity_clamped_quarters,
             band_calibrated: opts.bands.calibrated,
             band_hour_buckets,
+            training_excluded,
         },
     }
 }
