@@ -363,7 +363,7 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | Dependency                   | Version            | Why it earns its place                                                             |
 | ---------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
 | axum                         | 0.8.9              | HTTP routing and extraction                                                        |
-| tokio                        | 1.53.3             | Async runtime, timers, signals, blocking pool                                      |
+| tokio                        | 1.54.0             | Async runtime, timers, signals, blocking pool                                      |
 | tower-http                   | 0.6.11             | `CatchPanicLayer`, header layers. 0.6, not 0.7: reqwest already depends on 0.6.11. |
 | tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                              |
 | serde / serde_json           | 1.0.229 / 1.0.154  | Wire types. `float_roundtrip` parses numbers like JavaScript.                      |

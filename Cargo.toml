@@ -33,7 +33,7 @@ serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 # TIMESTAMPTZ to Jiff.
 sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "json", "sqlx-toml", "tls-rustls-aws-lc-rs"] }
 thiserror = "=2.0.21"
-tokio = { version = "=1.53.3", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal"] }
+tokio = { version = "=1.54.0", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal"] }
 tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 # 0.6, not 0.7: reqwest already depends on 0.6.11, so the graph has one copy.
 tower-http = { version = "=0.6.11", default-features = false, features = ["catch-panic", "set-header"] }
