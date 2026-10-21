@@ -591,8 +591,14 @@ mod backtest_cli {
         let stdout = got.text(Stream::Stdout);
         assert_eq!(got.code, 0, "{stdout}{}", got.text(Stream::Stderr));
         let (a, b) = (arm_line(&stdout, "A"), arm_line(&stdout, "B"));
-        assert!(a.ends_with(" prev_day_basis=utc"), "{a}");
-        assert!(b.ends_with(" prev_day_basis=delivery"), "{b}");
+        assert!(
+            a.ends_with(" prev_day_basis=utc shape_profile=mean4w"),
+            "{a}"
+        );
+        assert!(
+            b.ends_with(" prev_day_basis=delivery shape_profile=mean4w"),
+            "{b}"
+        );
         std::fs::remove_file(file).unwrap();
     }
 

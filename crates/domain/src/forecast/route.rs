@@ -1,6 +1,7 @@
 //! The pure decisions of the forecast endpoint: the time window, the
 //! degraded state, and the reason texts. The server loads the data.
 
+use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 
 use crate::areas::Area;
@@ -13,6 +14,9 @@ use super::series::sanity_bound_from_history;
 
 /// The only forecast area: Fingrid is the Finnish grid operator.
 pub const FORECAST_AREA: Area = Area::Fi;
+/// The zone of the Nord Pool delivery day (00:00 to 24:00 CET/CEST). The
+/// served shape profile reads calendar days of this zone.
+pub const DELIVERY_DAY_TIME_ZONE: &str = "Europe/Oslo";
 /// The predicted series covers this many 24-hour periods.
 pub const FORECAST_DAYS: i64 = 3;
 /// The price history before the series start that the fit, the lags, and the
@@ -143,15 +147,16 @@ pub const fn has_grid_data(input: &ForecastInput<'_>) -> bool {
 }
 
 /// The endpoint sequence after the reads: the grid-data check, the sanity
-/// bound from the FI history, the pipeline, and the assessment.
+/// bound from the FI history, the served pipeline, and the assessment.
+/// `delivery_zone` must be [`DELIVERY_DAY_TIME_ZONE`].
 #[must_use]
-pub fn forecast_for_route(input: &ForecastInput<'_>) -> RouteForecast {
+pub fn forecast_for_route(input: &ForecastInput<'_>, delivery_zone: &TimeZone) -> RouteForecast {
     if !has_grid_data(input) {
         return RouteForecast::NoGridData;
     }
     let opts = ForecastOptions {
         sanity_bound: sanity_bound_from_history(input.spot_prices),
-        ..ForecastOptions::default()
+        ..ForecastOptions::served(delivery_zone)
     };
     let result = build_forecast(input, &opts);
     let assessment = assess(&result.diagnostics);

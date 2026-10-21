@@ -4,7 +4,8 @@
 
 use jiff::tz::TimeZone;
 use spot_price_domain::forecast::{
-    ExcludedExamples, FLOOR_HISTORY_DAYS, ProfileValues, QuarterStart, ShapeProfile, profile_values,
+    ExcludedExamples, FLOOR_HISTORY_DAYS, ProfileValues, QuarterStart, SERVED_SHAPE_WEEKS,
+    ShapeProfile, profile_values,
 };
 
 use crate::backtest::{BacktestError, IssueForecast, IssueTimeInputs, served_window_ms};
@@ -25,13 +26,13 @@ pub const MIN_WEEKDAY_MEAN_WEEKS: u8 = 2;
 pub const MAX_WEEKDAY_MEAN_WEEKS: u8 = (FLOOR_HISTORY_DAYS / 7) as u8;
 
 /// The source of the within-day shape of a forecast arm. The served forecast
-/// uses [`ShapeFamily::Served`]. The other families read local calendar days
-/// of the delivery-day zone.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+/// uses [`ShapeFamily::SERVED`]. The other families than
+/// [`ShapeFamily::Persistence`] read local calendar days of the delivery-day
+/// zone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ShapeFamily {
-    /// The served rule: 24 h earlier, else 168 h earlier.
-    #[default]
-    Served,
+    /// 24 h earlier, else 168 h earlier (fixed offsets).
+    Persistence,
     /// The latest earlier local day with a price for every quarter.
     PreviousDay,
     /// The same weekday one week earlier.
@@ -42,11 +43,14 @@ pub enum ShapeFamily {
 }
 
 impl ShapeFamily {
+    /// The family of the served forecast.
+    pub const SERVED: Self = Self::WeekdayMean(SERVED_SHAPE_WEEKS);
+
     /// The name in flags, arm names, and the report.
     #[must_use]
     pub fn token(self) -> String {
         match self {
-            Self::Served => "served".to_owned(),
+            Self::Persistence => "persistence".to_owned(),
             Self::PreviousDay => "prev_day".to_owned(),
             Self::PreviousWeek => "prev_week".to_owned(),
             Self::WeekdayMean(weeks) => format!("mean{weeks}w"),
@@ -59,7 +63,13 @@ impl ShapeFamily {
     /// A message for another value or a weekday mean outside its range.
     pub fn parse(raw: &str) -> Result<Self, String> {
         let family = match raw {
-            "served" => Self::Served,
+            "persistence" => Self::Persistence,
+            "served" => {
+                return Err(format!(
+                    "a shape profile cannot be \"served\": the 24 h/168 h rule is persistence, and the served profile is {}",
+                    Self::SERVED.token()
+                ));
+            }
             "prev_day" => Self::PreviousDay,
             "prev_week" => Self::PreviousWeek,
             _ => raw
@@ -72,7 +82,7 @@ impl ShapeFamily {
                 .map(Self::WeekdayMean)
                 .ok_or_else(|| {
                     format!(
-                        "a shape profile must be served, prev_day, prev_week, or mean<k>w with k from {MIN_WEEKDAY_MEAN_WEEKS} to {MAX_WEEKDAY_MEAN_WEEKS}, got \"{raw}\""
+                        "a shape profile must be persistence, prev_day, prev_week, or mean<k>w with k from {MIN_WEEKDAY_MEAN_WEEKS} to {MAX_WEEKDAY_MEAN_WEEKS}, got \"{raw}\""
                     )
                 })?,
         };
@@ -83,7 +93,7 @@ impl ShapeFamily {
     #[must_use]
     pub const fn profile(self, zone: &TimeZone) -> ShapeProfile<'_> {
         match self {
-            Self::Served => ShapeProfile::Served,
+            Self::Persistence => ShapeProfile::Persistence,
             Self::PreviousDay => ShapeProfile::PreviousPublishedDay(zone),
             Self::PreviousWeek => ShapeProfile::WeekdayMean { zone, weeks: 1 },
             Self::WeekdayMean(weeks) => ShapeProfile::WeekdayMean { zone, weeks },
@@ -253,7 +263,7 @@ mod tests {
     #[test]
     fn tokens_read_back() {
         for family in [
-            ShapeFamily::Served,
+            ShapeFamily::Persistence,
             ShapeFamily::PreviousDay,
             ShapeFamily::PreviousWeek,
             ShapeFamily::WeekdayMean(2),
@@ -261,7 +271,15 @@ mod tests {
         ] {
             assert_eq!(ShapeFamily::parse(&family.token()), Ok(family));
         }
-        for bad in ["", "mean1w", "mean5w", "mean2", "Prev_day", "mean02w x"] {
+        for bad in [
+            "",
+            "served",
+            "mean1w",
+            "mean5w",
+            "mean2",
+            "Prev_day",
+            "mean02w x",
+        ] {
             assert!(ShapeFamily::parse(bad).is_err(), "{bad}");
         }
         assert_eq!(MAX_WEEKDAY_MEAN_WEEKS, 4);

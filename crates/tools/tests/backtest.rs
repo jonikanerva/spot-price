@@ -13,7 +13,7 @@ mod backtest {
     use spot_price_domain::forecast::{
         ForecastInput, ForecastOptions, ForecastResult, ForecastWindow, GridRecord,
         LatestPublishedRule, NeighborPrices, PrevDayBasis, QuarterStart, RouteForecast,
-        build_forecast, forecast_for_route, sanity_bound_from_history,
+        ShapeProfile, build_forecast, forecast_for_route, sanity_bound_from_history,
     };
     use spot_price_tools::backtest::{
         AsOfMode, BacktestOptions, BacktestSummary, Better, DayBasis, ForecastVariant,
@@ -26,6 +26,7 @@ mod backtest {
     use spot_price_tools::backtest_cli::{print_compare, print_report, print_variant_compare};
     use spot_price_tools::cli::{Output, Stream};
     use spot_price_tools::data::{BacktestData, GridActual, PricePoint, Vintage};
+    use spot_price_tools::profile::ShapeFamily;
 
     const QUARTER_MS: i64 = 15 * 60 * 1000;
     const HOUR_MS: i64 = 60 * 60 * 1000;
@@ -79,13 +80,18 @@ mod backtest {
     /// A 20-day window. Actuals have one value per quarter; forecast
     /// vintages have a fresh (−2 h) issuance and a stale (−130 h) one. The
     /// stale wind issuance has a mean-zero revision scaled by `stale_revision`.
-    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
     fn build_data(stale_revision: f64) -> BacktestData {
+        build_days(stale_revision, 20)
+    }
+
+    /// [`build_data`] over `days` days from 2026-02-01.
+    #[expect(clippy::cast_precision_loss, reason = "q is a small index")]
+    fn build_days(stale_revision: f64, days: i64) -> BacktestData {
         let start = ms("2026-02-01T00:00:00Z");
         let mut data = BacktestData::default();
         let (mut wind75, mut cons124, mut wind245, mut cons165) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        for q in 0..20 * 96 {
+        for q in 0..days * 96 {
             let at = start + q * QUARTER_MS;
             let consumption = 8000.0 + (q % 96) as f64 * 15.0;
             let wind = 2000.0 + ((q * 131) % 1800) as f64;
@@ -414,8 +420,8 @@ mod backtest {
     #[test]
     fn the_default_variant_is_the_production_model() {
         let variant = ForecastVariant::default();
-        let production = ForecastOptions::default();
         let oslo = oslo();
+        let production = ForecastOptions::served(&oslo);
         let data = build_data(0.0);
         let inputs =
             reconstruct_issue_time(&data, ms("2026-02-10T13:00:00Z"), AsOfMode::IssueTime).unwrap();
@@ -443,6 +449,8 @@ mod backtest {
         assert_eq!(variant.latest_published, LatestPublishedRule::Before);
         assert_eq!(options.prev_day_basis, production.prev_day_basis);
         assert_eq!(variant.prev_day_basis, DayBasis::Utc);
+        assert_eq!(options.shape_profile, production.shape_profile);
+        assert_eq!(variant.shape_profile, ShapeFamily::WeekdayMean(4));
         assert_eq!(BacktestOptions::default().variant, variant);
 
         assert_eq!(
@@ -1305,8 +1313,18 @@ mod backtest {
 
     #[test]
     fn at_the_cet_series_start_the_rank_metrics_react_to_the_variant() {
-        let cmp =
-            compare_variants(&build_data(0.0), ForecastVariant::default(), strong_ridge()).unwrap();
+        // 20 days of prices leave the served four-week shape flat, and a flat
+        // day has no rank order. Both arms take the persistence shape.
+        let persistence = |variant| ForecastVariant {
+            shape_profile: ShapeFamily::Persistence,
+            ..variant
+        };
+        let cmp = compare_variants(
+            &build_data(0.0),
+            persistence(ForecastVariant::default()),
+            persistence(strong_ridge()),
+        )
+        .unwrap();
         let d1 = cmp.paired_by_horizon[0].spearman;
         assert!(d1.paired > 0, "{d1:?}");
         assert!(d1.wins + d1.losses > 0, "{d1:?}");
@@ -1363,7 +1381,7 @@ mod backtest {
             let t = ms(GAP_START) + day * DAY_MS + 13 * HOUR_MS;
             let inputs = reconstruct_issue_time(data, t, AsOfMode::IssueTime).unwrap();
             let owned = RouteInputs::of(&inputs);
-            match forecast_for_route(&owned.input(&inputs)) {
+            match forecast_for_route(&owned.input(&inputs), &oslo()) {
                 RouteForecast::NoGridData => no_grid.insert(t),
                 RouteForecast::Ready { .. } => ready.insert(t),
             };
@@ -1543,7 +1561,7 @@ mod backtest {
     /// The served route result of the issue-time inputs.
     fn served(inputs: &IssueTimeInputs) -> ForecastResult {
         let owned = RouteInputs::of(inputs);
-        match forecast_for_route(&owned.input(inputs)) {
+        match forecast_for_route(&owned.input(inputs), &oslo()) {
             RouteForecast::Ready { result, .. } => result,
             RouteForecast::NoGridData => panic!("the fixture has grid data"),
         }
@@ -1557,13 +1575,37 @@ mod backtest {
         // The fixture is sensitive: the served bound clamps predictions.
         assert!(served.diagnostics.sanity_clamped_quarters > 0);
         let owned = RouteInputs::of(&inputs);
-        let unclamped = build_forecast(&owned.input(&inputs), &ForecastOptions::default());
+        let zone = oslo();
+        let unclamped = build_forecast(&owned.input(&inputs), &ForecastOptions::served(&zone));
         assert_eq!(unclamped.diagnostics.sanity_clamped_quarters, 0);
         assert_ne!(points(&unclamped), points(&served));
 
         let backtest = forecast_at_issue_time(&inputs).unwrap();
         assert_eq!(backtest.series_start_ms, inputs.origin_ms);
         assert_eq!(backtest.predicted, points(&served));
+    }
+
+    #[test]
+    fn the_backtest_forecast_is_the_served_route_with_the_four_week_shape() {
+        // 34 days of prices before the series start: four weeks for every
+        // target of the 72 h window.
+        let data = build_days(0.0, 40);
+        let inputs =
+            reconstruct_issue_time(&data, ms("2026-03-07T13:00:00Z"), AsOfMode::IssueTime).unwrap();
+        let route = served(&inputs);
+        assert_eq!(route.diagnostics.shape_fallback_quarters, 0);
+        let backtest = forecast_at_issue_time(&inputs).unwrap();
+        assert_eq!(backtest.shape_fallback_quarters, 0);
+        assert_eq!(backtest.predicted, points(&route));
+        let persistence = forecast_at_issue_time_with(
+            &inputs,
+            ForecastVariant {
+                shape_profile: ShapeFamily::Persistence,
+                ..ForecastVariant::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(persistence.predicted, backtest.predicted);
     }
 
     #[test]
@@ -1581,7 +1623,7 @@ mod backtest {
         let base = ForecastOptions {
             latest_published: LatestPublishedRule::Before,
             prev_day_basis: PrevDayBasis::DeliveryDay(&zone),
-            ..ForecastOptions::default()
+            ..ForecastOptions::served(&zone)
         };
         let bounded = build_forecast(
             &input,
@@ -1605,7 +1647,7 @@ mod backtest {
         data: &BacktestData,
         summary: &BacktestSummary,
         mode: AsOfMode,
-        options: impl Fn() -> ForecastOptions<'static>,
+        options: ForecastOptions<'_>,
     ) -> usize {
         summary
             .scored_origins_ms
@@ -1615,7 +1657,7 @@ mod backtest {
                 let owned = RouteInputs::of(&inputs);
                 let opts = ForecastOptions {
                     sanity_bound: sanity_bound_from_history(&inputs.fi_prices),
-                    ..options()
+                    ..options
                 };
                 build_forecast(&owned.input(&inputs), &opts)
                     .diagnostics
@@ -1635,12 +1677,13 @@ mod backtest {
         }
         assert_eq!(summary.sanity_clamped_quarters, by_route);
         assert_eq!(summary.sanity_clamped_quarters, 280);
+        let zone = oslo();
         assert_eq!(
             served_clamps(
                 &data,
                 &summary,
                 AsOfMode::IssueTime,
-                ForecastOptions::default
+                ForecastOptions::served(&zone)
             ),
             by_route
         );
@@ -1672,19 +1715,16 @@ mod backtest {
         assert_eq!(summary.sanity_clamped_quarters, 0);
     }
 
+    /// The ridge lambda of [`clamping_variant`].
+    const CLAMPING_LAMBDA: f64 = 0.1;
+
     /// A weaker ridge than production: on the extreme fixture it clamps a
-    /// different number of quarters. Also its pipeline options without the
-    /// served bound.
-    fn clamping_variant() -> (ForecastVariant, fn() -> ForecastOptions<'static>) {
-        let variant = ForecastVariant {
-            ridge_lambda: 0.1,
+    /// different number of quarters.
+    fn clamping_variant() -> ForecastVariant {
+        ForecastVariant {
+            ridge_lambda: CLAMPING_LAMBDA,
             ..ForecastVariant::default()
-        };
-        let options = || ForecastOptions {
-            ridge_lambda: 0.1,
-            ..ForecastOptions::default()
-        };
-        (variant, options)
+        }
     }
 
     #[test]
@@ -1692,26 +1732,34 @@ mod backtest {
         let data = build_extreme_data();
         // Under the at-or-before rule, the two arms clamp a different number
         // of quarters of this fixture.
-        let (variant, variant_options) = clamping_variant();
+        // The fixture is too short for the served four-week shape, and with
+        // flat days both arms clamp the same quarters. Both arms take the
+        // persistence shape.
+        let variant = clamping_variant();
         let rule = LatestPublishedRule::AtOrBefore;
         let a_variant = ForecastVariant {
             latest_published: rule,
+            shape_profile: ShapeFamily::Persistence,
             ..ForecastVariant::default()
         };
         let b_variant = ForecastVariant {
             latest_published: rule,
+            shape_profile: ShapeFamily::Persistence,
             ..variant
         };
         let cmp = compare_variants(&data, a_variant, b_variant).unwrap();
         assert!(cmp.origins_match);
-        let a = served_clamps(&data, &cmp.a, AsOfMode::IssueTime, || ForecastOptions {
+        let a_options = ForecastOptions {
             latest_published: rule,
+            shape_profile: ShapeProfile::Persistence,
             ..ForecastOptions::default()
-        });
-        let b = served_clamps(&data, &cmp.b, AsOfMode::IssueTime, || ForecastOptions {
-            latest_published: rule,
-            ..variant_options()
-        });
+        };
+        let a = served_clamps(&data, &cmp.a, AsOfMode::IssueTime, a_options);
+        let b_options = ForecastOptions {
+            ridge_lambda: CLAMPING_LAMBDA,
+            ..a_options
+        };
+        let b = served_clamps(&data, &cmp.b, AsOfMode::IssueTime, b_options);
         assert!(a > 0 && b > 0);
         assert_ne!(a, b);
         assert_eq!(cmp.a.sanity_clamped_quarters, a);
@@ -1737,17 +1785,18 @@ mod backtest {
     fn the_honest_and_the_leaked_run_report_their_own_clamped_quarters() {
         let data = build_extreme_fresh_data();
         let cmp = compare_optimism(&data).unwrap();
+        let zone = oslo();
         let honest = served_clamps(
             &data,
             &cmp.honest,
             AsOfMode::IssueTime,
-            ForecastOptions::default,
+            ForecastOptions::served(&zone),
         );
         let leaked = served_clamps(
             &data,
             &cmp.leaked,
             AsOfMode::Latest,
-            ForecastOptions::default,
+            ForecastOptions::served(&zone),
         );
         assert!(leaked > 0);
         assert_ne!(honest, leaked);
@@ -1783,7 +1832,7 @@ mod backtest {
         );
         assert!(out.text(Stream::Stdout).contains(&line), "{line}");
 
-        let (variant, _) = clamping_variant();
+        let variant = clamping_variant();
         let mut out = Output::default();
         print_variant_compare(&data, variant, &mut out).unwrap();
         let cmp = compare_variants(&data, ForecastVariant::default(), variant).unwrap();

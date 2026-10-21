@@ -53,12 +53,12 @@ const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --
   --ab  paired A/B: A = production model, B = production with these overrides, scored on the same origins.
         keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks,
         latest_published (before | at_or_before), prev_day_basis (utc | delivery),
-        shape_profile (served | prev_day | prev_week | mean2w | mean3w | mean4w),
+        shape_profile (persistence | prev_day | prev_week | mean2w | mean3w | mean4w; arm A has mean4w),
         training (realised | issuance). Not with --compare.
   --eval  the evaluation report: --issuances <h[,h]> (UTC, default 6,13), --cost spot | contract:margin=,day=,night=,tax=,vat=,night_start=,night_end=,
           --split <selection-start>,<test-start> (YYYY-MM-DD), --criteria <file.json>, --seed <n>, --resamples <n>, --block-days <n>. With --ab, B is a second arm. Not with --compare.
           --profiles <family[,family]> adds per family a served-model arm shape_<family> and a pure-profile arm pure_<family>;
-          families prev_day, prev_week, mean2w, mean3w, mean4w.";
+          families persistence, prev_day, prev_week, mean2w, mean3w (mean4w is arm A).";
 
 /// One stored day-ahead price in EUR/MWh.
 #[derive(Debug, Clone, PartialEq)]
@@ -506,8 +506,8 @@ pub(crate) fn variant_label(v: ForecastVariant) -> String {
         latest_published_name(v.latest_published),
         prev_day_basis_name(v.prev_day_basis)
     );
-    // The served profile is not named, so the labels of older runs stay.
-    if v.shape_profile == ShapeFamily::Served {
+    // Labels of older runs have no profile and mean persistence.
+    if v.shape_profile == ShapeFamily::Persistence {
         label
     } else {
         format!("{label} shape_profile={}", v.shape_profile.token())

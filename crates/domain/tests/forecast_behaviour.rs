@@ -5,11 +5,12 @@ mod behaviour {
     use std::borrow::Cow;
 
     use jiff::Timestamp;
+    use jiff::tz::TimeZone;
     use spot_price_domain::areas::Area;
     use spot_price_domain::forecast::{
         BandMethod, BandOffsets, CALIBRATED_BANDS, COVERAGE_GATE_THRESHOLD, CalibratedBands,
-        DeriveOptions, FALLBACK_PREDICTION, FEATURE_COUNT, FEATURE_NAMES, FeatureContext,
-        FitOptions, ForecastInput, ForecastOptions, GridRecord, HorizonResidual,
+        DELIVERY_DAY_TIME_ZONE, DeriveOptions, FALLBACK_PREDICTION, FEATURE_COUNT, FEATURE_NAMES,
+        FeatureContext, FitOptions, ForecastInput, ForecastOptions, GridRecord, HorizonResidual,
         LatestPublishedRule, LinearFitError, MIN_FIT_SAMPLES, MIN_TOTAL_CALIBRATION_SAMPLES,
         NEIGHBOR_AREAS, NOMINAL_COVERAGE, NeighborPrices, PrevDayBasis, PriceTransform, QuarterMap,
         QuarterStart, RouteForecast, SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound,
@@ -503,7 +504,7 @@ mod behaviour {
     }
 
     #[test]
-    fn the_route_serves_the_before_rule() {
+    fn the_route_serves_the_before_rule_and_the_served_shape() {
         let s = residual_month();
         let neighbours = NeighborPrices::new();
         let input = ForecastInput {
@@ -516,23 +517,33 @@ mod behaviour {
             series_start: ts(s.series_start_ms),
             series_end: ts(s.series_start_ms + 3 * DAY_MS),
         };
+        let zone = TimeZone::get(DELIVERY_DAY_TIME_ZONE).unwrap();
         let with_rule = |latest_published| {
             build_forecast(
                 &input,
                 &ForecastOptions {
                     sanity_bound: sanity_bound_from_history(&s.spot),
                     latest_published,
-                    ..ForecastOptions::default()
+                    ..ForecastOptions::served(&zone)
                 },
             )
         };
-        let RouteForecast::Ready { result, .. } = forecast_for_route(&input) else {
+        let RouteForecast::Ready { result, .. } = forecast_for_route(&input, &zone) else {
             panic!("the route found no grid data");
         };
         assert!(!result.diagnostics.fit_used_default);
         assert_eq!(result, with_rule(LatestPublishedRule::Before));
         let at_or_before = with_rule(LatestPublishedRule::AtOrBefore);
         assert!(moved_quarters(&result, &at_or_before) > 0);
+        let persistence = build_forecast(
+            &input,
+            &ForecastOptions {
+                sanity_bound: sanity_bound_from_history(&s.spot),
+                ..ForecastOptions::default()
+            },
+        );
+        assert_eq!(result.diagnostics, persistence.diagnostics);
+        assert!(moved_quarters(&result, &persistence) > 0);
     }
 
     /// A month of history that ends at the CET delivery-day boundary. Each

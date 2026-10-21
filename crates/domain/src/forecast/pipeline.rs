@@ -2,6 +2,7 @@
 //! sanity clamp, predicted series, and bands.
 
 use jiff::Timestamp;
+use jiff::tz::TimeZone;
 
 use super::conformal::{CalibratedBands, UtcHour, apply_band};
 use super::conformal_artifact::CALIBRATED_BANDS;
@@ -13,6 +14,7 @@ use super::issuance::{self, ExcludedExamples, TrainingRule};
 use super::js::{js_max, js_min};
 use super::model::{DEFAULT_RIDGE_LAMBDA, FitOptions, PriceTransform, TrainingData, fit_ridge};
 use super::quarter::{QUARTER_MS, QuarterMap, QuarterStart};
+use super::route::{FLOOR_HISTORY_DAYS, FORECAST_DAYS};
 use super::series::{
     ForecastSpotPoint, GridRecord, SanityBound, ShapeProfile, apply_within_day_shape_with,
     bucket_records, build_predicted_series, expand_hourly_to_quarters, extend_with_last_week,
@@ -55,12 +57,41 @@ pub struct ForecastOptions<'a> {
     pub latest_published: LatestPublishedRule,
     /// The served forecast uses [`PrevDayBasis::UtcDay`].
     pub prev_day_basis: PrevDayBasis<'a>,
-    /// The served forecast uses [`ShapeProfile::Served`].
+    /// The served forecast uses [`ShapeProfile::WeekdayMean`] of
+    /// [`SERVED_SHAPE_WEEKS`] weeks in the delivery-day zone.
     pub shape_profile: ShapeProfile<'a>,
     /// The served forecast uses [`TrainingRule::Realised`].
     pub training: TrainingRule<'a>,
 }
 
+/// The weeks of the weekday-mean shape profile of the served forecast.
+pub const SERVED_SHAPE_WEEKS: u8 = 4;
+
+// Every source day of the served profile is a published day inside the price
+// read window, so only a store gap or a DST gap leaves a quarter flat.
+const _: () = assert!(
+    7 * (SERVED_SHAPE_WEEKS as i64) < FLOOR_HISTORY_DAYS && FORECAST_DAYS < 7,
+    "the served shape profile reads outside the price window"
+);
+
+impl<'a> ForecastOptions<'a> {
+    /// The options of the served forecast without a sanity bound.
+    /// `delivery_zone` must be
+    /// [`DELIVERY_DAY_TIME_ZONE`](super::DELIVERY_DAY_TIME_ZONE).
+    #[must_use]
+    pub fn served(delivery_zone: &'a TimeZone) -> Self {
+        Self {
+            shape_profile: ShapeProfile::WeekdayMean {
+                zone: delivery_zone,
+                weeks: SERVED_SHAPE_WEEKS,
+            },
+            ..ForecastOptions::default()
+        }
+    }
+}
+
+/// The served options with [`ShapeProfile::Persistence`]. The served shape
+/// needs a time zone; use [`ForecastOptions::served`] for the served forecast.
 impl Default for ForecastOptions<'static> {
     fn default() -> Self {
         Self {
@@ -71,7 +102,7 @@ impl Default for ForecastOptions<'static> {
             bands: &CALIBRATED_BANDS,
             latest_published: LatestPublishedRule::Before,
             prev_day_basis: PrevDayBasis::UtcDay,
-            shape_profile: ShapeProfile::Served,
+            shape_profile: ShapeProfile::Persistence,
             training: TrainingRule::Realised,
         }
     }

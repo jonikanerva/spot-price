@@ -41,13 +41,14 @@ pub use model::{
 };
 pub use pipeline::{
     CONSUMPTION_EXTENSION_WEEKS, ForecastDiagnostics, ForecastInput, ForecastOptions,
-    ForecastResult, WIND_EXTENSION_WEEKS, build_forecast,
+    ForecastResult, SERVED_SHAPE_WEEKS, WIND_EXTENSION_WEEKS, build_forecast,
 };
 pub use quarter::{QuarterMap, QuarterStart, iso_millis, quarter_map};
 pub use route::{
-    Assessment, Confidence, FLOOR_HISTORY_DAYS, FORECAST_AREA, FORECAST_DAYS, ForecastWindow,
-    REASON_FI_ONLY, REASON_FIT_DEFAULT, REASON_NO_GRID_DATA, REASON_SETTINGS_NOT_FOUND,
-    REASON_ZERO_SEEDED, RouteForecast, assess, forecast_for_route, has_grid_data,
+    Assessment, Confidence, DELIVERY_DAY_TIME_ZONE, FLOOR_HISTORY_DAYS, FORECAST_AREA,
+    FORECAST_DAYS, ForecastWindow, REASON_FI_ONLY, REASON_FIT_DEFAULT, REASON_NO_GRID_DATA,
+    REASON_SETTINGS_NOT_FOUND, REASON_ZERO_SEEDED, RouteForecast, assess, forecast_for_route,
+    has_grid_data,
 };
 pub use series::{
     BuiltSeries, ForecastSpotPoint, GridRecord, LinearFit, LinearFitError,
