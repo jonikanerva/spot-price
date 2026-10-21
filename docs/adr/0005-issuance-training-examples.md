@@ -29,7 +29,11 @@ issuance. They must not each build their own rule.
      is one quarter after the last such FI price.
    - Fingrid 245 and 165 vintages issued strictly before `i`, newest per
      target. `issued_at` is the hour-truncated fetch time.
-   - Fingrid actuals that started strictly before `i`.
+   - Fingrid actuals that started strictly before `i`. The youngest actual
+     that a feature reads is about 2.6 days old at a 13:00 UTC issuance and
+     about 3.3 days old at a 06:00 UTC issuance: the extension reads the
+     target 1 week back, and the longest example lead in the issuance test
+     fixture is 105.75 h and 88.75 h.
 4. An example target is in `[S_i, S_i + 3 days)`, inside the 30-day
    training window, and has a published price. A target never takes an
    actual in place of a forecast.
@@ -38,13 +42,17 @@ issuance. They must not each build their own rule.
    vintage-source indicators, and five missing-lag indicators. One ridge fit
    covers all leads. The estimator, the within-day shape, and the clamp do
    not change.
-6. A served prediction always has a wind and a consumption value. A
+6. A served prediction has a wind and a consumption value whenever a
+   vintage, the tail extension, or the gap fill gives one (ADR 0007). A
    training target without one of them is left out of the fit, not filled
-   with 0 MW. `IssuanceSummary.excluded` counts it by reason: no vintage at
-   the issuance (before the archive started), or a tail extension that
-   needs actuals from before the input (an issuance more than about 23
-   days back; the consumption extension reads the same quarter 1 week
-   earlier). The evaluation report shows the sums per arm.
+   with 0 MW. `IssuanceSummary.excluded` counts it by reason: no vintage of
+   the dataset at the issuance and no earlier week of actuals (before the
+   archive started), or the dataset has vintages, but the value is missing
+   (`outside_input`). The second reason is mostly a tail extension that
+   needs actuals from before the input: an issuance more than about 23
+   days back, because the consumption extension reads the same quarter 1
+   week earlier. A hole in the stored actuals that no earlier week fills
+   also counts there. The evaluation report shows the sums per arm.
 7. The prediction rows use the same assembly at the issue time of the run.
 8. `build_issuance_examples` returns the examples with their issuance,
    series start, target, lead, input sources, lag availability, features,
