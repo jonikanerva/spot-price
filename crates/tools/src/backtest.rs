@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 use std::str::FromStr;
 
-use jiff::Timestamp;
-use jiff::tz::TimeZone;
+use jiff::tz::{AmbiguousOffset, TimeZone};
+use jiff::{Span, Timestamp, Zoned};
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
     CORRECTION_HISTORY_DAYS, CalibratedBands, CorrectionDiagnostics, CorrectionExamples,
@@ -70,6 +70,9 @@ pub enum BacktestError {
     /// The bundled time zone database has no [`HOLIDAY_TIME_ZONE`].
     #[error("time zone {HOLIDAY_TIME_ZONE} is not in the bundled database")]
     HolidayTimeZone,
+    /// The bundled time zone database has no [`BASELINE_TIME_ZONE`].
+    #[error("time zone {BASELINE_TIME_ZONE} is not in the bundled database")]
+    BaselineTimeZone,
 }
 
 /// How a reconstructed issue time selects forecast vintages.
@@ -841,9 +844,20 @@ pub fn rmae(model_mae: Option<f64>, baseline_mae: Option<f64>) -> Option<f64> {
 pub enum Baseline {
     /// The same quarter one week earlier.
     LastWeek,
-    /// The same quarter in the 24 hours before the series start, the last
-    /// published delivery day.
+    /// The same local quarter in [`BASELINE_TIME_ZONE`] on the last published
+    /// day: the one local calendar day that ends at the series start.
     LastPublishedDay,
+}
+
+/// The time zone of the local quarters of [`Baseline::LastPublishedDay`].
+pub const BASELINE_TIME_ZONE: &str = "Europe/Helsinki";
+
+/// The time zone of the last-published-day baseline.
+///
+/// # Errors
+/// [`BacktestError::BaselineTimeZone`] when the bundled database lacks it.
+pub fn baseline_zone() -> Result<TimeZone, BacktestError> {
+    TimeZone::get(BASELINE_TIME_ZONE).map_err(|_| BacktestError::BaselineTimeZone)
 }
 
 /// A value per baseline.
@@ -855,19 +869,62 @@ pub struct PerBaseline<T> {
 
 /// The value of `baseline` for the quarter at `target_ms`, read only from the
 /// issue-time FI prices; `None` when that price is not in the inputs.
+/// `zone` is the zone of [`baseline_zone`].
 #[must_use]
-pub fn baseline_for(baseline: Baseline, target_ms: i64, inputs: &IssueTimeInputs) -> Option<f64> {
+pub fn baseline_for(
+    baseline: Baseline,
+    target_ms: i64,
+    inputs: &IssueTimeInputs,
+    zone: &TimeZone,
+) -> Option<f64> {
     let key_ms = match baseline {
         Baseline::LastWeek => target_ms - 7 * DAY_MS,
         Baseline::LastPublishedDay => {
-            let series_start = inputs.last_published_ms? + QUARTER_MS;
-            series_start - DAY_MS + (target_ms - series_start).rem_euclid(DAY_MS)
+            last_published_day_key(target_ms, inputs.last_published_ms? + QUARTER_MS, zone)?
         }
     };
     inputs
         .fi_prices
         .get(&QuarterStart::from_millisecond(key_ms))
         .copied()
+}
+
+/// The instant in `[series_start − 1 local day, series_start)` with the
+/// local wall-clock time of `target_ms` in `zone`. `None` when that time is
+/// in the skipped hour of the window. When the window has that time twice
+/// (the repeated hour), it takes the instant with the UTC offset of the
+/// target, else the earlier one.
+fn last_published_day_key(target_ms: i64, series_start_ms: i64, zone: &TimeZone) -> Option<i64> {
+    let start = Timestamp::from_millisecond(series_start_ms)
+        .ok()?
+        .to_zoned(zone.clone());
+    let window_start = start.checked_sub(Span::new().days(1)).ok()?.timestamp();
+    let window_end = start.timestamp();
+    let target = Timestamp::from_millisecond(target_ms)
+        .ok()?
+        .to_zoned(zone.clone());
+    let previous_date = start.date().checked_sub(Span::new().days(1)).ok()?;
+    let mut candidates: Vec<Zoned> = Vec::new();
+    for date in [previous_date, start.date()] {
+        let ambiguous = zone.to_ambiguous_zoned(date.to_datetime(target.time()));
+        let instants = match ambiguous.offset() {
+            AmbiguousOffset::Unambiguous { .. } => vec![ambiguous.compatible().ok()?],
+            AmbiguousOffset::Gap { .. } => Vec::new(),
+            AmbiguousOffset::Fold { .. } => {
+                vec![ambiguous.clone().earlier().ok()?, ambiguous.later().ok()?]
+            }
+        };
+        candidates.extend(
+            instants
+                .into_iter()
+                .filter(|z| (window_start..window_end).contains(&z.timestamp())),
+        );
+    }
+    let chosen = candidates
+        .iter()
+        .find(|z| z.offset() == target.offset())
+        .or_else(|| candidates.iter().min_by_key(|z| z.timestamp()))?;
+    Some(chosen.timestamp().as_millisecond())
 }
 
 /// The metrics of one origin in one horizon. A rank metric is `None` with
@@ -981,6 +1038,7 @@ impl Scoring {
         inputs: &IssueTimeInputs,
         fc: &IssueForecast,
         realized: &BTreeMap<QuarterStart, f64>,
+        zone: &TimeZone,
     ) {
         let mut origin_by_horizon: [OriginSeries; 3] = std::array::from_fn(|_| OriginSeries {
             t_ms: inputs.t_ms,
@@ -1009,10 +1067,10 @@ impl Scoring {
                 series.preds.push(pred);
                 series.acts.push(actual);
             }
-            if let Some(b) = baseline_for(Baseline::LastWeek, target_ms, inputs) {
+            if let Some(b) = baseline_for(Baseline::LastWeek, target_ms, inputs, zone) {
                 self.last_week_pairs.push((b, actual));
             }
-            if let Some(b) = baseline_for(Baseline::LastPublishedDay, target_ms, inputs) {
+            if let Some(b) = baseline_for(Baseline::LastPublishedDay, target_ms, inputs, zone) {
                 self.last_published_day_pairs.push((b, actual));
             }
         }
@@ -1084,6 +1142,7 @@ pub fn run_backtest(
     options: &BacktestOptions,
 ) -> Result<BacktestSummary, BacktestError> {
     let mode = options.as_of_mode.unwrap_or(AsOfMode::IssueTime);
+    let baseline = baseline_zone()?;
     let mut realized: BTreeMap<QuarterStart, f64> = BTreeMap::new();
     let mut range: Option<(i64, i64)> = None;
     for p in data.prices.iter().filter(|p| p.area == "FI") {
@@ -1133,7 +1192,7 @@ pub fn run_backtest(
             } else {
                 forecast_of_input(&input, &inputs, options.variant, None)?
             };
-            scoring.score_origin(&inputs, &fc, &realized);
+            scoring.score_origin(&inputs, &fc, &realized, &baseline);
         }
     }
     Ok(scoring.into_summary(pre_vintage_origins, no_grid_data_origins, leak_free))

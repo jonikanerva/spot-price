@@ -14,8 +14,9 @@ use spot_price_domain::time::{local_hour, next_calendar_day, start_of_local_day_
 
 use crate::backtest::{
     AsOfMode, BacktestError, Baseline, CorrectionCache, ForecastVariant, IssueTimeInputs,
-    OutOfRange, baseline_for, delivery_zone, find_leaking_inputs, forecast_at_issue_time_cached,
-    issue_has_grid_data, publication_horizon_ms, reconstruct_issue_time, select_vintages_as_of,
+    OutOfRange, baseline_for, baseline_zone, delivery_zone, find_leaking_inputs,
+    forecast_at_issue_time_cached, issue_has_grid_data, publication_horizon_ms,
+    reconstruct_issue_time, select_vintages_as_of,
 };
 use crate::bootstrap::{BootstrapOptions, Estimate, UnitSums, estimate, resample_indices};
 use crate::data::{BacktestData, DATASET_CONSUMPTION_FORECAST, DATASET_WIND_FORECAST};
@@ -294,6 +295,7 @@ struct Run<'a> {
     realised: BTreeMap<i64, f64>,
     delivery: TimeZone,
     household: TimeZone,
+    baseline: TimeZone,
 }
 
 /// Runs the evaluation: for each UTC day from the first to the last FI price
@@ -316,6 +318,7 @@ pub fn evaluate(data: &BacktestData, options: &EvalOptions) -> Result<Evaluation
         realised,
         delivery: delivery_zone()?,
         household: household_zone()?,
+        baseline: baseline_zone()?,
     };
     let arm_names: Vec<String> = options.arms.iter().map(|a| a.name.clone()).collect();
     let index_of = |name: &str| arm_names.iter().position(|n| n == name);
@@ -457,8 +460,13 @@ impl Run<'_> {
                     .iter()
                     .map(|p| p.get(&target_ms).copied())
                     .collect(),
-                last_week: baseline_for(Baseline::LastWeek, target_ms, inputs),
-                last_published_day: baseline_for(Baseline::LastPublishedDay, target_ms, inputs),
+                last_week: baseline_for(Baseline::LastWeek, target_ms, inputs, &self.baseline),
+                last_published_day: baseline_for(
+                    Baseline::LastPublishedDay,
+                    target_ms,
+                    inputs,
+                    &self.baseline,
+                ),
                 wind_vintage: wind.contains(&target_ms),
                 consumption_vintage: consumption.contains(&target_ms),
             });
@@ -535,6 +543,7 @@ impl Run<'_> {
                         predictions,
                         &self.realised,
                         &self.pricer,
+                        &self.baseline,
                     ),
                 });
             }
@@ -547,6 +556,8 @@ impl Run<'_> {
 /// model arms of `predictions`, then [`BASELINE_SCHEDULE_ARMS`]. The arms
 /// share the published prices of `inputs` before its series start; after
 /// it, each arm uses its own estimate. `realised` holds the FI spot prices.
+/// `baseline_zone` is the zone of
+/// [`baseline_zone`](crate::backtest::baseline_zone).
 ///
 /// # Errors
 /// The [`Exclusion`] of the task when an arm cannot choose or a run cannot
@@ -557,6 +568,7 @@ pub fn schedule_arms(
     predictions: &[BTreeMap<i64, f64>],
     realised: &BTreeMap<i64, f64>,
     pricer: &Pricer,
+    baseline_zone: &TimeZone,
 ) -> Result<Vec<f64>, Exclusion> {
     let window = task.window_quarters().map_err(|_| Exclusion::Infeasible)?;
     if task.deadline_ms <= inputs.origin_ms {
@@ -596,11 +608,11 @@ pub fn schedule_arms(
         )?);
     }
     starts.push(choose(
-        &|q| baseline_for(Baseline::LastWeek, q, inputs),
+        &|q| baseline_for(Baseline::LastWeek, q, inputs, baseline_zone),
         Exclusion::MissingLastWeek,
     )?);
     starts.push(choose(
-        &|q| baseline_for(Baseline::LastPublishedDay, q, inputs),
+        &|q| baseline_for(Baseline::LastPublishedDay, q, inputs, baseline_zone),
         Exclusion::MissingLastPublishedDay,
     )?);
     starts.push(task.earliest_start_ms);

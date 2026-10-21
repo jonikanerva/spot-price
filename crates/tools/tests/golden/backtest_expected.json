@@ -39,11 +39,11 @@
       "modelSmape": 0.4794656599479955,
       "baselineMae": {
         "last_week": 2.015831086502987,
-        "last_published_day": 1.9691267249310065
+        "last_published_day": 1.9825570256174296
       },
       "rMae": {
         "last_week": 1.6767622445242854,
-        "last_published_day": 1.716532214200184
+        "last_published_day": 1.704904027229138
       },
       "leakFree": true,
       "byHorizon": {
@@ -3846,11 +3846,11 @@
         "modelSmape": 0.4781184133319238,
         "baselineMae": {
           "last_week": 2.015831086502987,
-          "last_published_day": 1.9691267249310065
+          "last_published_day": 1.9825570256174296
         },
         "rMae": {
           "last_week": 1.664364052672885,
-          "last_published_day": 1.7038399581690966
+          "last_published_day": 1.6922977514814341
         },
         "leakFree": false,
         "byHorizon": {
@@ -4010,7 +4010,7 @@
     },
     "cli": {
       "args": ["--data", "<tmp>/synthetic.json"],
-      "stdout": "\nFI forecast backtest (issue-time keyed)\n  origins scored:      93\n  fallback origins:    0\n  sanity-clamped quarters: 0\n  no-grid-data origins: 0\n  leakage-free:        true\n  model MAE  (c/kWh):  3.380\n  model sMAPE:         0.479\n  rMAE vs last_week:           1.677\n  rMAE vs last_published_day:  1.717\n  band residuals:      26160  hour-buckets 24  observed coverage 0.800\n\n  per horizon (precision@N over the cheapest/peak 16 quarters = 4h):\n    horizon  pairs     MAE   sMAPE   Spearman  P@N-cheap  P@N-peak  bandCov\n    d+1       8816   3.200   0.457     0.232      0.300     0.278    0.802\n    d+2       8720   3.464   0.493     0.256      0.305     0.292    0.800\n    d+3       8624   3.479   0.489     0.249      0.298     0.293    0.802\n\n",
+      "stdout": "\nFI forecast backtest (issue-time keyed)\n  origins scored:      93\n  fallback origins:    0\n  sanity-clamped quarters: 0\n  no-grid-data origins: 0\n  leakage-free:        true\n  model MAE  (c/kWh):  3.380\n  model sMAPE:         0.479\n  rMAE vs last_week:           1.677\n  rMAE vs last_published_day:  1.705\n  band residuals:      26160  hour-buckets 24  observed coverage 0.800\n\n  per horizon (precision@N over the cheapest/peak 16 quarters = 4h):\n    horizon  pairs     MAE   sMAPE   Spearman  P@N-cheap  P@N-peak  bandCov\n    d+1       8816   3.200   0.457     0.232      0.300     0.278    0.802\n    d+2       8720   3.464   0.493     0.256      0.305     0.292    0.800\n    d+3       8624   3.479   0.489     0.249      0.298     0.293    0.802\n\n",
       "stderr": "",
       "status": 0
     }
@@ -4089,7 +4089,7 @@
   },
   "dbCompare": {
     "args": ["--db", "--compare"],
-    "stdout": "\nVintage-leak optimism (leaked latest vs honest issue-time)\n  shared origins:      93  (pre-vintage skipped: 0)\n  scored window:       2026-01-05T13:00:00.000Z … 2026-04-07T13:00:00.000Z  (92.0 days)\n  honest leak-free:    true   leaked leak-free: false  (leaked is FALSE BY DESIGN — the vintage postdates issue time)\n  sanity-clamped quarters: honest 0  leaked 0\n  no-grid-data origins: honest 0  leaked 0\n\n  CAVEATS (read before quoting any number):\n   - SIGN: delta = leaked − honest (positive ⇒ leaked was optimistic).\n   - N=93 DAILY origins, strongly autocorrelated → treat as DIRECTIONAL, not a precise interval (no CI is reported).\n   - SUMMER WIND-ONLY LOWER BOUND on the annual leak: 165 shows no summer revision (#79), so winter would only widen it.\n   - delta ≈ 0 ALONE MUST NOT close #81 — re-run with autumn/winter accumulation first.\n\n  metric            leaked      honest       delta\n  MAE (c/kWh)        3.355       3.380      -0.025\n  sMAPE              0.478       0.479      -0.001\n  rMAE last_week     1.664       1.677      -0.012\n  rMAE last_pub_day   1.704       1.717      -0.013\n  band coverage            —           —       0.000\n\n  per horizon (delta = leaked − honest):\n    horizon   deltaMAE   deltaSMAPE   deltaBandCov\n    d+1         -0.011       -0.001         -0.000\n    d+2         -0.033       -0.002          0.000\n    d+3         -0.031       -0.002         -0.000\n\n  ladder depth (cron-gap diagnostic):\n    dataset   medianDepth   expectedDepth(p90)   sparseFrac\n    165               2.0                  2.0        0.000\n    245               2.0                  2.0        0.000\n\n",
+    "stdout": "\nVintage-leak optimism (leaked latest vs honest issue-time)\n  shared origins:      93  (pre-vintage skipped: 0)\n  scored window:       2026-01-05T13:00:00.000Z … 2026-04-07T13:00:00.000Z  (92.0 days)\n  honest leak-free:    true   leaked leak-free: false  (leaked is FALSE BY DESIGN — the vintage postdates issue time)\n  sanity-clamped quarters: honest 0  leaked 0\n  no-grid-data origins: honest 0  leaked 0\n\n  CAVEATS (read before quoting any number):\n   - SIGN: delta = leaked − honest (positive ⇒ leaked was optimistic).\n   - N=93 DAILY origins, strongly autocorrelated → treat as DIRECTIONAL, not a precise interval (no CI is reported).\n   - SUMMER WIND-ONLY LOWER BOUND on the annual leak: 165 shows no summer revision (#79), so winter would only widen it.\n   - delta ≈ 0 ALONE MUST NOT close #81 — re-run with autumn/winter accumulation first.\n\n  metric            leaked      honest       delta\n  MAE (c/kWh)        3.355       3.380      -0.025\n  sMAPE              0.478       0.479      -0.001\n  rMAE last_week     1.664       1.677      -0.012\n  rMAE last_pub_day   1.692       1.705      -0.013\n  band coverage            —           —       0.000\n\n  per horizon (delta = leaked − honest):\n    horizon   deltaMAE   deltaSMAPE   deltaBandCov\n    d+1         -0.011       -0.001         -0.000\n    d+2         -0.033       -0.002          0.000\n    d+3         -0.031       -0.002         -0.000\n\n  ladder depth (cron-gap diagnostic):\n    dataset   medianDepth   expectedDepth(p90)   sparseFrac\n    165               2.0                  2.0        0.000\n    245               2.0                  2.0        0.000\n\n",
     "stderr": "",
     "status": 0
   },
