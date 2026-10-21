@@ -5,8 +5,9 @@
 //! and Fingrid actuals that started strictly before it. A price lag that was
 //! not available takes the fill of the served prediction, and an indicator
 //! column marks it. An example without a wind or consumption value is left
-//! out and counted, because a served prediction always has both. The
-//! prediction rows use the same assembly.
+//! out and counted. A served prediction has both values whenever a vintage,
+//! the tail extension, or the gap fill gives one. The prediction rows use
+//! the same assembly.
 
 use std::collections::BTreeMap;
 
@@ -126,7 +127,7 @@ pub enum InputSource {
     /// A forecast vintage. `issued_at` is `None` only in a prediction row,
     /// where the caller selected the vintage.
     Vintage { issued_at: Option<Timestamp> },
-    /// The tail extension from earlier actuals.
+    /// The tail extension or the gap fill from earlier weeks of actuals.
     Extension,
     /// An actual that started before the issuance.
     Actual,
@@ -191,12 +192,15 @@ pub struct IssuanceSummary {
 /// either reason is that one.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExcludedExamples {
-    /// The issuance had no vintage of the dataset at all, and the tail
-    /// extension has no forecast to extend: before the archive started.
+    /// The issuance had no vintage of the dataset at all, and no earlier
+    /// week of actuals in the input fills the target: before the archive
+    /// started.
     pub no_vintage: usize,
-    /// The tail extension needs actuals from before the input: the input
-    /// starts [`FLOOR_HISTORY_DAYS`] before the run's series start, so an
-    /// old issuance lacks the actuals of its extension.
+    /// The issuance had vintages of the dataset, but the value is missing.
+    /// Usually the tail extension needs actuals from before the input,
+    /// which starts [`FLOOR_HISTORY_DAYS`] before the run's series start. A
+    /// hole in the stored actuals that no earlier week fills counts here
+    /// too.
     pub outside_input: usize,
 }
 

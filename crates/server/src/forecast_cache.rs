@@ -334,6 +334,19 @@ impl ForecastCache {
                         "the recomputed forecast uses Fingrid data older than 2 h"
                     );
                 }
+                if let RouteForecast::Ready { result, .. } = &snapshot.route {
+                    let d = &result.diagnostics;
+                    if d.grid_missing_quarters > 0 || d.training_grid_missing_rows > 0 {
+                        tracing::warn!(
+                            job = "forecast",
+                            stage = trigger,
+                            code = "forecast_grid_missing",
+                            missing_quarters = d.grid_missing_quarters,
+                            missing_training_rows = d.training_grid_missing_rows,
+                            "the recomputed forecast reads 0 MW for a missing grid value"
+                        );
+                    }
+                }
                 self.replace(snapshot);
                 tracing::info!(
                     job = "forecast",

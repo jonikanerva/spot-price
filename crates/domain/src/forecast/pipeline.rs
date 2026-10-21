@@ -8,23 +8,41 @@ use super::conformal::{CalibratedBands, UtcHour, apply_band};
 use super::conformal_artifact::CALIBRATED_BANDS;
 use super::correction::{self, CorrectionDiagnostics, QuarterCorrection};
 use super::features::{
-    FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule, NeighborPrices, PrevDayBasis,
-    build_feature_vector_indexed, build_price_index, training_matrix_at,
+    BuiltTraining, FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule,
+    NeighborPrices, PrevDayBasis, build_feature_vector_indexed, build_price_index,
+    training_matrix_at,
 };
 use super::issuance::{self, ExcludedExamples, TrainingRule};
 use super::js::{js_max, js_min};
-use super::model::{DEFAULT_RIDGE_LAMBDA, FitOptions, PriceTransform, TrainingData, fit_ridge};
+use super::model::{
+    DEFAULT_RIDGE_LAMBDA, FitMeta, FitOptions, PriceTransform, TrainingData, fit_ridge,
+};
 use super::quarter::{QUARTER_MS, QuarterMap, QuarterStart};
 use super::route::{FLOOR_HISTORY_DAYS, FORECAST_DAYS};
 use super::series::{
-    ForecastSpotPoint, GridRecord, SanityBound, ShapeProfile, apply_within_day_shape_with,
-    bucket_records, build_predicted_series, expand_hourly_to_quarters, extend_with_last_week,
+    ForecastSpotPoint, GAP_FILL_LOOKBACK_WEEKS, GridRecord, SanityBound, ShapeProfile,
+    apply_within_day_shape_with, bucket_records, build_predicted_series, expand_hourly_to_quarters,
+    extend_with_last_week, fill_gaps_from_earlier_weeks,
 };
 
 /// Wind tail extension: the mean over this many weeks back.
 pub const WIND_EXTENSION_WEEKS: u32 = 4;
 /// Consumption tail extension: the same quarter this many weeks back.
 pub const CONSUMPTION_EXTENSION_WEEKS: u32 = 1;
+
+/// What a wind or consumption feature reads for a quarter without a forecast
+/// or an actual value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GridGapRule {
+    /// Fill the quarter from earlier weeks of actuals
+    /// ([`fill_gaps_from_earlier_weeks`]). A quarter that no earlier week
+    /// fills reads 0 MW and is counted in [`ForecastDiagnostics`].
+    #[default]
+    EarlierWeeks,
+    /// Read 0 MW, without a count. The TypeScript parity fixtures follow
+    /// this rule.
+    Zero,
+}
 
 /// The inputs of one forecast run. The caller loads them; the pipeline does
 /// no I/O.
@@ -65,6 +83,8 @@ pub struct ForecastOptions<'a> {
     pub training: TrainingRule<'a>,
     /// The served forecast uses `None`: no quarter correction.
     pub correction: Option<QuarterCorrection<'a>>,
+    /// The served forecast uses [`GridGapRule::EarlierWeeks`].
+    pub grid_gaps: GridGapRule,
 }
 
 /// The weeks of the weekday-mean shape profile of the served forecast.
@@ -75,6 +95,13 @@ pub const SERVED_SHAPE_WEEKS: u8 = 4;
 const _: () = assert!(
     7 * (SERVED_SHAPE_WEEKS as i64) < FLOOR_HISTORY_DAYS && FORECAST_DAYS < 7,
     "the served shape profile reads outside the price window"
+);
+
+// The gap fill of a predicted quarter reads only actuals inside the Fingrid
+// read window, which starts FLOOR_HISTORY_DAYS before the series start.
+const _: () = assert!(
+    7 * (GAP_FILL_LOOKBACK_WEEKS as i64) <= FLOOR_HISTORY_DAYS,
+    "the gap fill reads outside the Fingrid window"
 );
 
 impl<'a> ForecastOptions<'a> {
@@ -108,6 +135,7 @@ impl Default for ForecastOptions<'static> {
             shape_profile: ShapeProfile::Persistence,
             training: TrainingRule::Realised,
             correction: None,
+            grid_gaps: GridGapRule::EarlierWeeks,
         }
     }
 }
@@ -122,6 +150,16 @@ pub struct ForecastDiagnostics {
     pub fit_used_default: bool,
     pub consumption_extended_quarters: usize,
     pub wind_extended_quarters: usize,
+    /// [`GridGapRule::EarlierWeeks`] only: wind and consumption quarters
+    /// that the gap fill filled, summed over both datasets.
+    pub grid_gap_filled_quarters: usize,
+    /// [`GridGapRule::EarlierWeeks`] only: predicted quarters whose wind or
+    /// consumption feature reads 0 MW because no value exists. Expected 0.
+    pub grid_missing_quarters: usize,
+    /// [`GridGapRule::EarlierWeeks`] and [`TrainingRule::Realised`] only:
+    /// training rows whose wind or consumption feature reads 0 MW because no
+    /// value exists. Expected 0.
+    pub training_grid_missing_rows: usize,
     pub filled_quarters: usize,
     pub zero_seeded_quarters: usize,
     /// Quarters with no profile price; not a degradation.
@@ -156,6 +194,14 @@ pub(super) struct GridSeries {
     pub(super) consumption_extended: QuarterMap,
     wind_extended_quarters: usize,
     consumption_extended_quarters: usize,
+    gap_filled_quarters: usize,
+}
+
+impl GridSeries {
+    /// Whether the wind or the consumption feature of `q` has no value.
+    pub(super) fn lacks_value(&self, q: QuarterStart) -> bool {
+        !self.wind.contains_key(&q) || !self.consumption.contains_key(&q)
+    }
 }
 
 pub(super) fn grid_series(
@@ -168,36 +214,65 @@ pub(super) fn grid_series(
     let consumption_forecast = bucket_records(input.consumption_forecast);
     let consumption_actual = expand_hourly_to_quarters(input.consumption_actual);
 
-    let consumption_extended = extend_with_last_week(
+    let mut consumption_extended = extend_with_last_week(
         &consumption_forecast,
         &consumption_actual,
         series_end_ms,
         opts.consumption_extension_weeks,
     );
-    let wind_extended = extend_with_last_week(
+    let mut wind_extended = extend_with_last_week(
         &wind_forecast,
         &wind_actual,
         series_end_ms,
         opts.wind_extension_weeks,
     );
 
+    let wind_extended_quarters = wind_extended.len().saturating_sub(wind_forecast.len());
+    let consumption_extended_quarters = consumption_extended
+        .len()
+        .saturating_sub(consumption_forecast.len());
+
     // The forecast value wins where an actual also exists.
-    let mut wind = wind_actual;
+    let mut wind = wind_actual.clone();
     wind.extend(wind_extended.iter().map(|(&k, &v)| (k, v)));
-    let mut consumption = consumption_actual;
+    let mut consumption = consumption_actual.clone();
     consumption.extend(consumption_extended.iter().map(|(&k, &v)| (k, v)));
+
+    let mut gap_filled_quarters = 0;
+    if opts.grid_gaps == GridGapRule::EarlierWeeks {
+        // A gap-filled quarter joins the extension, so an issuance row
+        // reports its source as the extension.
+        for (merged, extended, actual, weeks) in [
+            (
+                &mut wind,
+                &mut wind_extended,
+                &wind_actual,
+                opts.wind_extension_weeks,
+            ),
+            (
+                &mut consumption,
+                &mut consumption_extended,
+                &consumption_actual,
+                opts.consumption_extension_weeks,
+            ),
+        ] {
+            let filled = fill_gaps_from_earlier_weeks(merged, actual, series_end_ms, weeks);
+            gap_filled_quarters += filled.len();
+            merged.extend(filled.iter().map(|(&k, &v)| (k, v)));
+            extended.extend(filled);
+        }
+    }
 
     GridSeries {
         wind,
         consumption,
-        wind_extended_quarters: wind_extended.len().saturating_sub(wind_forecast.len()),
-        consumption_extended_quarters: consumption_extended
-            .len()
-            .saturating_sub(consumption_forecast.len()),
         wind_forecast,
         consumption_forecast,
         wind_extended,
         consumption_extended,
+        wind_extended_quarters,
+        consumption_extended_quarters,
+        gap_filled_quarters,
     }
 }
 
@@ -215,6 +290,84 @@ fn clamp_predictions(predicted: &mut QuarterMap, bound: SanityBound) -> usize {
         *value = bounded;
     }
     clamped
+}
+
+/// Fit on the realised rows of the training window and predict the served
+/// quarters. The count is the training rows without a wind or consumption
+/// value.
+fn fit_realised(
+    opts: &ForecastOptions<'_>,
+    served: &issuance::ServedView<'_>,
+) -> (QuarterMap, FitMeta, usize) {
+    let training = training_matrix_at(
+        served.series_start.as_millisecond(),
+        served.ctx,
+        Some(served.index),
+    );
+    let missing_rows = training
+        .keys
+        .iter()
+        .filter(|&&q| served.grid.lacks_value(q))
+        .count();
+    let fitted = fit_ridge(
+        &TrainingData {
+            feature_count: FEATURE_NAMES.len(),
+            rows: &training.rows,
+            targets: &training.targets,
+        },
+        &FitOptions {
+            ridge_lambda: opts.ridge_lambda,
+            price_transform: PriceTransform::Arcsinh,
+        },
+    );
+    let mut predicted = QuarterMap::new();
+    let mut cursor = served.series_start;
+    for _ in 0..served.num_quarters {
+        let features = build_feature_vector_indexed(cursor, served.ctx, served.index);
+        predicted.insert(cursor, fitted.predict(&features));
+        cursor = cursor.offset(QUARTER_MS);
+    }
+    (predicted, fitted.meta, missing_rows)
+}
+
+/// The realised training rows and the prediction rows of a run, as
+/// [`build_forecast`] builds them with [`TrainingRule::Realised`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureRows {
+    pub training: BuiltTraining,
+    /// One row per predicted quarter, in order.
+    pub predicted: Vec<(QuarterStart, Vec<f64>)>,
+}
+
+/// The feature rows of a run, for inspection. `opts.training` is ignored.
+#[must_use]
+pub fn feature_rows(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> FeatureRows {
+    let series_start = QuarterStart::floor(input.series_start);
+    let series_end = QuarterStart::floor(input.series_end);
+    let grid = grid_series(input, opts, series_end.as_millisecond());
+    let ctx = FeatureContext {
+        fi_prices: input.spot_prices,
+        neighbor_prices: input.neighbor_prices,
+        wind: &grid.wind,
+        consumption: &grid.consumption,
+    };
+    let index = build_price_index(
+        &ctx,
+        FeatureRules {
+            latest_published: opts.latest_published,
+            previous_day: opts.prev_day_basis.into(),
+        },
+    );
+    let mut predicted = Vec::new();
+    let mut cursor = series_start;
+    while cursor < series_end {
+        predicted.push((cursor, build_feature_vector_indexed(cursor, &ctx, &index)));
+        cursor = cursor.offset(QUARTER_MS);
+    }
+    FeatureRows {
+        training: training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index)),
+        predicted,
+    }
 }
 
 /// Run the pipeline over `[series_start, series_end)` at quarter resolution.
@@ -249,32 +402,24 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
         series_start,
         num_quarters,
     };
+    let mut training_grid_missing_rows = 0;
     let (predicted, fit_meta, training_excluded) = match opts.training {
         TrainingRule::Realised => {
-            let training = training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index));
-            let fitted = fit_ridge(
-                &TrainingData {
-                    feature_count: FEATURE_NAMES.len(),
-                    rows: &training.rows,
-                    targets: &training.targets,
-                },
-                &FitOptions {
-                    ridge_lambda: opts.ridge_lambda,
-                    price_transform: PriceTransform::Arcsinh,
-                },
-            );
-            let mut predicted = QuarterMap::new();
-            let mut cursor = series_start;
-            for _ in 0..num_quarters {
-                let features = build_feature_vector_indexed(cursor, &ctx, &index);
-                predicted.insert(cursor, fitted.predict(&features));
-                cursor = cursor.offset(QUARTER_MS);
-            }
-            (predicted, fitted.meta, ExcludedExamples::default())
+            let (predicted, meta, missing_rows) = fit_realised(opts, &served);
+            training_grid_missing_rows = missing_rows;
+            (predicted, meta, ExcludedExamples::default())
         }
         TrainingRule::Issuance(history) => {
             issuance::fit_and_predict(input, opts, &history, &served)
         }
+    };
+
+    let (grid_missing_quarters, training_grid_missing_rows) = match opts.grid_gaps {
+        GridGapRule::EarlierWeeks => (
+            predicted.keys().filter(|&&q| grid.lacks_value(q)).count(),
+            training_grid_missing_rows,
+        ),
+        GridGapRule::Zero => (0, 0),
     };
 
     let shaped = apply_within_day_shape_with(&predicted, input.spot_prices, opts.shape_profile);
@@ -316,6 +461,9 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
             fit_used_default: fit_meta.used_fallback,
             consumption_extended_quarters: grid.consumption_extended_quarters,
             wind_extended_quarters: grid.wind_extended_quarters,
+            grid_gap_filled_quarters: grid.gap_filled_quarters,
+            grid_missing_quarters,
+            training_grid_missing_rows,
             filled_quarters: built.filled_quarters,
             zero_seeded_quarters: built.zero_seeded_quarters,
             shape_fallback_quarters: shaped.shape_fallback_quarters,

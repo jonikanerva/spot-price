@@ -10,15 +10,16 @@ mod behaviour {
     use spot_price_domain::forecast::{
         BandMethod, BandOffsets, CALIBRATED_BANDS, COVERAGE_GATE_THRESHOLD, CalibratedBands,
         DELIVERY_DAY_TIME_ZONE, DeriveOptions, FALLBACK_PREDICTION, FEATURE_COUNT, FEATURE_NAMES,
-        FeatureContext, FitOptions, ForecastInput, ForecastOptions, GridRecord, HorizonResidual,
-        LatestPublishedRule, LinearFitError, MIN_FIT_SAMPLES, MIN_TOTAL_CALIBRATION_SAMPLES,
-        NEIGHBOR_AREAS, NOMINAL_COVERAGE, NeighborPrices, PrevDayBasis, PriceTransform, QuarterMap,
-        QuarterStart, RouteForecast, SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound,
-        TRAINING_HISTORY_DAYS, TrainingData, UtcHour, align_series, apply_band,
-        apply_within_day_shape, bucket_records, build_artifact, build_feature_vector,
-        build_forecast, build_predicted_series, build_training_matrix, derive_band_offsets,
-        expand_hourly_to_quarters, extend_with_last_week, fit_linear, fit_ridge,
-        forecast_for_route, observed_coverage_of, sanity_bound_from_history, uncalibrated_bands,
+        FeatureContext, FitOptions, ForecastInput, ForecastOptions, GAP_FILL_LOOKBACK_WEEKS,
+        GridRecord, HorizonResidual, LatestPublishedRule, LinearFitError, MIN_FIT_SAMPLES,
+        MIN_TOTAL_CALIBRATION_SAMPLES, NEIGHBOR_AREAS, NOMINAL_COVERAGE, NeighborPrices,
+        PrevDayBasis, PriceTransform, QuarterMap, QuarterStart, RouteForecast,
+        SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound, TRAINING_HISTORY_DAYS, TrainingData, UtcHour,
+        align_series, apply_band, apply_within_day_shape, bucket_records, build_artifact,
+        build_feature_vector, build_forecast, build_predicted_series, build_training_matrix,
+        derive_band_offsets, expand_hourly_to_quarters, extend_with_last_week,
+        fill_gaps_from_earlier_weeks, fit_linear, fit_ridge, forecast_for_route,
+        observed_coverage_of, sanity_bound_from_history, uncalibrated_bands,
     };
 
     const QUARTER_MS: i64 = 15 * 60 * 1000;
@@ -179,6 +180,61 @@ mod behaviour {
         assert!(
             extend_with_last_week(&QuarterMap::new(), &QuarterMap::new(), anchor(), 1).is_empty()
         );
+    }
+
+    #[test]
+    fn a_gap_takes_the_nearest_earlier_week_with_a_value() {
+        let target = anchor() + 5 * WEEK_MS;
+        let end = target + QUARTER_MS;
+        let earliest = map(&[(anchor(), 1.0)]);
+        let with = |weeks: &[(i64, f64)]| -> QuarterMap {
+            let mut actual = earliest.clone();
+            actual.extend(weeks.iter().map(|&(w, v)| (q(target - w * WEEK_MS), v)));
+            actual
+        };
+        let known = QuarterMap::new();
+        let fill = |actual: &QuarterMap, weeks| {
+            fill_gaps_from_earlier_weeks(&known, actual, end, weeks)
+                .get(&q(target))
+                .copied()
+        };
+        // Week 1 exists: the same value as the 1-week extension.
+        assert_eq!(fill(&with(&[(1, 10.0), (2, 20.0)]), 1), Some(10.0));
+        // Week 1 is a hole: week 2, then week 4.
+        assert_eq!(fill(&with(&[(2, 20.0), (3, 30.0)]), 1), Some(20.0));
+        assert_eq!(fill(&with(&[(4, 40.0)]), 1), Some(40.0));
+        // The nearest two weeks with a value.
+        assert_eq!(
+            fill(&with(&[(1, 10.0), (3, 30.0), (4, 50.0)]), 2),
+            Some(20.0)
+        );
+        // Nothing within GAP_FILL_LOOKBACK_WEEKS weeks: the quarter stays missing.
+        assert_eq!(GAP_FILL_LOOKBACK_WEEKS, 4);
+        assert_eq!(fill(&with(&[(5, 50.0)]), 1), None);
+        assert_eq!(fill(&with(&[(1, 10.0)]), 0), None);
+    }
+
+    #[test]
+    fn the_gap_fill_keeps_known_values_and_the_full_extension() {
+        let start = anchor() + 4 * WEEK_MS;
+        let end = start + 8 * QUARTER_MS;
+        let actual: QuarterMap = (0..4 * 7 * 96)
+            .map(|i| (q(anchor() + i * QUARTER_MS), int(i % 97)))
+            .collect();
+        let forecast = map(&[(start, 5.0)]);
+        let mut known = actual.clone();
+        known.extend(forecast.clone());
+        // Every source week exists: the fill equals the tail extension.
+        for weeks in 1..=4 {
+            let extended = extend_with_last_week(&forecast, &actual, end, weeks);
+            let filled = fill_gaps_from_earlier_weeks(&known, &actual, end, weeks);
+            assert_eq!(filled.get(&q(start)), None, "a known value stays");
+            for (key, value) in &filled {
+                assert!(key.as_millisecond() > start);
+                assert_eq!(extended.get(key), Some(value));
+            }
+            assert_eq!(filled.len() + 1, extended.len());
+        }
     }
 
     #[test]
@@ -532,7 +588,7 @@ mod behaviour {
             panic!("the route found no grid data");
         };
         assert!(!result.diagnostics.fit_used_default);
-        assert_eq!(result, with_rule(LatestPublishedRule::Before));
+        assert_eq!(*result, with_rule(LatestPublishedRule::Before));
         let at_or_before = with_rule(LatestPublishedRule::AtOrBefore);
         assert!(moved_quarters(&result, &at_or_before) > 0);
         let persistence = build_forecast(

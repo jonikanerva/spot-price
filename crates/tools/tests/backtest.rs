@@ -1562,7 +1562,7 @@ mod backtest {
     fn served(inputs: &IssueTimeInputs) -> ForecastResult {
         let owned = RouteInputs::of(inputs);
         match forecast_for_route(&owned.input(inputs), &oslo()) {
-            RouteForecast::Ready { result, .. } => result,
+            RouteForecast::Ready { result, .. } => *result,
             RouteForecast::NoGridData => panic!("the fixture has grid data"),
         }
     }

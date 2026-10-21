@@ -131,7 +131,7 @@ pub enum RouteForecast {
     /// [`REASON_NO_GRID_DATA`].
     NoGridData,
     Ready {
-        result: ForecastResult,
+        result: Box<ForecastResult>,
         assessment: Assessment,
     },
 }
@@ -160,5 +160,8 @@ pub fn forecast_for_route(input: &ForecastInput<'_>, delivery_zone: &TimeZone) -
     };
     let result = build_forecast(input, &opts);
     let assessment = assess(&result.diagnostics);
-    RouteForecast::Ready { result, assessment }
+    RouteForecast::Ready {
+        result: Box::new(result),
+        assessment,
+    }
 }

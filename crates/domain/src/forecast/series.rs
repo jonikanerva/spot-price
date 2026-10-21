@@ -101,6 +101,56 @@ pub fn extend_with_last_week(
     out
 }
 
+/// The most weeks back that [`fill_gaps_from_earlier_weeks`] reads.
+pub const GAP_FILL_LOOKBACK_WEEKS: u32 = 4;
+
+/// Values for the quarters in `[first actual quarter, series_end_ms)` that
+/// `known` lacks. A value is the mean of the same weekday and quarter of the
+/// nearest `weeks` earlier weeks that `actual` holds, within
+/// `max(weeks, GAP_FILL_LOOKBACK_WEEKS)` weeks back. For a quarter whose
+/// first `weeks` weeks all hold a value, this equals
+/// [`extend_with_last_week`]. A quarter without such a week stays missing.
+#[must_use]
+pub fn fill_gaps_from_earlier_weeks(
+    known: &QuarterMap,
+    actual: &QuarterMap,
+    series_end_ms: i64,
+    weeks: u32,
+) -> QuarterMap {
+    let mut out = QuarterMap::new();
+    let Some(&first) = actual.keys().next() else {
+        return out;
+    };
+    if weeks == 0 {
+        return out;
+    }
+    let lookback = i64::from(weeks.max(GAP_FILL_LOOKBACK_WEEKS));
+    let wanted = usize::try_from(weeks).unwrap_or(usize::MAX);
+    let mut cursor = first.as_millisecond();
+    while cursor < series_end_ms {
+        let key = QuarterStart::from_millisecond(cursor);
+        if !known.contains_key(&key) {
+            let mut sum = 0.0;
+            let mut found = 0_usize;
+            for week in 1..=lookback {
+                if found == wanted {
+                    break;
+                }
+                let previous = QuarterStart::from_millisecond(cursor - week * WEEK_MS);
+                if let Some(value) = actual.get(&previous) {
+                    sum += value;
+                    found += 1;
+                }
+            }
+            if found > 0 {
+                out.insert(key, sum / count_f64(found));
+            }
+        }
+        cursor += QUARTER_MS;
+    }
+    out
+}
+
 /// Aligned `(x, y)` pairs over the quarters present in both maps, in
 /// chronological order. `x` comes from `residuals`, `y` from `prices`.
 #[must_use]

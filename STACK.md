@@ -483,6 +483,12 @@ entry here.
 - **Staleness:** when the newest grid forecast issuance is older than 2 h,
   the recompute and the first serve of that result log a warning with the
   code `forecast_stale`.
+- **Grid gaps:** a wind or consumption quarter without a vintage, an
+  actual, or an extension value takes the nearest earlier weeks of actuals,
+  at most 4 weeks back (docs/adr/0007). A quarter that no week fills reads
+  0 MW. The recompute then logs a warning with the code
+  `forecast_grid_missing` and the counts `missing_quarters` and
+  `missing_training_rows`. The API response does not show it.
 
 - **Shutdown:** SIGTERM or SIGINT stops accepting connections and signals the
   jobs. Active requests get 10 s; jobs get 5 s, then they are aborted; the
