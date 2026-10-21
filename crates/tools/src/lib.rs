@@ -9,6 +9,7 @@ pub mod backtest_cli;
 pub mod bands;
 pub mod bootstrap;
 pub mod cli;
+pub mod correction;
 pub mod criteria;
 pub mod data;
 pub mod db;

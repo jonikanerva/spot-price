@@ -207,7 +207,7 @@ impl ExcludedExamples {
         self.no_vintage + self.outside_input
     }
 
-    fn add(&mut self, other: Self) {
+    pub(super) fn add(&mut self, other: Self) {
         self.no_vintage += other.no_vintage;
         self.outside_input += other.outside_input;
     }
@@ -688,20 +688,33 @@ pub(super) fn fit_and_predict(
             price_transform: PriceTransform::Arcsinh,
         },
     );
+    let predicted = served_rows(served, history.issued_at)
+        .into_iter()
+        .map(|(q, features)| (q, fitted.predict(&features)))
+        .collect();
+    (predicted, fitted.meta, examples.excluded())
+}
+
+/// The issuance-training row of every served quarter, built at `issued_at`
+/// with the served inputs of the run.
+pub(super) fn served_rows(
+    served: &ServedView<'_>,
+    issued_at: Timestamp,
+) -> Vec<(QuarterStart, Vec<f64>)> {
     let view = View {
-        issued_ms: history.issued_at.as_millisecond(),
+        issued_ms: issued_at.as_millisecond(),
         ctx: served.ctx,
         index: served.index,
         grid: served.grid,
         wind_issued: None,
         consumption_issued: None,
     };
-    let mut predicted = QuarterMap::new();
+    let mut rows = Vec::with_capacity(served.num_quarters);
     let mut cursor = served.series_start;
     for _ in 0..served.num_quarters {
         let (features, ..) = example_row(cursor, &view);
-        predicted.insert(cursor, fitted.predict(&features));
+        rows.push((cursor, features));
         cursor = cursor.offset(QUARTER_MS);
     }
-    (predicted, fitted.meta, examples.excluded())
+    rows
 }

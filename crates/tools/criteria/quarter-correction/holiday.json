@@ -1,0 +1,104 @@
+{
+  "experiment": "Finnish public-holiday column: the holiday twin of the selected correction arm (alias corr_selected_hol) against the selected arm (corr_selected). A window with few holidays gives a data-limited result.",
+  "declared": "2026-10-21",
+  "success": [
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/06/D+1",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/06/D+2",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/06/D+3",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/13/D+2",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/13/D+3",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/13/D+4",
+      "statistic": "point",
+      "op": "<",
+      "value": 0
+    }
+  ],
+  "regression": [
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/06/D+1",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/06/D+2",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/06/D+3",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/13/D+2",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/13/D+3",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "mae_delta/corr_selected_hol-corr_selected/13/D+4",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/corr_selected_hol-corr_selected/within_day/4h/06",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/corr_selected_hol-corr_selected/within_day/4h/13",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/corr_selected_hol-corr_selected/across_day/4h/06",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    },
+    {
+      "id": "cost_delta/corr_selected_hol-corr_selected/across_day/4h/13",
+      "statistic": "ci_low",
+      "op": ">",
+      "value": 0
+    }
+  ]
+}

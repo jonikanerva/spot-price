@@ -121,6 +121,7 @@ mod profile_eval {
                 issuance_hours_utc: vec![6, 13],
                 arms,
                 cost: CostBasis::Spot,
+                paired: Vec::new(),
             },
         )
         .unwrap()

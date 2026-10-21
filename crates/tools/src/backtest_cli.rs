@@ -21,6 +21,7 @@ use crate::backtest::{
     compare_optimism, compare_variants, run_backtest,
 };
 use crate::cli::{Context, Output, flag_value, has_flag};
+use crate::correction::CorrectionSpec;
 use crate::data::{BacktestData, DatasetId, GridActual, PricePoint, Vintage, load_fixture};
 use crate::db;
 use crate::error::ToolError;
@@ -54,11 +55,13 @@ const USAGE: &str = "usage: spot-price-tools backtest --data <fixture.json> | --
         keys: ridge_lambda, wind_extension_weeks, consumption_extension_weeks,
         latest_published (before | at_or_before), prev_day_basis (utc | delivery),
         shape_profile (persistence | prev_day | prev_week | mean2w | mean3w | mean4w; arm A has mean4w),
-        training (realised | issuance). Not with --compare.
+        training (realised | issuance), correction (<joint|dev>_l<lambda>_w<days>_h<days>[_hol]). Not with --compare.
   --eval  the evaluation report: --issuances <h[,h]> (UTC, default 6,13), --cost spot | contract:margin=,day=,night=,tax=,vat=,night_start=,night_end=,
           --split <selection-start>,<test-start> (YYYY-MM-DD), --criteria <file.json>, --seed <n>, --resamples <n>, --block-days <n>. With --ab, B is a second arm. Not with --compare.
           --profiles <family[,family]> adds per family a served-model arm shape_<family> and a pure-profile arm pure_<family>;
-          families persistence, prev_day, prev_week, mean2w, mean3w (mean4w is arm A).";
+          families persistence, prev_day, prev_week, mean2w, mean3w (mean4w is arm A).
+          --corrections grid | <token[,token]> adds a quarter-correction arm corr_<token> per correction; arm A is its baseline;
+          --correction-holiday adds the holiday twin of each.";
 
 /// One stored day-ahead price in EUR/MWh.
 #[derive(Debug, Clone, PartialEq)]
@@ -166,9 +169,15 @@ pub fn parse_variant(raw: &str) -> Result<ForecastVariant, ToolError> {
                     .map_err(|message| ToolError::Argument(format!("--ab {message}")))?;
             }
             "training" => variant.training = parse_training(value)?,
+            "correction" => {
+                variant.correction = Some(
+                    CorrectionSpec::parse(value)
+                        .map_err(|message| ToolError::Argument(format!("--ab {message}")))?,
+                );
+            }
             _ => {
                 return Err(ToolError::Argument(format!(
-                    "--ab key must be ridge_lambda, wind_extension_weeks, consumption_extension_weeks, latest_published, prev_day_basis, shape_profile, or training, got \"{key}\""
+                    "--ab key must be ridge_lambda, wind_extension_weeks, consumption_extension_weeks, latest_published, prev_day_basis, shape_profile, training, or correction, got \"{key}\""
                 )));
             }
         }
@@ -507,10 +516,14 @@ pub(crate) fn variant_label(v: ForecastVariant) -> String {
         prev_day_basis_name(v.prev_day_basis)
     );
     // Labels of older runs have no profile and mean persistence.
-    if v.shape_profile == ShapeFamily::Persistence {
+    let label = if v.shape_profile == ShapeFamily::Persistence {
         label
     } else {
         format!("{label} shape_profile={}", v.shape_profile.token())
+    };
+    match v.correction {
+        None => label,
+        Some(spec) => format!("{label} correction={}", spec.token()),
     }
 }
 

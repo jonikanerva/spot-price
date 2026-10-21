@@ -6,6 +6,7 @@ use jiff::tz::TimeZone;
 
 use super::conformal::{CalibratedBands, UtcHour, apply_band};
 use super::conformal_artifact::CALIBRATED_BANDS;
+use super::correction::{self, CorrectionDiagnostics, QuarterCorrection};
 use super::features::{
     FEATURE_NAMES, FeatureContext, FeatureRules, LatestPublishedRule, NeighborPrices, PrevDayBasis,
     build_feature_vector_indexed, build_price_index, training_matrix_at,
@@ -62,6 +63,8 @@ pub struct ForecastOptions<'a> {
     pub shape_profile: ShapeProfile<'a>,
     /// The served forecast uses [`TrainingRule::Realised`].
     pub training: TrainingRule<'a>,
+    /// The served forecast uses `None`: no quarter correction.
+    pub correction: Option<QuarterCorrection<'a>>,
 }
 
 /// The weeks of the weekday-mean shape profile of the served forecast.
@@ -104,6 +107,7 @@ impl Default for ForecastOptions<'static> {
             prev_day_basis: PrevDayBasis::UtcDay,
             shape_profile: ShapeProfile::Persistence,
             training: TrainingRule::Realised,
+            correction: None,
         }
     }
 }
@@ -129,6 +133,8 @@ pub struct ForecastDiagnostics {
     pub band_hour_buckets: usize,
     /// Issuance training only: targets left out for a missing grid value.
     pub training_excluded: ExcludedExamples,
+    /// The quarter correction only.
+    pub correction: Option<CorrectionDiagnostics>,
 }
 
 /// The predicted spot series and its diagnostics.
@@ -236,6 +242,13 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
     let span_ms = series_end.as_millisecond() - series_start.as_millisecond();
     let num_quarters = usize::try_from((span_ms / QUARTER_MS).max(0)).unwrap_or(0);
 
+    let served = issuance::ServedView {
+        grid: &grid,
+        ctx: &ctx,
+        index: &index,
+        series_start,
+        num_quarters,
+    };
     let (predicted, fit_meta, training_excluded) = match opts.training {
         TrainingRule::Realised => {
             let training = training_matrix_at(series_start.as_millisecond(), &ctx, Some(&index));
@@ -259,22 +272,17 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
             }
             (predicted, fitted.meta, ExcludedExamples::default())
         }
-        TrainingRule::Issuance(history) => issuance::fit_and_predict(
-            input,
-            opts,
-            &history,
-            &issuance::ServedView {
-                grid: &grid,
-                ctx: &ctx,
-                index: &index,
-                series_start,
-                num_quarters,
-            },
-        ),
+        TrainingRule::Issuance(history) => {
+            issuance::fit_and_predict(input, opts, &history, &served)
+        }
     };
 
     let shaped = apply_within_day_shape_with(&predicted, input.spot_prices, opts.shape_profile);
     let mut predicted = shaped.result;
+    // The correction runs after the shape step, so the step cannot erase it.
+    let correction = opts
+        .correction
+        .map(|c| correction::apply(&mut predicted, input, opts, &c, &served));
     let sanity_clamped_quarters = opts
         .sanity_bound
         .map_or(0, |bound| clamp_predictions(&mut predicted, bound));
@@ -315,6 +323,7 @@ pub fn build_forecast(input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) -> 
             band_calibrated: opts.bands.calibrated,
             band_hour_buckets,
             training_excluded,
+            correction,
         },
     }
 }

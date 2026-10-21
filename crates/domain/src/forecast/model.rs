@@ -87,6 +87,33 @@ impl Standardizer {
         Self { means, scales }
     }
 
+    /// The weighted means and standard deviations of the columns. The
+    /// weights must be finite and non-negative, with a positive sum.
+    fn from_weighted_rows(rows: &[Vec<f64>], weights: &[f64], feature_count: usize) -> Self {
+        let mut means = vec![0.0; feature_count];
+        let mut scales = vec![1.0; feature_count];
+        let total: f64 = weights.iter().sum();
+        if rows.is_empty() || total <= 0.0 {
+            return Self { means, scales };
+        }
+        for (j, (mean_out, scale_out)) in means.iter_mut().zip(&mut scales).enumerate() {
+            let mut sum = 0.0;
+            for (row, w) in rows.iter().zip(weights) {
+                sum += w * cell(row, j);
+            }
+            let mean = sum / total;
+            *mean_out = mean;
+            let mut var_sum = 0.0;
+            for (row, w) in rows.iter().zip(weights) {
+                let d = cell(row, j) - mean;
+                var_sum += w * d * d;
+            }
+            let std = (var_sum / total).sqrt();
+            *scale_out = if std > 1e-12 { std } else { 1.0 };
+        }
+        Self { means, scales }
+    }
+
     fn apply(&self, row: &[f64]) -> Vec<f64> {
         self.means
             .iter()
@@ -229,22 +256,36 @@ fn normal_equations(
     feature_count: usize,
     lambda: f64,
 ) -> (Vec<f64>, Vec<f64>) {
+    weighted_normal_equations(standardized_rows, targets, None, feature_count, lambda)
+}
+
+/// [`normal_equations`] with a weight per row: `(XᵀWX + λI′) β = XᵀWy`.
+/// `None` multiplies by nothing, so the unweighted sums stay bit-identical.
+fn weighted_normal_equations(
+    standardized_rows: &[Vec<f64>],
+    targets: &[f64],
+    weights: Option<&[f64]>,
+    feature_count: usize,
+    lambda: f64,
+) -> (Vec<f64>, Vec<f64>) {
     let dim = feature_count + 1;
     let mut ata = vec![0.0; dim * dim];
     let mut aty = vec![0.0; dim];
     let mut xrow = vec![0.0; dim];
-    for (z, &target) in standardized_rows.iter().zip(targets) {
+    for (n, (z, &target)) in standardized_rows.iter().zip(targets).enumerate() {
         for (j, slot) in xrow.iter_mut().enumerate() {
             *slot = if j == 0 { 1.0 } else { cell(z, j - 1) };
         }
+        let weight = weights.map(|w| w.get(n).copied().unwrap_or(0.0));
         for (i, &xi) in xrow.iter().enumerate() {
+            let wxi = weight.map_or(xi, |w| w * xi);
             if let Some(row) = ata.get_mut(i * dim..(i + 1) * dim) {
                 for (slot, &xk) in row.iter_mut().zip(&xrow) {
-                    *slot += xi * xk;
+                    *slot += wxi * xk;
                 }
             }
             if let Some(slot) = aty.get_mut(i) {
-                *slot += xi * target;
+                *slot += wxi * target;
             }
         }
     }
@@ -261,6 +302,23 @@ fn normal_equations(
 /// with no features, or with a singular system.
 #[must_use]
 pub fn fit_ridge(data: &TrainingData<'_>, opts: &FitOptions) -> FittedModel {
+    fit(data, None, opts)
+}
+
+/// [`fit_ridge`] with a non-negative weight per row: the closed-form
+/// weighted ridge `(XᵀWX + λI′) β = XᵀWy`, standardized with weighted
+/// moments. Rows with a non-finite or negative weight, or a weight count
+/// that differs from the row count, give the fallback.
+#[must_use]
+pub fn fit_ridge_weighted(
+    data: &TrainingData<'_>,
+    weights: &[f64],
+    opts: &FitOptions,
+) -> FittedModel {
+    fit(data, Some(weights), opts)
+}
+
+fn fit(data: &TrainingData<'_>, weights: Option<&[f64]>, opts: &FitOptions) -> FittedModel {
     let feature_count = data.feature_count;
     let sample_count = data.rows.len().min(data.targets.len());
     if sample_count < MIN_FIT_SAMPLES || feature_count == 0 {
@@ -268,14 +326,33 @@ pub fn fit_ridge(data: &TrainingData<'_>, opts: &FitOptions) -> FittedModel {
     }
     let rows = data.rows.get(..sample_count).unwrap_or(data.rows);
     let targets = data.targets.get(..sample_count).unwrap_or(data.targets);
+    if let Some(w) = weights
+        && (w.len() != sample_count
+            || w.iter().any(|v| !v.is_finite() || *v < 0.0)
+            || w.iter().sum::<f64>() <= 0.0)
+    {
+        return FittedModel::fallback(sample_count, feature_count);
+    }
 
-    let standardizer = Standardizer::from_rows(rows, feature_count);
+    let standardizer = match weights {
+        None => Standardizer::from_rows(rows, feature_count),
+        Some(w) => Standardizer::from_weighted_rows(rows, w, feature_count),
+    };
     let z_rows: Vec<Vec<f64>> = rows.iter().map(|row| standardizer.apply(row)).collect();
     let fit_targets: Vec<f64> = match opts.price_transform {
         PriceTransform::Arcsinh => targets.iter().map(|t| t.asinh()).collect(),
         PriceTransform::None => targets.to_vec(),
     };
-    let (ata, aty) = normal_equations(&z_rows, &fit_targets, feature_count, opts.ridge_lambda);
+    let (ata, aty) = match weights {
+        None => normal_equations(&z_rows, &fit_targets, feature_count, opts.ridge_lambda),
+        Some(w) => weighted_normal_equations(
+            &z_rows,
+            &fit_targets,
+            Some(w),
+            feature_count,
+            opts.ridge_lambda,
+        ),
+    };
     let Some(beta) = solve_spd(&ata, &aty, feature_count + 1) else {
         return FittedModel::fallback(sample_count, feature_count);
     };
@@ -342,6 +419,111 @@ mod tests {
         assert_eq!(standardizer.means, vec![2.0, 5.0]);
         assert_eq!(standardizer.scales, vec![1.0, 1.0]);
         assert_eq!(standardizer.apply(&[3.0, 5.0]), vec![1.0, 0.0]);
+    }
+
+    fn toy_rows() -> (Vec<Vec<f64>>, Vec<f64>) {
+        let rows: Vec<Vec<f64>> = (0..40_u8)
+            .map(|i| {
+                let x = f64::from(i);
+                vec![x, (x * 0.7).sin(), x % 3.0]
+            })
+            .collect();
+        let targets = rows
+            .iter()
+            .map(|r| 2.0 + 0.5 * r[0] - 3.0 * r[1] + r[2] * 0.25 + (r[0] * 1.3).cos())
+            .collect();
+        (rows, targets)
+    }
+
+    const NO_TRANSFORM: FitOptions = FitOptions {
+        ridge_lambda: 2.0,
+        price_transform: PriceTransform::None,
+    };
+
+    #[test]
+    fn unit_weights_give_the_unweighted_fit() {
+        let (rows, targets) = toy_rows();
+        let data = TrainingData {
+            feature_count: 3,
+            rows: &rows,
+            targets: &targets,
+        };
+        let plain = fit_ridge(&data, &NO_TRANSFORM);
+        let weighted = fit_ridge_weighted(&data, &vec![1.0; rows.len()], &NO_TRANSFORM);
+        for row in &rows {
+            assert_eq!(
+                plain.predict(row).to_bits(),
+                weighted.predict(row).to_bits()
+            );
+        }
+    }
+
+    #[test]
+    fn an_integer_weight_equals_a_repeated_row() {
+        let (rows, targets) = toy_rows();
+        let repeats: Vec<u8> = (0..rows.len())
+            .map(|i| if i % 4 == 0 { 3 } else { 1 })
+            .collect();
+        let weights: Vec<f64> = repeats.iter().map(|r| f64::from(*r)).collect();
+        let mut repeated_rows = Vec::new();
+        let mut repeated_targets = Vec::new();
+        for ((row, target), r) in rows.iter().zip(&targets).zip(&repeats) {
+            for _ in 0..*r {
+                repeated_rows.push(row.clone());
+                repeated_targets.push(*target);
+            }
+        }
+        let weighted = fit_ridge_weighted(
+            &TrainingData {
+                feature_count: 3,
+                rows: &rows,
+                targets: &targets,
+            },
+            &weights,
+            &NO_TRANSFORM,
+        );
+        let repeated = fit_ridge(
+            &TrainingData {
+                feature_count: 3,
+                rows: &repeated_rows,
+                targets: &repeated_targets,
+            },
+            &NO_TRANSFORM,
+        );
+        for row in &rows {
+            assert!((weighted.predict(row) - repeated.predict(row)).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn bad_weights_give_the_fallback() {
+        let (rows, targets) = toy_rows();
+        let data = TrainingData {
+            feature_count: 3,
+            rows: &rows,
+            targets: &targets,
+        };
+        let n = rows.len();
+        for weights in [
+            vec![1.0; n - 1],
+            vec![0.0; n],
+            {
+                let mut w = vec![1.0; n];
+                w[3] = -1.0;
+                w
+            },
+            {
+                let mut w = vec![1.0; n];
+                w[5] = f64::NAN;
+                w
+            },
+        ] {
+            assert!(
+                fit_ridge_weighted(&data, &weights, &NO_TRANSFORM)
+                    .meta
+                    .used_fallback
+            );
+        }
     }
 
     #[test]

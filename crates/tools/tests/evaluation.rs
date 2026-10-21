@@ -108,6 +108,7 @@ mod evaluation {
             issuance_hours_utc: hours.to_vec(),
             arms,
             cost: CostBasis::Spot,
+            paired: Vec::new(),
         }
     }
 
@@ -450,6 +451,9 @@ mod evaluation {
             forecast: BTreeMap::new(),
             forecast_ladder: BTreeMap::new(),
             actual: BTreeMap::new(),
+            older_fi_prices: QuarterMap::new(),
+            older_neighbor_prices: BTreeMap::new(),
+            older_actual: BTreeMap::new(),
         };
         (inputs, realised)
     }

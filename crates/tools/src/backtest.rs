@@ -5,20 +5,23 @@
 //! Prices and Fingrid data stay inside the window of the served forecast.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::rc::Rc;
 use std::str::FromStr;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use spot_price_domain::areas::Area;
 use spot_price_domain::forecast::{
-    CalibratedBands, DeriveOptions, ExcludedExamples, FLOOR_HISTORY_DAYS, FORECAST_DAYS,
-    ForecastInput, ForecastOptions, GridRecord, GridVintage, HorizonResidual, IssuanceExamples,
-    IssuanceHistory, LatestPublishedRule, NeighborPrices, PrevDayBasis, QuarterMap, QuarterStart,
-    TrainingRule, UtcHour, build_artifact, build_forecast, build_issuance_examples,
-    derive_band_offsets, has_grid_data, observed_coverage_of, publication_horizon,
-    sanity_bound_from_history, uncalibrated_bands,
+    CORRECTION_HISTORY_DAYS, CalibratedBands, CorrectionDiagnostics, CorrectionExamples,
+    DeriveOptions, ExcludedExamples, FLOOR_HISTORY_DAYS, FORECAST_DAYS, ForecastInput,
+    ForecastOptions, GridRecord, GridVintage, HorizonResidual, IssuanceExamples, IssuanceHistory,
+    LatestPublishedRule, NeighborPrices, PrevDayBasis, QuarterCorrection, QuarterMap, QuarterStart,
+    TrainingRule, UtcHour, build_artifact, build_correction_examples, build_forecast,
+    build_issuance_examples, derive_band_offsets, has_grid_data, observed_coverage_of,
+    publication_horizon, sanity_bound_from_history, uncalibrated_bands,
 };
 
+use crate::correction::{CorrectionSpec, HOLIDAY_TIME_ZONE};
 use crate::data::{
     BacktestData, DATASET_CONSUMPTION_ACTUAL, DATASET_CONSUMPTION_FORECAST, DATASET_WIND_ACTUAL,
     DATASET_WIND_FORECAST, DatasetId, GridActual, Vintage,
@@ -64,6 +67,9 @@ pub enum BacktestError {
     /// The bundled time zone database has no [`DELIVERY_DAY_TIME_ZONE`].
     #[error("time zone {DELIVERY_DAY_TIME_ZONE} is not in the bundled database")]
     DeliveryDayTimeZone,
+    /// The bundled time zone database has no [`HOLIDAY_TIME_ZONE`].
+    #[error("time zone {HOLIDAY_TIME_ZONE} is not in the bundled database")]
+    HolidayTimeZone,
 }
 
 /// How a reconstructed issue time selects forecast vintages.
@@ -129,6 +135,13 @@ pub struct IssueTimeInputs {
     pub forecast_ladder: BTreeMap<DatasetId, Vec<Vintage>>,
     /// Fingrid actuals in `[history_start, min(t_ms, series_end))`.
     pub actual: BTreeMap<DatasetId, Vec<GridActual>>,
+    /// The quarter correction only: FI spot (c/kWh) in the
+    /// [`CORRECTION_HISTORY_DAYS`] before `history_start`.
+    pub older_fi_prices: QuarterMap,
+    /// Neighbour spot in the same window as `older_fi_prices`.
+    pub older_neighbor_prices: BTreeMap<String, QuarterMap>,
+    /// Fingrid actuals in the same window as `older_fi_prices`.
+    pub older_actual: BTreeMap<DatasetId, Vec<GridActual>>,
 }
 
 /// The Fingrid read window of the served forecast for a series that starts
@@ -181,19 +194,26 @@ pub fn reconstruct_issue_time(
         .max();
     let origin_ms = last_published_ms.map_or(t_ms, |last| last + QUARTER_MS);
     let (history_start_ms, series_end_ms) = served_window_ms(origin_ms);
+    let older_start_ms = history_start_ms.saturating_sub(CORRECTION_HISTORY_DAYS * DAY_MS);
 
     let mut fi_prices = QuarterMap::new();
     let mut neighbor_prices: BTreeMap<String, QuarterMap> = BTreeMap::new();
+    let mut older_fi_prices = QuarterMap::new();
+    let mut older_neighbor_prices: BTreeMap<String, QuarterMap> = BTreeMap::new();
     for p in &data.prices {
         let start_ms = p.start.as_millisecond();
-        if !(history_start_ms..origin_ms).contains(&start_ms) {
+        let (fi, neighbours) = if (history_start_ms..origin_ms).contains(&start_ms) {
+            (&mut fi_prices, &mut neighbor_prices)
+        } else if (older_start_ms..history_start_ms).contains(&start_ms) {
+            (&mut older_fi_prices, &mut older_neighbor_prices)
+        } else {
             continue;
-        }
+        };
         let key = QuarterStart::from_millisecond(start_ms);
         if p.area == "FI" {
-            fi_prices.insert(key, p.spot_cents_kwh);
+            fi.insert(key, p.spot_cents_kwh);
         } else {
-            neighbor_prices
+            neighbours
                 .entry(p.area.clone())
                 .or_default()
                 .insert(key, p.spot_cents_kwh);
@@ -230,18 +250,21 @@ pub fn reconstruct_issue_time(
         })
         .collect();
     let actual_end_ms = t_ms.min(series_end_ms);
-    let actual = data
-        .actuals
-        .iter()
-        .map(|(id, records)| {
-            let known = records
-                .iter()
-                .filter(|r| (history_start_ms..actual_end_ms).contains(&r.start.as_millisecond()))
-                .copied()
-                .collect();
-            (*id, known)
-        })
-        .collect();
+    let actuals_in = |from_ms: i64, to_ms: i64| -> BTreeMap<DatasetId, Vec<GridActual>> {
+        data.actuals
+            .iter()
+            .map(|(id, records)| {
+                let known = records
+                    .iter()
+                    .filter(|r| (from_ms..to_ms).contains(&r.start.as_millisecond()))
+                    .copied()
+                    .collect();
+                (*id, known)
+            })
+            .collect()
+    };
+    let actual = actuals_in(history_start_ms, actual_end_ms);
+    let older_actual = actuals_in(older_start_ms, history_start_ms.min(actual_end_ms));
 
     Ok(IssueTimeInputs {
         t_ms,
@@ -252,6 +275,9 @@ pub fn reconstruct_issue_time(
         forecast,
         forecast_ladder,
         actual,
+        older_fi_prices,
+        older_neighbor_prices,
+        older_actual,
     })
 }
 
@@ -276,14 +302,18 @@ pub fn collect_input_timestamps(inputs: &IssueTimeInputs) -> Vec<InputTimestamp>
         forward_looking_allowed: false,
     };
     let mut out = Vec::new();
-    for key in inputs.fi_prices.keys() {
+    for key in inputs.fi_prices.keys().chain(inputs.older_fi_prices.keys()) {
         out.push(bounded(
             "fi_price".to_owned(),
             key.as_millisecond(),
             inputs.origin_ms,
         ));
     }
-    for (area, series) in &inputs.neighbor_prices {
+    for (area, series) in inputs
+        .neighbor_prices
+        .iter()
+        .chain(&inputs.older_neighbor_prices)
+    {
         for key in series.keys() {
             out.push(bounded(
                 format!("neighbor_{area}"),
@@ -292,7 +322,7 @@ pub fn collect_input_timestamps(inputs: &IssueTimeInputs) -> Vec<InputTimestamp>
             ));
         }
     }
-    for (dataset, records) in &inputs.actual {
+    for (dataset, records) in inputs.actual.iter().chain(&inputs.older_actual) {
         for r in records {
             out.push(bounded(
                 format!("fingrid_actual_{dataset}"),
@@ -354,6 +384,8 @@ pub struct IssueForecast {
     /// Issuance training only: training targets left out for a missing
     /// wind or consumption value.
     pub training_excluded: ExcludedExamples,
+    /// The quarter correction only.
+    pub correction: Option<CorrectionDiagnostics>,
 }
 
 fn grid_records<'a, I>(records: I) -> Vec<GridRecord>
@@ -427,6 +459,8 @@ pub struct ForecastVariant {
     /// Local days of the shape profile are in [`DELIVERY_DAY_TIME_ZONE`].
     pub shape_profile: ShapeFamily,
     pub training: Training,
+    /// The quarter correction; `None` in the served forecast.
+    pub correction: Option<CorrectionSpec>,
 }
 
 impl Default for ForecastVariant {
@@ -448,6 +482,7 @@ impl Default for ForecastVariant {
                 TrainingRule::Realised => Training::Realised,
                 TrainingRule::Issuance(_) => Training::Issuance,
             },
+            correction: None,
         }
     }
 }
@@ -511,8 +546,114 @@ pub fn forecast_at_issue_time_with(
     inputs: &IssueTimeInputs,
     variant: ForecastVariant,
 ) -> Result<IssueForecast, BacktestError> {
+    forecast_at_issue_time_cached(inputs, variant, &mut CorrectionCache::default())
+}
+
+/// The correction examples of one issue time, shared by the correction
+/// arms whose examples are the same: the arms that differ only in the fit
+/// settings of the correction.
+#[derive(Debug, Default)]
+pub struct CorrectionCache {
+    entries: Vec<(ForecastVariant, Rc<CorrectionExamples>)>,
+}
+
+/// The variant with only the settings that change the correction examples.
+fn examples_key(variant: ForecastVariant, spec: CorrectionSpec) -> ForecastVariant {
+    ForecastVariant {
+        ridge_lambda: 0.0,
+        correction: Some(CorrectionSpec {
+            ridge_lambda: 0,
+            window_days: 0,
+            half_life_days: 0,
+            decomposition: spot_price_domain::forecast::Decomposition::Joint,
+            holiday: spec.holiday,
+        }),
+        ..variant
+    }
+}
+
+/// [`forecast_at_issue_time_with`] that reuses the correction examples in
+/// `cache`. Use one cache per issue time only.
+///
+/// # Errors
+/// [`BacktestError`] when the series window leaves the `Timestamp` range or
+/// a time zone is missing.
+pub fn forecast_at_issue_time_cached(
+    inputs: &IssueTimeInputs,
+    variant: ForecastVariant,
+    cache: &mut CorrectionCache,
+) -> Result<IssueForecast, BacktestError> {
     let records = IssueRecords::of(inputs);
-    forecast_of_input(&records.input(inputs)?, inputs, variant)
+    let input = records.input(inputs)?;
+    let Some(spec) = variant.correction else {
+        return forecast_of_input(&input, inputs, variant, None);
+    };
+    let key = examples_key(variant, spec);
+    let examples = if let Some((_, e)) = cache.entries.iter().find(|(k, _)| *k == key) {
+        Rc::clone(e)
+    } else {
+        let e = Rc::new(correction_examples_at(inputs, variant, spec.holiday)?);
+        cache.entries.push((key, Rc::clone(&e)));
+        e
+    };
+    forecast_of_input(&input, inputs, variant, Some((spec, &examples)))
+}
+
+/// The correction examples of `variant` at this issue time, from the
+/// served inputs and the older prices and actuals.
+///
+/// # Errors
+/// [`BacktestError`] when the series window leaves the `Timestamp` range or
+/// a time zone is missing.
+pub fn correction_examples_at(
+    inputs: &IssueTimeInputs,
+    variant: ForecastVariant,
+    holiday: bool,
+) -> Result<CorrectionExamples, BacktestError> {
+    let wide = IssueTimeInputs {
+        fi_prices: inputs
+            .older_fi_prices
+            .iter()
+            .chain(&inputs.fi_prices)
+            .map(|(&k, &v)| (k, v))
+            .collect(),
+        neighbor_prices: {
+            let mut merged = inputs.older_neighbor_prices.clone();
+            for (area, series) in &inputs.neighbor_prices {
+                merged
+                    .entry(area.clone())
+                    .or_default()
+                    .extend(series.iter().map(|(&k, &v)| (k, v)));
+            }
+            merged
+        },
+        actual: {
+            let mut merged = inputs.older_actual.clone();
+            for (id, records) in &inputs.actual {
+                merged
+                    .entry(*id)
+                    .or_default()
+                    .extend(records.iter().copied());
+            }
+            merged
+        },
+        ..inputs.clone()
+    };
+    let records = IssueRecords::of(&wide);
+    let input = records.input(&wide)?;
+    let zone = delivery_zone()?;
+    let holiday_zone = if holiday {
+        Some(TimeZone::get(HOLIDAY_TIME_ZONE).map_err(|_| BacktestError::HolidayTimeZone)?)
+    } else {
+        None
+    };
+    let ladders = IssueLadders::of(inputs);
+    Ok(build_correction_examples(
+        &input,
+        &variant.forecast_options(&zone, &inputs.fi_prices),
+        &ladders.history(inputs, &zone)?,
+        holiday_zone.as_ref(),
+    ))
 }
 
 /// The owned records of the [`ForecastInput`] of one issue time.
@@ -625,6 +766,7 @@ fn forecast_of_input(
     input: &ForecastInput<'_>,
     inputs: &IssueTimeInputs,
     variant: ForecastVariant,
+    correction: Option<(CorrectionSpec, &CorrectionExamples)>,
 ) -> Result<IssueForecast, BacktestError> {
     let series_start_ms = inputs.origin_ms;
     let (_, series_end_ms) = served_window_ms(series_start_ms);
@@ -635,6 +777,13 @@ fn forecast_of_input(
         ladders = IssueLadders::of(inputs);
         options.training = TrainingRule::Issuance(ladders.history(inputs, &zone)?);
     }
+    options.correction = correction.map(|(spec, examples)| QuarterCorrection {
+        examples,
+        decomposition: spec.decomposition,
+        ridge_lambda: f64::from(spec.ridge_lambda),
+        window_days: i64::from(spec.window_days),
+        half_life_days: (spec.half_life_days > 0).then(|| f64::from(spec.half_life_days)),
+    });
     let result = build_forecast(input, &options);
     Ok(IssueForecast {
         predicted: result
@@ -648,6 +797,7 @@ fn forecast_of_input(
         sanity_clamped_quarters: result.diagnostics.sanity_clamped_quarters,
         shape_fallback_quarters: result.diagnostics.shape_fallback_quarters,
         training_excluded: result.diagnostics.training_excluded,
+        correction: result.diagnostics.correction,
     })
 }
 
@@ -978,7 +1128,11 @@ pub fn run_backtest(
             if !find_leaking_inputs(&inputs).is_empty() {
                 leak_free = false;
             }
-            let fc = forecast_of_input(&input, &inputs, options.variant)?;
+            let fc = if options.variant.correction.is_some() {
+                forecast_at_issue_time_with(&inputs, options.variant)?
+            } else {
+                forecast_of_input(&input, &inputs, options.variant, None)?
+            };
             scoring.score_origin(&inputs, &fc, &realized);
         }
     }
