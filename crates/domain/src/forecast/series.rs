@@ -169,12 +169,13 @@ fn persistence_at(key: QuarterStart, spot_prices: &QuarterMap) -> Option<f64> {
 pub const PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS: i64 = 7;
 
 /// The price profile that gives the within-day shape. The daily level is the
-/// same for every profile; only the lagged price per quarter changes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// same for every profile; only the lagged price per quarter changes. The
+/// served forecast uses [`ShapeProfile::WeekdayMean`]; see
+/// [`ForecastOptions::served`](super::ForecastOptions::served).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShapeProfile<'a> {
-    /// The served rule: the price 24 h earlier, else 168 h earlier.
-    #[default]
-    Served,
+    /// The price 24 h earlier, else 168 h earlier (fixed offsets).
+    Persistence,
     /// The same local time on the latest earlier local day in the zone that
     /// has a price for every quarter.
     PreviousPublishedDay(&'a TimeZone),
@@ -269,7 +270,7 @@ where
     let mut complete_days: HashMap<Date, bool> = HashMap::new();
     for key in keys {
         let value = match profile {
-            ShapeProfile::Served => Ok(persistence_at(key, spot_prices)),
+            ShapeProfile::Persistence => Ok(persistence_at(key, spot_prices)),
             ShapeProfile::PreviousPublishedDay(zone) => {
                 previous_published_day_at(key, zone, spot_prices, &mut complete_days)
             }
@@ -356,7 +357,8 @@ pub struct ShapedPrediction {
     pub shape_fallback_quarters: usize,
 }
 
-/// Replace each prediction with its UTC-day mean plus the persistence shape:
+/// Replace each prediction with its UTC-day mean plus the shape of
+/// [`ShapeProfile::Persistence`]:
 /// `day mean of predicted + (persistence(q) − day mean of persistence)`.
 /// The persistence day mean covers only the quarters that have a lag.
 #[must_use]
@@ -364,10 +366,10 @@ pub fn apply_within_day_shape(
     predicted: &QuarterMap,
     spot_prices: &QuarterMap,
 ) -> ShapedPrediction {
-    apply_within_day_shape_with(predicted, spot_prices, ShapeProfile::Served)
+    apply_within_day_shape_with(predicted, spot_prices, ShapeProfile::Persistence)
 }
 
-/// [`apply_within_day_shape`] with the persistence price of `profile`. The
+/// [`apply_within_day_shape`] with the profile price of `profile`. The
 /// day mean of the prediction, the daily level, stays on the UTC day.
 #[must_use]
 pub fn apply_within_day_shape_with(

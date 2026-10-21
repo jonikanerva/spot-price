@@ -33,7 +33,7 @@ const DAY_MS: i64 = 24 * HOUR_MS;
 /// FI day-ahead prices for the next day appear at about 12:00 UTC.
 pub const PUBLICATION_HOUR_UTC: i64 = spot_price_domain::forecast::PUBLICATION_HOUR_UTC;
 /// Nord Pool day-ahead delivery days run from 00:00 to 24:00 CET/CEST.
-pub const DELIVERY_DAY_TIME_ZONE: &str = "Europe/Oslo";
+pub const DELIVERY_DAY_TIME_ZONE: &str = spot_price_domain::forecast::DELIVERY_DAY_TIME_ZONE;
 
 /// Labels of forecast days 0, 1, and 2 after the series start.
 pub const HORIZON_LABELS: [&str; 3] = ["d+1", "d+2", "d+3"];
@@ -441,7 +441,9 @@ impl Default for ForecastVariant {
                 PrevDayBasis::UtcDay => DayBasis::Utc,
                 PrevDayBasis::DeliveryDay(_) => DayBasis::Delivery,
             },
-            shape_profile: ShapeFamily::Served,
+            // The served shape needs a time zone, so the domain default
+            // options do not hold it.
+            shape_profile: ShapeFamily::SERVED,
             training: match production.training {
                 TrainingRule::Realised => Training::Realised,
                 TrainingRule::Issuance(_) => Training::Issuance,
@@ -453,7 +455,7 @@ impl Default for ForecastVariant {
 impl ForecastVariant {
     /// The pipeline options of this variant. `delivery_zone` must be the
     /// [`DELIVERY_DAY_TIME_ZONE`] zone; only [`DayBasis::Delivery`] and a
-    /// shape profile other than [`ShapeFamily::Served`] read it.
+    /// shape profile other than [`ShapeFamily::Persistence`] read it.
     /// `fi_prices` must be the FI prices that the forecast gets: the served
     /// forecast takes its sanity bound from them.
     #[must_use]

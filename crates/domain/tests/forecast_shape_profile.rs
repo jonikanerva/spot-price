@@ -1,5 +1,5 @@
-//! The price profiles of the within-day shape: the served rule, the previous
-//! published day, and the same-weekday mean, on simple known shapes, on
+//! The price profiles of the within-day shape: the persistence rule, the
+//! previous published day, and the same-weekday mean of the served forecast, on simple known shapes, on
 //! missing data, and across the DST changes of Europe/Oslo in 2026.
 
 #[cfg(test)]
@@ -9,9 +9,9 @@ mod shape_profile {
     use jiff::Timestamp;
     use jiff::tz::TimeZone;
     use spot_price_domain::forecast::{
-        ForecastInput, ForecastOptions, ForecastResult, GridRecord, NeighborPrices, QuarterMap,
-        QuarterStart, ShapeProfile, apply_within_day_shape, apply_within_day_shape_with,
-        build_forecast, profile_values,
+        DELIVERY_DAY_TIME_ZONE, ForecastInput, ForecastOptions, ForecastResult, GridRecord,
+        NeighborPrices, QuarterMap, QuarterStart, SERVED_SHAPE_WEEKS, ShapeProfile,
+        apply_within_day_shape, apply_within_day_shape_with, build_forecast, profile_values,
     };
 
     const QUARTER_MS: i64 = 15 * 60 * 1000;
@@ -131,13 +131,13 @@ mod shape_profile {
     }
 
     #[test]
-    fn the_served_profile_is_the_one_day_lag_else_the_one_week_lag() {
+    fn the_persistence_profile_is_the_one_day_lag_else_the_one_week_lag() {
         let spot = prices("2026-06-01T00:00:00Z", "2026-06-10T00:00:00Z", |at| {
             int(at / HOUR_MS % 1000)
         });
         let day_lag = q("2026-06-10T05:00:00Z");
         let week_lag = q("2026-06-11T05:00:00Z");
-        let got = profile_values(ShapeProfile::Served, [day_lag, week_lag], &spot);
+        let got = profile_values(ShapeProfile::Persistence, [day_lag, week_lag], &spot);
         let price = |text| spot.get(&q(text)).copied();
         assert_eq!(
             got.values.get(&day_lag).copied(),
@@ -176,7 +176,7 @@ mod shape_profile {
         });
         let predicted = flat_levels("2026-06-10T00:00:00Z", "2026-06-13T00:00:00Z");
         for profile in [
-            ShapeProfile::Served,
+            ShapeProfile::Persistence,
             ShapeProfile::PreviousPublishedDay(&zone),
             ShapeProfile::WeekdayMean {
                 zone: &zone,
@@ -230,7 +230,7 @@ mod shape_profile {
     }
 
     #[test]
-    fn the_served_shape_is_unchanged_by_the_profile_option() {
+    fn the_persistence_shape_is_unchanged_by_the_profile_option() {
         let spot = prices("2026-05-01T00:00:00Z", "2026-06-10T00:00:00Z", |at| {
             tagged(at) * 0.01 + (int(at / QUARTER_MS % 11) - 5.0) * 0.37
         });
@@ -238,11 +238,143 @@ mod shape_profile {
         // A quarter with neither lag keeps the flat level in both paths.
         predicted.insert(q("2026-07-01T00:00:00Z"), 7.0);
         let old = apply_within_day_shape(&predicted, &spot);
-        let new = apply_within_day_shape_with(&predicted, &spot, ShapeProfile::Served);
+        let new = apply_within_day_shape_with(&predicted, &spot, ShapeProfile::Persistence);
         assert_eq!(old.shape_fallback_quarters, 1);
         assert_eq!(old.shape_fallback_quarters, new.shape_fallback_quarters);
         let bits = |m: &QuarterMap| m.iter().map(|(k, v)| (*k, v.to_bits())).collect::<Vec<_>>();
         assert_eq!(bits(&old.result), bits(&new.result));
+    }
+
+    // The served shape: the four-week weekday mean
+
+    /// Prices for the served profile of the UTC day `day`. The UTC day covers
+    /// parts of the local days `day` and `day + 1`. On those local days minus
+    /// 7k days (k = 1 to 4), the price is k × the local hour. Other days have
+    /// no price, so the one-day lag of persistence is missing.
+    fn weekly_multiples(day: &str) -> QuarterMap {
+        let date: jiff::civil::Date = day.parse().unwrap();
+        let start = ms(&format!("{day}T00:00:00Z"));
+        let mut out = QuarterMap::new();
+        let mut at = start - 30 * DAY_MS;
+        while at < start {
+            let local = Timestamp::from_millisecond(at).unwrap().to_zoned(oslo());
+            let days_back = i64::from(local.date().until(date).unwrap().get_days());
+            let week = if days_back % 7 == 0 {
+                days_back / 7
+            } else {
+                (days_back + 1) / 7
+            };
+            if (days_back % 7 == 0 || days_back % 7 == 6) && (1..=4).contains(&week) {
+                out.insert(
+                    QuarterStart::from_millisecond(at),
+                    int(week) * int(i64::from(local.hour())),
+                );
+            }
+            at += QUARTER_MS;
+        }
+        out
+    }
+
+    /// A prediction on the UTC day `day` that varies per quarter around a
+    /// day mean of 6.
+    fn level_six(day: &str) -> QuarterMap {
+        let start = ms(&format!("{day}T00:00:00Z"));
+        prices(
+            &format!("{day}T00:00:00Z"),
+            &Timestamp::from_millisecond(start + DAY_MS)
+                .unwrap()
+                .to_string(),
+            |at| 6.0 + int(at / QUARTER_MS % 4) - 1.5,
+        )
+    }
+
+    fn local_hour(key: QuarterStart) -> f64 {
+        int(i64::from(key.timestamp().unwrap().to_zoned(oslo()).hour()))
+    }
+
+    fn assert_close(got: f64, want: f64, what: &str) {
+        assert!((got - want).abs() < 1e-9, "{what}: got {got}, want {want}");
+    }
+
+    #[test]
+    fn the_served_shape_is_the_mean_of_four_weeks_around_the_daily_level() {
+        let zone = oslo();
+        let served = ForecastOptions::served(&zone).shape_profile;
+        // Thursday 10 December 2026, CET: the UTC day is 01:00 local to
+        // 01:00 local on the next day, so every local hour occurs once.
+        let spot = weekly_multiples("2026-12-10");
+        let predicted = level_six("2026-12-10");
+        let shaped = apply_within_day_shape_with(&predicted, &spot, served);
+        assert_eq!(shaped.shape_fallback_quarters, 0);
+        // Profile = (1 + 2 + 3 + 4) / 4 × hour = 2.5 × hour; its day mean is
+        // 2.5 × 11.5 = 28.75.
+        for (key, value) in &shaped.result {
+            assert_close(*value, 6.0 + 2.5 * local_hour(*key) - 28.75, "quarter");
+        }
+        let at = |text| shaped.result[&q(text)];
+        assert_close(at("2026-12-10T00:00:00Z"), -20.25, "01 local");
+        assert_close(at("2026-12-10T12:00:00Z"), 9.75, "13 local");
+        assert_close(at("2026-12-10T23:45:00Z"), -22.75, "00 local");
+        assert_close(utc_day_means(&shaped.result)[&20_797], 6.0, "daily level");
+        // Persistence reads only the week before: 6 + 13 − 11.5.
+        let persistence = apply_within_day_shape(&predicted, &spot);
+        assert_close(
+            persistence.result[&q("2026-12-10T12:00:00Z")],
+            7.5,
+            "persistence",
+        );
+    }
+
+    #[test]
+    fn a_quarter_without_four_weeks_keeps_the_flat_daily_level() {
+        let zone = oslo();
+        let served = ForecastOptions::served(&zone).shape_profile;
+        let mut spot = weekly_multiples("2026-12-10");
+        // 13:00 local on 12 November, four weeks back.
+        assert_eq!(spot.remove(&q("2026-11-12T12:00:00Z")), Some(52.0));
+        let predicted = level_six("2026-12-10");
+        let shaped = apply_within_day_shape_with(&predicted, &spot, served);
+        assert_eq!(shaped.shape_fallback_quarters, 1);
+        let gap = q("2026-12-10T12:00:00Z");
+        assert_close(shaped.result[&gap], 6.0, "flat quarter");
+        // The other 95 quarters: hour sum 4 × 276 − 13, profile sum
+        // 2.5 × 1091 = 2727.5.
+        for (key, value) in shaped.result.iter().filter(|(k, _)| **k != gap) {
+            assert_close(
+                *value,
+                6.0 + 2.5 * local_hour(*key) - 2727.5 / 95.0,
+                "quarter",
+            );
+        }
+        assert_close(utc_day_means(&shaped.result)[&20_797], 6.0, "daily level");
+    }
+
+    #[test]
+    fn a_served_source_in_the_skipped_hour_keeps_the_flat_daily_level() {
+        let zone = oslo();
+        let served = ForecastOptions::served(&zone).shape_profile;
+        // Sunday 5 April 2026, CEST: the UTC day is 02:00 local to 02:00 local
+        // on the next day. One week back, 29 March has no 02:00.
+        let spot = weekly_multiples("2026-04-05");
+        let predicted = level_six("2026-04-05");
+        let in_gap: Vec<QuarterStart> = (0..4)
+            .map(|i| q("2026-04-05T00:00:00Z").offset(i * QUARTER_MS))
+            .collect();
+        let profile = profile_values(served, predicted.keys().copied(), &spot);
+        assert_eq!((profile.missing, profile.dst_gap), (4, 4));
+        let shaped = apply_within_day_shape_with(&predicted, &spot, served);
+        assert_eq!(shaped.shape_fallback_quarters, 4);
+        // The other hours: 03 to 23 on 5 April and 00, 01 on 6 April; hour
+        // sum 273 + 0 + 1 = 274 over 23 hours.
+        for (key, value) in &shaped.result {
+            let want = if in_gap.contains(key) {
+                6.0
+            } else {
+                6.0 + 2.5 * local_hour(*key) - 2.5 * 274.0 / 23.0
+            };
+            assert_close(*value, want, "quarter");
+        }
+        assert_close(utc_day_means(&shaped.result)[&20_548], 6.0, "daily level");
     }
 
     // DST: Europe/Oslo moves to CEST at 01:00 UTC on 29 March 2026 and back
@@ -251,7 +383,7 @@ mod shape_profile {
     #[test]
     fn a_source_time_in_the_skipped_hour_is_a_counted_dst_gap() {
         let zone = oslo();
-        // No price on 4 April, so the served rule falls to its week lag.
+        // No price on 4 April, so the persistence rule falls to its week lag.
         let spot = prices("2026-03-20T00:00:00Z", "2026-04-04T00:00:00Z", tagged);
         // Sunday 5 April 02:15 CEST; one week back, 02:15 does not exist.
         let in_gap = q("2026-04-05T00:15:00Z");
@@ -263,9 +395,9 @@ mod shape_profile {
         let got = profile_values(profile, [in_gap, after], &spot);
         assert_eq!((got.missing, got.dst_gap), (1, 1));
         assert_eq!(got.values.get(&after), Some(&2903.0));
-        // The served rule reads 168 h back: 01:15 CET, one local hour off.
-        let served = profile_values(ShapeProfile::Served, [in_gap], &spot);
-        assert_eq!(served.values.get(&in_gap), Some(&2901.0));
+        // The persistence rule reads 168 h back: 01:15 CET, one local hour off.
+        let persistence = profile_values(ShapeProfile::Persistence, [in_gap], &spot);
+        assert_eq!(persistence.values.get(&in_gap), Some(&2901.0));
     }
 
     #[test]
@@ -283,7 +415,7 @@ mod shape_profile {
     #[test]
     fn the_new_profiles_keep_the_local_time_after_the_change_to_cet() {
         let zone = oslo();
-        // No price on 31 October, so the served rule falls to its week lag.
+        // No price on 31 October, so the persistence rule falls to its week lag.
         let spot = prices("2026-10-15T00:00:00Z", "2026-10-31T00:00:00Z", tagged);
         // Sunday 1 November 01:00 CET.
         let target = q("2026-11-01T00:00:00Z");
@@ -297,7 +429,7 @@ mod shape_profile {
         );
         // 168 h back is 02:00 CEST: one local hour off.
         assert_eq!(
-            profile_values(ShapeProfile::Served, [target], &spot)
+            profile_values(ShapeProfile::Persistence, [target], &spot)
                 .values
                 .get(&target),
             Some(&2502.0)
@@ -415,13 +547,13 @@ mod shape_profile {
     }
 
     #[test]
-    fn the_default_options_are_the_served_profile() {
+    fn the_default_options_are_the_persistence_profile() {
         let m = month();
         let default = run(&m, &ForecastOptions::default());
         let explicit = run(
             &m,
             &ForecastOptions {
-                shape_profile: ShapeProfile::Served,
+                shape_profile: ShapeProfile::Persistence,
                 ..ForecastOptions::default()
             },
         );
@@ -430,22 +562,37 @@ mod shape_profile {
     }
 
     #[test]
+    fn the_served_options_are_the_defaults_with_the_four_week_weekday_mean() {
+        let zone = oslo();
+        let served = ForecastOptions::served(&zone);
+        assert_eq!(SERVED_SHAPE_WEEKS, 4);
+        assert_eq!(
+            served.shape_profile,
+            ShapeProfile::WeekdayMean {
+                zone: &zone,
+                weeks: 4
+            }
+        );
+        assert_eq!(oslo().iana_name(), Some(DELIVERY_DAY_TIME_ZONE));
+        let m = month();
+        let explicit = ForecastOptions {
+            shape_profile: ShapeProfile::WeekdayMean {
+                zone: &zone,
+                weeks: 4,
+            },
+            ..ForecastOptions::default()
+        };
+        assert_eq!(run(&m, &served), run(&m, &explicit));
+    }
+
+    #[test]
     fn a_profile_changes_only_the_shape_of_the_forecast() {
         let m = month();
         let zone = oslo();
-        let served = run(&m, &ForecastOptions::default());
-        let weekly = run(
-            &m,
-            &ForecastOptions {
-                shape_profile: ShapeProfile::WeekdayMean {
-                    zone: &zone,
-                    weeks: 2,
-                },
-                ..ForecastOptions::default()
-            },
-        );
-        assert_eq!(served.diagnostics, weekly.diagnostics);
-        assert_ne!(served.series, weekly.series);
+        let persistence = run(&m, &ForecastOptions::default());
+        let served = run(&m, &ForecastOptions::served(&zone));
+        assert_eq!(persistence.diagnostics, served.diagnostics);
+        assert_ne!(persistence.series, served.series);
         let level = |r: &ForecastResult| {
             r.series
                 .iter()
@@ -453,13 +600,14 @@ mod shape_profile {
                 .collect::<QuarterMap>()
         };
         let (a, b) = (
+            utc_day_means(&level(&persistence)),
             utc_day_means(&level(&served)),
-            utc_day_means(&level(&weekly)),
         );
         for (day, mean) in a {
             // The output is rounded to 0.001 per quarter.
             assert!((b[&day] - mean).abs() < 1e-3, "day {day}");
         }
-        assert_eq!(weekly.diagnostics.shape_fallback_quarters, 0);
+        // Thirty days of history hold four weeks for every target.
+        assert_eq!(served.diagnostics.shape_fallback_quarters, 0);
     }
 }

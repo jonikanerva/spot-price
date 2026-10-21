@@ -18,3 +18,10 @@ deterministic.
 The served forecast trains with `LatestPublishedRule::Before`. The
 TypeScript service used the at-or-before rule, so the forecast parity tests
 pass `LatestPublishedRule::AtOrBefore` explicitly.
+
+The served forecast takes its within-day shape from the four-week weekday
+mean (`ForecastOptions::served`). The TypeScript service used the persistence
+shape: the price 24 h earlier, else 168 h earlier. So the forecast parity
+tests pass `ShapeProfile::Persistence` explicitly. The route test compares
+the route with the served options and the TypeScript diagnostics with the
+persistence shape.

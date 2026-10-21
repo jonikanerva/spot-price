@@ -21,10 +21,11 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
+use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use spot_price_domain::forecast::{
-    FORECAST_AREA, ForecastInput, ForecastWindow, GridRecord, NEIGHBOR_AREAS, NeighborPrices,
-    QuarterMap, RouteForecast, forecast_for_route, quarter_map,
+    DELIVERY_DAY_TIME_ZONE, FORECAST_AREA, ForecastInput, ForecastWindow, GridRecord,
+    NEIGHBOR_AREAS, NeighborPrices, QuarterMap, RouteForecast, forecast_for_route, quarter_map,
 };
 use spot_price_domain::price::eur_mwh_to_cents_kwh;
 use sqlx::PgPool;
@@ -52,6 +53,9 @@ pub enum BuildError {
     /// The blocking task of the model stopped.
     #[error("the forecast task stopped")]
     Task,
+    /// The bundled time zone database has no delivery-day zone.
+    #[error("the delivery-day time zone is missing")]
+    TimeZone,
 }
 
 impl BuildError {
@@ -62,6 +66,7 @@ impl BuildError {
             Self::Read(code) => code,
             Self::TimeRange => "time_range",
             Self::Task => "forecast_task",
+            Self::TimeZone => "delivery_time_zone",
         }
     }
 }
@@ -201,8 +206,9 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// The model result of `inputs`. Pure: no I/O and no clock.
+    /// `delivery_zone` must be [`DELIVERY_DAY_TIME_ZONE`].
     #[must_use]
-    pub fn compute(inputs: &Inputs, built_at: Timestamp) -> Self {
+    pub fn compute(inputs: &Inputs, delivery_zone: &TimeZone, built_at: Timestamp) -> Self {
         let input = ForecastInput {
             spot_prices: &inputs.spot,
             neighbor_prices: &inputs.neighbors,
@@ -216,7 +222,7 @@ impl Snapshot {
         Self {
             window: inputs.window,
             window_from_clock: inputs.window_from_clock,
-            route: forecast_for_route(&input),
+            route: forecast_for_route(&input, delivery_zone),
             generated_at: inputs.data_as_of(built_at),
             grid_issued_at: inputs.grid_issued_at,
             built_at,
@@ -258,8 +264,9 @@ impl Snapshot {
 /// Returns [`BuildError`] when a read fails or the task stops.
 pub async fn build(pool: &PgPool, now: Timestamp) -> Result<Snapshot, BuildError> {
     let now = spot_price_domain::time::truncate_to_millisecond(now);
+    let zone = TimeZone::get(DELIVERY_DAY_TIME_ZONE).map_err(|_| BuildError::TimeZone)?;
     let inputs = load_inputs(pool, now).await?;
-    tokio::task::spawn_blocking(move || Snapshot::compute(&inputs, now))
+    tokio::task::spawn_blocking(move || Snapshot::compute(&inputs, &zone, now))
         .await
         .map_err(|_| BuildError::Task)
 }
@@ -358,6 +365,14 @@ mod tests {
         iso.parse().unwrap()
     }
 
+    fn compute(inputs: &Inputs, built_at: Timestamp) -> Snapshot {
+        Snapshot::compute(
+            inputs,
+            &TimeZone::get(DELIVERY_DAY_TIME_ZONE).unwrap(),
+            built_at,
+        )
+    }
+
     fn inputs(grid: Option<&str>, price: Option<&str>) -> Inputs {
         let now = ts("2026-10-24T09:07:30Z");
         Inputs {
@@ -390,19 +405,19 @@ mod tests {
 
     #[test]
     fn a_result_is_stale_only_after_two_hours_without_a_grid_issuance() {
-        let snapshot = Snapshot::compute(
+        let snapshot = compute(
             &inputs(Some("2026-10-24T08:00:00Z"), None),
             ts("2026-10-24T08:00:35Z"),
         );
         assert!(!snapshot.is_stale(ts("2026-10-24T10:00:00Z")));
         assert!(snapshot.is_stale(ts("2026-10-24T10:00:01Z")));
-        let no_grid = Snapshot::compute(&inputs(None, None), ts("2026-10-24T08:00:35Z"));
+        let no_grid = compute(&inputs(None, None), ts("2026-10-24T08:00:35Z"));
         assert!(!no_grid.is_stale(ts("2026-10-30T00:00:00Z")));
     }
 
     #[test]
     fn a_stale_result_warns_once() {
-        let snapshot = Snapshot::compute(
+        let snapshot = compute(
             &inputs(Some("2026-10-24T08:00:00Z"), None),
             ts("2026-10-24T08:00:35Z"),
         );
@@ -415,13 +430,13 @@ mod tests {
     fn a_new_result_replaces_the_old_one_and_a_reader_keeps_its_copy() {
         let cache = ForecastCache::default();
         assert!(cache.current().is_none());
-        cache.replace(Snapshot::compute(
+        cache.replace(compute(
             &inputs(Some("2026-10-24T07:00:00Z"), None),
             ts("2026-10-24T07:00:35Z"),
         ));
         let old = cache.current().unwrap();
         let shared = cache.clone();
-        shared.replace(Snapshot::compute(
+        shared.replace(compute(
             &inputs(Some("2026-10-24T08:00:00Z"), None),
             ts("2026-10-24T08:00:35Z"),
         ));
@@ -441,7 +456,7 @@ mod tests {
                     let issued = ts("2026-10-24T00:00:00Z") + SignedDuration::from_hours(hour);
                     let mut next = inputs(None, None);
                     next.grid_issued_at = Some(issued);
-                    cache.replace(Snapshot::compute(&next, issued));
+                    cache.replace(compute(&next, issued));
                 }
             })
         };

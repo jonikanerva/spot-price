@@ -285,56 +285,66 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
         "forecast-success",
         0,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
     ),
     (
         "forecast-success",
         1,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
     ),
     (
         "forecast-success-stockholm-user",
         0,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
     ),
     (
         "forecast-success-stockholm-user",
         1,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
     ),
     (
         "forecast-one-day-history",
         0,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
     ),
     (
         "forecast-partial-fingrid-outage",
         0,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
     ),
     (
         "forecast-actuals-only",
         0,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
     ),
     (
         "forecast-sparse-fingrid",
         0,
         "forecast-values",
-        FORECAST_BEFORE_RULE,
+        FORECAST_SERVED_RULES,
+    ),
+    (
+        "forecast-thin-history-fallback",
+        0,
+        "forecast-values",
+        FORECAST_SHAPE_RULE,
     ),
 ];
 
-/// The reason of each `forecast-values` entry: the served forecast trains
+/// The reason of most `forecast-values` entries: the served forecast trains
 /// `fi_latest_published` on the last FI price strictly before each quarter,
-/// and the TypeScript bodies used the price at or before it.
-const FORECAST_BEFORE_RULE: &str = "the forecast trains fi_latest_published on the last FI price strictly before each quarter, so only the estimate numbers differ; owner decision: https://github.com/jonikanerva/spot-price/issues/120#issuecomment-6246267911, change: https://github.com/jonikanerva/spot-price/pull/130";
+/// where the TypeScript bodies used the price at or before it, and it takes
+/// the within-day shape from the four-week weekday mean.
+const FORECAST_SERVED_RULES: &str = "the forecast trains fi_latest_published on the last FI price strictly before each quarter and takes the within-day shape from the four-week weekday mean, so only the estimate numbers differ; owner decisions: https://github.com/jonikanerva/spot-price/issues/120#issuecomment-6246267911, https://github.com/jonikanerva/spot-price/issues/156#issuecomment-6308517013";
+
+/// The reason of a `forecast-values` entry that only the shape rule causes.
+const FORECAST_SHAPE_RULE: &str = "the forecast takes the within-day shape from the four-week weekday mean, so a quarter without four weeks of prices keeps the flat daily level where the TypeScript body had the persistence shape; only the estimate numbers differ; owner decision: https://github.com/jonikanerva/spot-price/issues/156#issuecomment-6308517013";
 
 /// The forecast entry fields that hold estimate numbers. A `forecast-values`
 /// difference may change only these values.

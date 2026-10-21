@@ -10,6 +10,7 @@ mod profile_eval {
 
     use jiff::Timestamp;
     use spot_price_tools::backtest::{AsOfMode, ForecastVariant, reconstruct_issue_time};
+    use spot_price_tools::backtest_cli::parse_variant;
     use spot_price_tools::bootstrap::BootstrapOptions;
     use spot_price_tools::cli::{Context, Output, Stream, run};
     use spot_price_tools::criteria::load_criteria;
@@ -108,7 +109,11 @@ mod profile_eval {
     }
 
     fn eval_with(data: &BacktestData, families: &[ShapeFamily]) -> Evaluation {
-        let mut arms = vec![arm_a()];
+        eval_against(data, arm_a(), families)
+    }
+
+    fn eval_against(data: &BacktestData, a: ModelArm, families: &[ShapeFamily]) -> Evaluation {
+        let mut arms = vec![a];
         arms.extend(profile_arms(families));
         evaluate(
             data,
@@ -149,12 +154,36 @@ mod profile_eval {
         );
         for arm in &arms {
             let mut rest = arm.variant;
-            rest.shape_profile = ShapeFamily::Served;
+            rest.shape_profile = ShapeFamily::SERVED;
             assert_eq!(rest, ForecastVariant::default(), "{}", arm.name);
             assert!(!arm.name.contains(['-', '/']));
         }
         assert_eq!(arms[2].variant.shape_profile, ShapeFamily::WeekdayMean(3));
         assert_eq!(arms[5].kind, ArmKind::PureProfile);
+    }
+
+    #[test]
+    fn arm_a_has_the_served_family_and_persistence_is_a_listed_family() {
+        assert_eq!(ShapeFamily::SERVED, ShapeFamily::WeekdayMean(4));
+        assert_eq!(
+            ForecastVariant::default().shape_profile,
+            ShapeFamily::SERVED
+        );
+        assert_eq!(
+            parse_profiles("persistence,mean3w").unwrap(),
+            [ShapeFamily::Persistence, ShapeFamily::WeekdayMean(3)]
+        );
+        let names: Vec<String> = profile_arms(&[ShapeFamily::Persistence])
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(names, ["shape_persistence", "pure_persistence"]);
+        assert_eq!(
+            parse_variant("shape_profile=persistence")
+                .unwrap()
+                .shape_profile,
+            ShapeFamily::Persistence
+        );
     }
 
     #[test]
@@ -173,22 +202,22 @@ mod profile_eval {
     }
 
     #[test]
-    fn each_family_reads_the_served_profile_where_the_served_rule_reads_it() {
-        // May has no DST change, so the fixed offsets of the served rule are
-        // whole local days.
+    fn each_family_reads_the_persistence_profile_where_the_persistence_rule_reads_it() {
+        // May has no DST change, so the fixed offsets of the persistence rule
+        // are whole local days.
         let data = build("2026-05-01T00:00:00Z", 20);
         let (mut first, mut later) = (0, 0);
         let mut t_ms = ms("2026-05-09T06:00:00Z");
         while t_ms < ms("2026-05-17T00:00:00Z") {
             let inputs = reconstruct_issue_time(&data, t_ms, AsOfMode::IssueTime).unwrap();
             let profile = |f| profile_at_issue_time(&inputs, f).unwrap();
-            let (served, day, week) = (
-                profile(ShapeFamily::Served),
+            let (persistence, day, week) = (
+                profile(ShapeFamily::Persistence),
                 profile(ShapeFamily::PreviousDay),
                 profile(ShapeFamily::PreviousWeek),
             );
-            assert_eq!(served.missing + day.missing + week.missing, 0);
-            for (key, value) in &served.values {
+            assert_eq!(persistence.missing + day.missing + week.missing, 0);
+            for (key, value) in &persistence.values {
                 // The first unpublished delivery day reads the day before;
                 // later days read the week before.
                 if key.as_millisecond() < inputs.origin_ms + DAY_MS {
@@ -294,8 +323,12 @@ mod profile_eval {
     #[test]
     fn the_skipped_hour_is_a_counted_dst_gap_of_the_calendar_profiles() {
         let data = build("2026-03-10T00:00:00Z", 30);
-        let eval = eval_with(&data, &[ShapeFamily::PreviousWeek]);
-        let (shape, pure) = (
+        let eval = eval_with(
+            &data,
+            &[ShapeFamily::Persistence, ShapeFamily::PreviousWeek],
+        );
+        let (persistence, shape, pure) = (
+            index(&eval, "shape_persistence"),
             index(&eval, "shape_prev_week"),
             index(&eval, "pure_prev_week"),
         );
@@ -308,7 +341,10 @@ mod profile_eval {
                 })
                 .sum()
         };
-        assert_eq!(gap(0), 0);
+        // The fixed offsets of persistence never hit the skipped hour; the
+        // served four-week mean (arm A) reads calendar days and does.
+        assert_eq!(gap(persistence), 0);
+        assert!(gap(0) > 0);
         assert!(gap(shape) > 0);
         assert_eq!(gap(shape), gap(pure));
         // Sunday 5 April 02:15 CEST reads 02:15 on 29 March, which does not
@@ -382,7 +418,11 @@ mod profile_eval {
     #[test]
     fn profile_flag_errors_are_reported_before_any_data_is_read() {
         for (raw, message) in [
-            ("served", "--profiles cannot list served"),
+            ("served", "--profiles a shape profile cannot be \"served\""),
+            (
+                "mean4w",
+                "--profiles cannot list mean4w: arm A is the served forecast",
+            ),
             ("prev_day,prev_day", "--profiles repeats prev_day"),
             ("mean5w", "--profiles a shape profile must be"),
             ("", "--profiles a shape profile must be"),
@@ -405,8 +445,23 @@ mod profile_eval {
     #[test]
     fn every_declared_criterion_names_a_statistic_of_the_comparison() {
         let data = build("2026-05-01T00:00:00Z", 44);
-        let families = parse_profiles("prev_day,prev_week,mean2w,mean3w,mean4w").unwrap();
-        let eval = eval_with(&data, &families);
+        // The files were declared against arm A with the persistence shape,
+        // which was the served shape then.
+        let reference = ModelArm {
+            variant: ForecastVariant {
+                shape_profile: ShapeFamily::Persistence,
+                ..ForecastVariant::default()
+            },
+            ..arm_a()
+        };
+        let families = [
+            ShapeFamily::PreviousDay,
+            ShapeFamily::PreviousWeek,
+            ShapeFamily::WeekdayMean(2),
+            ShapeFamily::WeekdayMean(3),
+            ShapeFamily::WeekdayMean(4),
+        ];
+        let eval = eval_against(&data, reference, &families);
         let split = Split {
             selection_start_ms: ms("2026-05-30T00:00:00Z"),
             test_start_ms: ms("2026-06-06T00:00:00Z"),

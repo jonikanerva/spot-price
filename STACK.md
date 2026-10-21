@@ -151,7 +151,8 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   `forecast-values` kind accepts a forecast body that equals the recorded
   body byte for byte after it masks the `estimated*CentsKwh` values; each
   masked value must be a finite JSON number. The forecast training rule
-  (`LatestPublishedRule::Before`) differs from the TypeScript service.
+  (`LatestPublishedRule::Before`) and the within-day shape (the four-week
+  weekday mean, §9) differ from the TypeScript service.
   The `generated-at` kind sets a differing `generatedAt` of a forecast body
   to the recorded value before the other body checks, so one step can list
   both `generated-at` and `forecast-values`.
@@ -461,6 +462,18 @@ entry here.
   cache is empty, or its window came from the clock (no FI price exists), the
   handler computes per request with the same reads and does not store the
   result.
+- **Within-day shape of the forecast:** each quarter is the UTC-day mean of
+  the model prediction plus the profile price minus the UTC-day mean of the
+  profile prices. The profile price is the mean of the same local time on
+  the same weekday in each of the last 4 weeks, on Europe/Oslo calendar
+  days (`ForecastOptions::served`). Every week must have a price. A quarter
+  without all 4 prices keeps the flat daily level: a store gap, or a source
+  time in the skipped DST hour. In the repeated DST hour, the source has the
+  UTC offset of the target, else the earlier instant. The 30-day price read
+  window holds every source day; a compile-time assertion keeps it so.
+  `ShapeProfile::Persistence` (24 h earlier, else 168 h) is the rule of the
+  TypeScript service. The golden parity tests use it, and the backtest
+  option `shape_profile=persistence` selects it.
 - **`generatedAt` of a forecast:** the data freshness, not the request
   instant. It is the later of the newest `fingrid_forecasts.issued_at` of
   datasets 245 and 165 and the newest `prices.fetched_at` of FI prices with

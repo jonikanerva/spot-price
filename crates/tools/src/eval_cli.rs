@@ -281,21 +281,22 @@ pub fn parse_flags(args: &[String]) -> Result<EvalFlags, ToolError> {
     })
 }
 
-/// `--profiles <family[,family]>`: distinct shape families other than the
-/// served one, which arm A already has.
+/// `--profiles <family[,family]>`: distinct shape families other than
+/// [`ShapeFamily::SERVED`], which arm A already has.
 ///
 /// # Errors
-/// [`ToolError::Argument`] for an empty list, an unknown family, `served`,
-/// or a repeat.
+/// [`ToolError::Argument`] for an empty list, an unknown family, the served
+/// family, or a repeat.
 pub fn parse_profiles(raw: &str) -> Result<Vec<ShapeFamily>, ToolError> {
     let mut families = Vec::new();
     for item in raw.split(',') {
         let family =
             ShapeFamily::parse(item.trim()).map_err(|m| argument(format!("--profiles {m}")))?;
-        if family == ShapeFamily::Served {
-            return Err(argument(
-                "--profiles cannot list served: arm A is the served forecast".to_owned(),
-            ));
+        if family == ShapeFamily::SERVED {
+            return Err(argument(format!(
+                "--profiles cannot list {}: arm A is the served forecast",
+                family.token()
+            )));
         }
         if families.contains(&family) {
             return Err(argument(format!("--profiles repeats {}", family.token())));
@@ -431,13 +432,16 @@ fn has_profile_arms(options: &EvalOptions) -> bool {
     options
         .arms
         .iter()
-        .any(|a| a.kind == ArmKind::PureProfile || a.variant.shape_profile != ShapeFamily::Served)
+        .any(|a| a.kind == ArmKind::PureProfile || a.variant.shape_profile != ShapeFamily::SERVED)
 }
 
 fn print_profile_rules(out: &mut Output) {
     out.log("\n  SHAPE PROFILES (the within-day shape of an arm):");
     out.log("   - P1 level: a shape_* arm is the served model with another profile. It keeps the daily level of the model, the UTC-day mean of the prediction; only the profile changes.");
-    out.log("   - P2 served (arm A): the published price 24 h earlier, else 168 h earlier (fixed offsets). The first unpublished day gets the previous day; later days get the previous week.");
+    out.log(&format!(
+        "   - P2 served (arm A): {} (P4). persistence: the published price 24 h earlier, else 168 h earlier (fixed offsets). The first unpublished day gets the previous day; later days get the previous week.",
+        ShapeFamily::SERVED.token()
+    ));
     out.log(&format!(
         "   - P3 prev_day: the same local time on the latest earlier {DELIVERY_DAY_TIME_ZONE} day with a price for every quarter, up to {PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS} days back."
     ));

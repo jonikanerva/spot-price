@@ -19,14 +19,15 @@ mod golden {
     use serde::Deserialize;
     use spot_price_domain::areas::Area;
     use spot_price_domain::forecast::{
-        BandMethod, BandOffsets, CalibratedBands, DeriveOptions, FeatureContext, FitOptions,
-        ForecastDiagnostics, ForecastInput, ForecastOptions, ForecastWindow, GridRecord,
-        HorizonResidual, LatestPublishedRule, NeighborPrices, PriceTransform, QuarterMap,
-        QuarterStart, RouteForecast, SanityBound, TrainingData, UtcHour, align_series, apply_band,
-        apply_within_day_shape, bucket_records, build_artifact, build_feature_vector_indexed,
-        build_forecast, build_predicted_series, build_price_index_with, build_training_matrix,
-        derive_band_offsets, expand_hourly_to_quarters, extend_with_last_week, fit_linear,
-        fit_ridge, forecast_for_route, iso_millis, observed_coverage_of, sanity_bound_from_history,
+        BandMethod, BandOffsets, CalibratedBands, DELIVERY_DAY_TIME_ZONE, DeriveOptions,
+        FeatureContext, FitOptions, ForecastDiagnostics, ForecastInput, ForecastOptions,
+        ForecastWindow, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices,
+        PriceTransform, QuarterMap, QuarterStart, RouteForecast, SanityBound, ShapeProfile,
+        TrainingData, UtcHour, align_series, apply_band, apply_within_day_shape, bucket_records,
+        build_artifact, build_feature_vector_indexed, build_forecast, build_predicted_series,
+        build_price_index_with, build_training_matrix, derive_band_offsets,
+        expand_hourly_to_quarters, extend_with_last_week, fit_linear, fit_ridge,
+        forecast_for_route, iso_millis, observed_coverage_of, sanity_bound_from_history,
         to_forecast_entries,
     };
     use spot_price_domain::price::apply_contract_terms;
@@ -773,21 +774,26 @@ mod golden {
         assert_eq!(banded, case.spot_low.len(), "{}: banded entries", case.name);
     }
 
-    /// The route of a route scenario: the served rule, the TypeScript
+    /// The route of a route scenario: the served rules, the TypeScript
     /// diagnostics, and the TypeScript assessment. `opts` holds the route
-    /// sanity bound.
+    /// sanity bound and the persistence shape of the TypeScript service.
     fn check_route(s: &Scenario, input: &ForecastInput<'_>, opts: &ForecastOptions<'_>) {
         let exp = &s.expected;
-        match forecast_for_route(input) {
+        let zone = TimeZone::get(DELIVERY_DAY_TIME_ZONE).unwrap();
+        match forecast_for_route(input, &zone) {
             RouteForecast::NoGridData => assert_eq!(exp.grid_record_count, 0, "{}", s.name),
             RouteForecast::Ready {
                 result: route_result,
                 assessment,
             } => {
                 assert!(exp.grid_record_count > 0, "{}", s.name);
-                let served = ForecastOptions {
+                let persistence = ForecastOptions {
                     latest_published: LatestPublishedRule::default(),
                     ..*opts
+                };
+                let served = ForecastOptions {
+                    shape_profile: ForecastOptions::served(&zone).shape_profile,
+                    ..persistence
                 };
                 assert_eq!(
                     route_result,
@@ -795,8 +801,13 @@ mod golden {
                     "{}: route result",
                     s.name
                 );
+                // Only the shape fallback count depends on the shape profile.
+                let typescript_shape = build_forecast(input, &persistence).diagnostics;
                 assert_eq!(
-                    Diagnostics::from(route_result.diagnostics),
+                    Diagnostics::from(ForecastDiagnostics {
+                        shape_fallback_quarters: typescript_shape.shape_fallback_quarters,
+                        ..route_result.diagnostics
+                    }),
                     exp.diagnostics,
                     "{}: route diagnostics",
                     s.name
@@ -833,9 +844,11 @@ mod golden {
                 (g, _) => panic!("{}: route sanity bound {g:?}", s.name),
             }
 
-            // The TypeScript service used the at-or-before rule.
+            // The TypeScript service used the at-or-before rule and the
+            // persistence shape.
             let mut opts = ForecastOptions {
                 latest_published: LatestPublishedRule::AtOrBefore,
+                shape_profile: ShapeProfile::Persistence,
                 ..ForecastOptions::default()
             };
             if let Some(b) = s.options.sanity_bound {
