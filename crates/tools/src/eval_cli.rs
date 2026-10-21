@@ -16,6 +16,10 @@ use crate::backtest::{DELIVERY_DAY_TIME_ZONE, ForecastVariant, PUBLICATION_HOUR_
 use crate::backtest_cli::{MIN_SCOREABLE_ORIGINS, fmt, iso_or_na, parse_variant, variant_label};
 use crate::bootstrap::{BootstrapOptions, DEFAULT_BOOTSTRAP, MIN_OVERLAP_BLOCK_DAYS};
 use crate::cli::{Output, flag_value, has_flag};
+use crate::correction::{
+    CORRECTION_PROFILE, CorrectionSelection, CorrectionSpec, HOLIDAY_TIME_ZONE, SELECTED,
+    SELECTED_HOLIDAY, aliases, arm_name,
+};
 use crate::criteria::{DeclaredCriteria, Outcome, Verdict, load_criteria};
 use crate::data::{BacktestData, to_fixture_json};
 use crate::error::ToolError;
@@ -37,6 +41,8 @@ pub struct EvalFlags {
     pub split: Option<Split>,
     pub bootstrap: BootstrapOptions,
     pub criteria: Option<DeclaredCriteria>,
+    /// The quarter-correction arms, in the order of their arms.
+    pub corrections: Vec<CorrectionSpec>,
 }
 
 fn argument(message: String) -> ToolError {
@@ -265,6 +271,21 @@ pub fn parse_flags(args: &[String]) -> Result<EvalFlags, ToolError> {
     if let Some(raw) = value("--profiles")? {
         arms.extend(profile_arms(&parse_profiles(raw)?));
     }
+    let mut corrections = match value("--corrections")? {
+        Some(raw) => parse_corrections(raw)?,
+        None => Vec::new(),
+    };
+    if has_flag(args, "--correction-holiday") {
+        if corrections.is_empty() {
+            return Err(argument(
+                "--correction-holiday needs --corrections".to_owned(),
+            ));
+        }
+        let twins: Vec<CorrectionSpec> = corrections.iter().map(|s| s.with_holiday()).collect();
+        corrections.extend(twins);
+    }
+    arms.extend(corrections.iter().map(|spec| correction_arm(*spec)));
+    let paired = correction_pairs(&corrections);
     let split = value("--split")?.map(parse_split).transpose()?;
     let criteria = value("--criteria")?
         .map(|file| load_criteria(Path::new(file)))
@@ -274,11 +295,65 @@ pub fn parse_flags(args: &[String]) -> Result<EvalFlags, ToolError> {
             issuance_hours_utc,
             arms,
             cost,
+            paired,
         },
         split,
         bootstrap: bootstrap_flags(args)?,
         criteria,
+        corrections,
     })
+}
+
+/// `--corrections grid` or `--corrections <token[,token]>`: distinct
+/// corrections without the holiday column; `--correction-holiday` adds it.
+///
+/// # Errors
+/// [`ToolError::Argument`] for an empty list, a bad or holiday token, or a
+/// repeat.
+pub fn parse_corrections(raw: &str) -> Result<Vec<CorrectionSpec>, ToolError> {
+    if raw == "grid" {
+        return Ok(crate::correction::grid());
+    }
+    let mut specs = Vec::new();
+    for item in raw.split(',') {
+        let spec = CorrectionSpec::parse(item.trim())
+            .map_err(|m| argument(format!("--corrections {m}")))?;
+        if spec.holiday {
+            return Err(argument(
+                "--corrections lists corrections without _hol; --correction-holiday adds the holiday twins".to_owned(),
+            ));
+        }
+        if specs.contains(&spec) {
+            return Err(argument(format!("--corrections repeats {}", spec.token())));
+        }
+        specs.push(spec);
+    }
+    Ok(specs)
+}
+
+/// The arm of a correction: the served model, arm A, plus the correction.
+#[must_use]
+pub fn correction_arm(spec: CorrectionSpec) -> ModelArm {
+    ModelArm {
+        name: arm_name(spec),
+        variant: ForecastVariant {
+            shape_profile: CORRECTION_PROFILE,
+            correction: Some(spec),
+            ..ForecastVariant::default()
+        },
+        kind: ArmKind::Model,
+    }
+}
+
+/// The extra deltas of the correction arms: a holiday twin against its
+/// twin. Every arm already has deltas against arm A, the baseline.
+#[must_use]
+pub fn correction_pairs(specs: &[CorrectionSpec]) -> Vec<(String, String)> {
+    specs
+        .iter()
+        .filter(|spec| spec.holiday)
+        .map(|spec| (arm_name(*spec), arm_name(spec.without_holiday())))
+        .collect()
 }
 
 /// `--profiles <family[,family]>`: distinct shape families other than
@@ -426,6 +501,25 @@ fn print_header(data: &BacktestData, flags: &EvalFlags, out: &mut Output) {
     if has_profile_arms(options) {
         print_profile_rules(out);
     }
+    if !flags.corrections.is_empty() {
+        print_correction_rules(out);
+    }
+}
+
+fn print_correction_rules(out: &mut Output) {
+    out.log("\n  QUARTER CORRECTION (a corr_* arm; the served forecast has none):");
+    out.log(&format!(
+        "   - C1 baseline: the profile price b(q) of {}, the served shape. Arm A is the baseline arm (the model level with this shape).",
+        CORRECTION_PROFILE.token()
+    ));
+    out.log("   - C2 joint: output b(q) + c(q). c is one ridge fit (no transform) on realised − b over the issuance-training examples; it sets the daily level and the within-day shape.");
+    out.log("   - C3 dev: output = the shape-step output + d(q) − d̄. d is a ridge fit on the within-day deviation (y − ȳ) − (b − b̄) per training issuance and UTC day; the daily level of the model stays.");
+    out.log("   - C4 features: the issuance-training row (lead, availability, and substitution columns), b(q), and with _hol a Finnish public-holiday indicator (local date in Europe/Helsinki). The correction is added after the shape step and before the sanity clamp.");
+    out.log("   - C5 examples: an issuance takes b from the FI prices published at it; an example without b is left out and counted. The examples read prices and actuals up to 34 days before the served window; an issuance without them is truncated, not filled.");
+    out.log("   - C6 settings: l = ridge penalty, w = training window in days before the series start, h = recency half-life in days (0 = equal weights). A fit with too few examples leaves the shape-step output (counted as fallback).");
+    out.log(&format!(
+        "   - C7 selection: on segment selection, the corr_* arm without _hol with the lowest pooled MAE (tie: the earlier arm). Its statistics repeat under {SELECTED}, and its holiday twin under {SELECTED_HOLIDAY} ({HOLIDAY_TIME_ZONE} holidays)."
+    ));
 }
 
 fn has_profile_arms(options: &EvalOptions) -> bool {
@@ -558,6 +652,62 @@ fn training_exclusions(
             ));
         }
     }
+}
+
+/// The counters of the correction arms, summed over the forecast issuances
+/// of the segment.
+fn correction_availability(
+    evaluation: &Evaluation,
+    segment: Segment,
+    split: Option<Split>,
+    out: &mut Output,
+) {
+    out.log("\n  quarter correction (summed over issuances; fallback = issuances whose fit had too few examples):");
+    for &hour in &evaluation.issuance_hours_utc {
+        let forecasts: Vec<_> = evaluation
+            .issues
+            .iter()
+            .filter(|i| i.hour_utc == hour && segment.contains(i.t_ms, split))
+            .filter_map(|i| match &i.status {
+                IssueStatus::Forecast(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        for (a, name) in evaluation.arm_names.iter().enumerate() {
+            let diagnostics: Vec<_> = forecasts
+                .iter()
+                .filter_map(|f| f.correction.get(a).copied().flatten())
+                .collect();
+            if diagnostics.is_empty() {
+                continue;
+            }
+            let samples: Vec<f64> = diagnostics
+                .iter()
+                .map(|d| crate::jsfmt::count_f64(d.fit_samples))
+                .collect();
+            let sum = |f: fn(&spot_price_domain::forecast::CorrectionDiagnostics) -> usize| {
+                diagnostics.iter().map(f).sum::<usize>()
+            };
+            out.log(&format!(
+                "    {}  {name:<26} fallback {:>4}  fit samples median {:>7}  uncorrected quarters {:>6}  examples without baseline {:>8}  grid-excluded {:>8}",
+                hh(hour),
+                diagnostics.iter().filter(|d| d.used_default).count(),
+                fmt(median(&samples), 0),
+                sum(|d| d.uncorrected_quarters),
+                sum(|d| d.without_baseline),
+                sum(|d| d.excluded.total()),
+            ));
+        }
+    }
+}
+
+fn correction_selection(selection: &CorrectionSelection, out: &mut Output) {
+    let name = |v: &Option<String>| v.clone().unwrap_or_else(|| "none".to_owned());
+    out.log(&format!(
+        "\n  correction selection on segment selection (pooled MAE, rule C7): {} as {SELECTED}; holiday twin: {} as {SELECTED_HOLIDAY}",
+        name(&selection.selected),
+        name(&selection.holiday_twin)
+    ));
 }
 
 fn status_counts(
@@ -910,6 +1060,9 @@ fn print_segment(
     {
         training_exclusions(evaluation, segment, flags.split, out);
     }
+    if !flags.corrections.is_empty() {
+        correction_availability(evaluation, segment, flags.split, out);
+    }
     if has_profile_arms(&flags.options) {
         profile_availability(evaluation, segment, flags.split, out);
         // Only `--profiles` adds the arms that the selection compares.
@@ -1041,6 +1194,15 @@ pub fn print_evaluation(
         vec![Segment::All]
     };
     let final_segment = *segments.last().unwrap_or(&Segment::All);
+    // The selection reads only the selection segment.
+    let selection = (flags.split.is_some() && !flags.corrections.is_empty()).then(|| {
+        crate::correction::select(
+            &evaluation,
+            &flags.corrections,
+            Segment::Selection,
+            flags.split,
+        )
+    });
     for segment in segments {
         if segment == Segment::Test && flags.criteria.is_none() {
             let n = evaluation
@@ -1053,8 +1215,17 @@ pub fn print_evaluation(
             ));
             continue;
         }
-        let stats = statistics(&evaluation, segment, flags.split, &flags.bootstrap);
+        let mut stats = statistics(&evaluation, segment, flags.split, &flags.bootstrap);
+        if let Some(selection) = &selection {
+            let extra = aliases(&stats, selection);
+            stats.extend(extra);
+        }
         print_segment(&evaluation, flags, segment, &stats, out);
+        if segment == Segment::Selection
+            && let Some(selection) = &selection
+        {
+            correction_selection(selection, out);
+        }
         if segment == final_segment
             && let Some(declared) = &flags.criteria
         {

@@ -142,6 +142,7 @@ pub fn pure_profile_forecast(
         sanity_clamped_quarters: 0,
         shape_fallback_quarters: profile.missing,
         training_excluded: ExcludedExamples::default(),
+        correction: None,
     })
 }
 

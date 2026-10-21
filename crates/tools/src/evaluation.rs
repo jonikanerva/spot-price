@@ -9,13 +9,13 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use jiff::Timestamp;
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
-use spot_price_domain::forecast::{ExcludedExamples, FORECAST_DAYS};
+use spot_price_domain::forecast::{CorrectionDiagnostics, ExcludedExamples, FORECAST_DAYS};
 use spot_price_domain::time::{local_hour, next_calendar_day, start_of_local_day_utc};
 
 use crate::backtest::{
-    AsOfMode, BacktestError, Baseline, ForecastVariant, IssueTimeInputs, OutOfRange, baseline_for,
-    delivery_zone, find_leaking_inputs, forecast_at_issue_time_with, issue_has_grid_data,
-    publication_horizon_ms, reconstruct_issue_time, select_vintages_as_of,
+    AsOfMode, BacktestError, Baseline, CorrectionCache, ForecastVariant, IssueTimeInputs,
+    OutOfRange, baseline_for, delivery_zone, find_leaking_inputs, forecast_at_issue_time_cached,
+    issue_has_grid_data, publication_horizon_ms, reconstruct_issue_time, select_vintages_as_of,
 };
 use crate::bootstrap::{BootstrapOptions, Estimate, UnitSums, estimate, resample_indices};
 use crate::data::{BacktestData, DATASET_CONSUMPTION_FORECAST, DATASET_WIND_FORECAST};
@@ -108,6 +108,9 @@ pub struct EvalOptions {
     /// The first arm is the reference of the arm deltas.
     pub arms: Vec<ModelArm>,
     pub cost: CostBasis,
+    /// More arm deltas: `(arm, reference)` by arm name. A name that is not
+    /// an arm adds nothing.
+    pub paired: Vec<(String, String)>,
 }
 
 /// The state of one candidate issuance.
@@ -139,6 +142,8 @@ pub struct ForecastIssue {
     pub dst_gap: Vec<usize>,
     /// Per arm: issuance-training targets left out for a missing grid value.
     pub training_excluded: Vec<ExcludedExamples>,
+    /// Per arm: the quarter correction, if the arm has one.
+    pub correction: Vec<Option<CorrectionDiagnostics>>,
 }
 
 /// One candidate issuance.
@@ -242,6 +247,9 @@ impl TaskRecord {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Evaluation {
     pub arm_names: Vec<String>,
+    /// The extra arm deltas `(arm, reference)` by arm index; see
+    /// [`EvalOptions::paired`].
+    pub paired: Vec<(usize, usize)>,
     pub issuance_hours_utc: Vec<u8>,
     pub issues: Vec<IssueRecord>,
     pub targets: Vec<TargetRecord>,
@@ -309,8 +317,16 @@ pub fn evaluate(data: &BacktestData, options: &EvalOptions) -> Result<Evaluation
         delivery: delivery_zone()?,
         household: household_zone()?,
     };
+    let arm_names: Vec<String> = options.arms.iter().map(|a| a.name.clone()).collect();
+    let index_of = |name: &str| arm_names.iter().position(|n| n == name);
+    let paired = options
+        .paired
+        .iter()
+        .filter_map(|(arm, reference)| Some((index_of(arm)?, index_of(reference)?)))
+        .collect();
     let mut evaluation = Evaluation {
-        arm_names: options.arms.iter().map(|a| a.name.clone()).collect(),
+        paired,
+        arm_names,
         issuance_hours_utc: options.issuance_hours_utc.clone(),
         issues: Vec::new(),
         targets: Vec::new(),
@@ -358,12 +374,13 @@ impl Run<'_> {
             out.issues.push(record(IssueStatus::NoGridData));
             return Ok(());
         }
+        let mut cache = CorrectionCache::default();
         let forecasts = self
             .options
             .arms
             .iter()
             .map(|arm| match arm.kind {
-                ArmKind::Model => forecast_at_issue_time_with(&inputs, arm.variant),
+                ArmKind::Model => forecast_at_issue_time_cached(&inputs, arm.variant, &mut cache),
                 ArmKind::PureProfile => pure_profile_forecast(&inputs, arm.variant.shape_profile),
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -397,6 +414,7 @@ impl Run<'_> {
             expected_quarters,
             forecast_quarters: predictions.iter().map(BTreeMap::len).collect(),
             training_excluded: forecasts.iter().map(|fc| fc.training_excluded).collect(),
+            correction: forecasts.iter().map(|fc| fc.correction).collect(),
             shape_fallback: forecasts
                 .iter()
                 .map(|fc| fc.shape_fallback_quarters)
@@ -719,7 +737,7 @@ impl Sums {
     }
 
     /// MAE, rMAE, and arm deltas of the paired targets.
-    fn add_target(&mut self, arms: &[String], target: &TargetRecord) {
+    fn add_target(&mut self, arms: &[String], paired: &[(usize, usize)], target: &TargetRecord) {
         let (Some(actual), Some(lw), Some(lpd)) =
             (target.actual, target.last_week, target.last_published_day)
         else {
@@ -762,10 +780,32 @@ impl Sums {
                 );
             }
         }
+        for &(arm, reference) in paired {
+            let (Some(name), Some(other), Some(error), Some(other_error)) = (
+                arms.get(arm),
+                arms.get(reference),
+                errors.get(arm),
+                errors.get(reference),
+            ) else {
+                continue;
+            };
+            self.add(
+                format!("mae_delta/{name}-{other}/{key}"),
+                t,
+                error - other_error,
+                1.0,
+            );
+        }
     }
 
     /// Costs, regrets, and cost deltas of one scored task.
-    fn add_task(&mut self, arms: &[String], schedule_arms: &[String], task: &TaskRecord) {
+    fn add_task(
+        &mut self,
+        arms: &[String],
+        schedule_arms: &[String],
+        paired: &[(usize, usize)],
+        task: &TaskRecord,
+    ) {
         let Ok(costs) = &task.outcome else { return };
         let hindsight = schedule_arms.len().saturating_sub(1);
         let key = format!(
@@ -800,6 +840,22 @@ impl Sums {
                 );
             }
         }
+        for &(arm, reference) in paired {
+            let (Some(name), Some(other), Some(cost), Some(other_cost)) = (
+                arms.get(arm),
+                arms.get(reference),
+                costs.get(arm),
+                costs.get(reference),
+            ) else {
+                continue;
+            };
+            self.add(
+                format!("cost_delta/{name}-{other}/{key}"),
+                t,
+                cost - other_cost,
+                1.0,
+            );
+        }
     }
 }
 
@@ -817,13 +873,13 @@ pub fn statistics(
     let arms = &evaluation.arm_names;
     for target in &evaluation.targets {
         if segment.holds_target(target, split) {
-            sums.add_target(arms, target);
+            sums.add_target(arms, &evaluation.paired, target);
         }
     }
     let schedule_arms = evaluation.schedule_arm_names();
     for task in &evaluation.tasks {
         if segment.holds_task(task, split) {
-            sums.add_task(arms, &schedule_arms, task);
+            sums.add_task(arms, &schedule_arms, &evaluation.paired, task);
         }
     }
     let days: BTreeSet<i64> = evaluation
