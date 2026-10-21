@@ -48,8 +48,9 @@ pub use model::{
     PriceTransform, TrainingData, fit_ridge, fit_ridge_weighted,
 };
 pub use pipeline::{
-    CONSUMPTION_EXTENSION_WEEKS, ForecastDiagnostics, ForecastInput, ForecastOptions,
-    ForecastResult, SERVED_SHAPE_WEEKS, WIND_EXTENSION_WEEKS, build_forecast,
+    CONSUMPTION_EXTENSION_WEEKS, FeatureRows, ForecastDiagnostics, ForecastInput, ForecastOptions,
+    ForecastResult, GridGapRule, SERVED_SHAPE_WEEKS, WIND_EXTENSION_WEEKS, build_forecast,
+    feature_rows,
 };
 pub use quarter::{QuarterMap, QuarterStart, iso_millis, quarter_map};
 pub use route::{
@@ -59,12 +60,12 @@ pub use route::{
     has_grid_data,
 };
 pub use series::{
-    BuiltSeries, ForecastSpotPoint, GridRecord, LinearFit, LinearFitError,
+    BuiltSeries, ForecastSpotPoint, GAP_FILL_LOOKBACK_WEEKS, GridRecord, LinearFit, LinearFitError,
     PREVIOUS_PUBLISHED_DAY_LOOKBACK_DAYS, ProfileValues, SANITY_MARGIN_K,
     SANITY_MIN_FALLBACK_CENTS_KWH, SanityBound, ShapeProfile, ShapedPrediction, align_series,
     apply_within_day_shape, apply_within_day_shape_with, bucket_records, build_predicted_series,
-    expand_hourly_to_quarters, extend_with_last_week, fit_linear, profile_values,
-    sanity_bound_from_history,
+    expand_hourly_to_quarters, extend_with_last_week, fill_gaps_from_earlier_weeks, fit_linear,
+    profile_values, sanity_bound_from_history,
 };
 
 /// A forecast instant outside the range that Jiff supports.

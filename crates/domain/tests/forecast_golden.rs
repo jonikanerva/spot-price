@@ -21,11 +21,11 @@ mod golden {
     use spot_price_domain::forecast::{
         BandMethod, BandOffsets, CalibratedBands, DELIVERY_DAY_TIME_ZONE, DeriveOptions,
         FeatureContext, FitOptions, ForecastDiagnostics, ForecastInput, ForecastOptions,
-        ForecastWindow, GridRecord, HorizonResidual, LatestPublishedRule, NeighborPrices,
-        PriceTransform, QuarterMap, QuarterStart, RouteForecast, SanityBound, ShapeProfile,
-        TrainingData, UtcHour, align_series, apply_band, apply_within_day_shape, bucket_records,
-        build_artifact, build_feature_vector_indexed, build_forecast, build_predicted_series,
-        build_price_index_with, build_training_matrix, derive_band_offsets,
+        ForecastWindow, GridGapRule, GridRecord, HorizonResidual, LatestPublishedRule,
+        NeighborPrices, PriceTransform, QuarterMap, QuarterStart, RouteForecast, SanityBound,
+        ShapeProfile, TrainingData, UtcHour, align_series, apply_band, apply_within_day_shape,
+        bucket_records, build_artifact, build_feature_vector_indexed, build_forecast,
+        build_predicted_series, build_price_index_with, build_training_matrix, derive_band_offsets,
         expand_hourly_to_quarters, extend_with_last_week, fit_linear, fit_ridge,
         forecast_for_route, iso_millis, observed_coverage_of, sanity_bound_from_history,
         to_forecast_entries,
@@ -789,6 +789,7 @@ mod golden {
                 assert!(exp.grid_record_count > 0, "{}", s.name);
                 let persistence = ForecastOptions {
                     latest_published: LatestPublishedRule::default(),
+                    grid_gaps: GridGapRule::default(),
                     ..*opts
                 };
                 let served = ForecastOptions {
@@ -796,7 +797,7 @@ mod golden {
                     ..persistence
                 };
                 assert_eq!(
-                    route_result,
+                    *route_result,
                     build_forecast(input, &served),
                     "{}: route result",
                     s.name
@@ -844,11 +845,12 @@ mod golden {
                 (g, _) => panic!("{}: route sanity bound {g:?}", s.name),
             }
 
-            // The TypeScript service used the at-or-before rule and the
-            // persistence shape.
+            // The TypeScript service used the at-or-before rule, the
+            // persistence shape, and 0 MW for a missing grid value.
             let mut opts = ForecastOptions {
                 latest_published: LatestPublishedRule::AtOrBefore,
                 shape_profile: ShapeProfile::Persistence,
+                grid_gaps: GridGapRule::Zero,
                 ..ForecastOptions::default()
             };
             if let Some(b) = s.options.sanity_bound {

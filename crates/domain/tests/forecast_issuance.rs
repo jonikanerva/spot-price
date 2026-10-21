@@ -21,6 +21,7 @@ mod issuance {
         IssuanceHistory, NeighborPrices, QuarterMap, QuarterStart, TrainingExample, TrainingRule,
         build_forecast, build_issuance_examples, issuance_feature_names, publication_horizon,
     };
+    use spot_price_domain::forecast::{FeatureRows, GridGapRule, feature_rows};
 
     const QUARTER_MS: i64 = 15 * 60 * 1000;
     const HOUR_MS: i64 = 60 * 60 * 1000;
@@ -570,10 +571,13 @@ mod issuance {
             assert!(e.target.as_millisecond() >= e.issued_at.as_millisecond());
             assert_ne!(e.wind, InputSource::Actual);
             assert_ne!(e.consumption, InputSource::Actual);
-            assert!(e.issued_at.as_millisecond() > t - 21 * DAY_MS);
+            // Without a vintage, the gap fill reads earlier weeks of
+            // actuals, as in the served forecast.
+            if e.issued_at.as_millisecond() <= t - 21 * DAY_MS {
+                assert_eq!(e.wind, InputSource::Extension);
+                assert_eq!(e.consumption, InputSource::Extension);
+            }
         }
-        // Without a vintage, the tail extension has no forecast to extend,
-        // as in the served forecast. Such targets are left out and counted.
         let old: Vec<_> = examples
             .issuances
             .iter()
@@ -584,12 +588,20 @@ mod issuance {
             })
             .collect();
         assert_ne!(old.len(), 0);
-        for summary in old {
+        for summary in &old {
             assert_eq!(summary.wind_vintage_targets, 0);
             assert_eq!(summary.consumption_vintage_targets, 0);
-            assert_eq!(summary.examples, 0);
-            assert_ne!(summary.excluded.no_vintage, 0, "{summary:?}");
+            assert_eq!(summary.excluded.outside_input, 0, "{summary:?}");
+            assert_eq!(
+                summary.examples + summary.excluded.no_vintage + summary.targets_without_price,
+                3 * 96,
+                "{summary:?}"
+            );
         }
+        // A target whose earlier weeks are before the input has no value:
+        // it is left out under `no_vintage`.
+        assert!(old.iter().any(|s| s.examples > 0));
+        assert!(old.iter().any(|s| s.excluded.no_vintage > 0));
     }
 
     #[test]
@@ -726,5 +738,199 @@ mod issuance {
             },
         );
         assert!(result.diagnostics.fit_used_default);
+    }
+
+    // ---------------------------------------------------------------------
+    // Grid gaps: a quarter without a forecast or an actual value
+    // ---------------------------------------------------------------------
+
+    const WIND: usize = 1;
+    const CONSUMPTION: usize = 2;
+
+    /// The store without the values whose start `drop_*` selects. With
+    /// `drop_vintages`, a vintage is selected by its target start.
+    fn with_holes(
+        s: &Store,
+        drop_wind: impl Fn(i64) -> bool,
+        drop_consumption: impl Fn(i64) -> bool,
+        drop_vintages: bool,
+    ) -> Store {
+        let actual = |records: &[GridRecord], drop: &dyn Fn(i64) -> bool| -> Vec<GridRecord> {
+            records
+                .iter()
+                .filter(|r| !drop(r.start.as_millisecond()))
+                .copied()
+                .collect()
+        };
+        let vintage = |vintages: &[GridVintage], drop: &dyn Fn(i64) -> bool| -> Vec<GridVintage> {
+            vintages
+                .iter()
+                .filter(|v| !(drop_vintages && drop(v.start.as_millisecond())))
+                .copied()
+                .collect()
+        };
+        Store {
+            fi: s.fi.clone(),
+            neighbours: s.neighbours.clone(),
+            wind_actual: actual(&s.wind_actual, &drop_wind),
+            consumption_actual: actual(&s.consumption_actual, &drop_consumption),
+            wind_vintages: vintage(&s.wind_vintages, &drop_wind),
+            consumption_vintages: vintage(&s.consumption_vintages, &drop_consumption),
+        }
+    }
+
+    fn zero_rule() -> ForecastOptions<'static> {
+        ForecastOptions {
+            grid_gaps: GridGapRule::Zero,
+            ..ForecastOptions::default()
+        }
+    }
+
+    /// The rows whose `column` reads 0 MW. The fixture stores no 0 MW
+    /// value, so each such row lacks a value.
+    fn zero_rows<'a>(
+        rows: impl IntoIterator<Item = (QuarterStart, &'a Vec<f64>)>,
+        column: usize,
+    ) -> Vec<QuarterStart> {
+        rows.into_iter()
+            .filter(|(_, row)| row[column] == 0.0)
+            .map(|(q, _)| q)
+            .collect()
+    }
+
+    fn predicted_zero_rows(rows: &FeatureRows, column: usize) -> Vec<QuarterStart> {
+        zero_rows(rows.predicted.iter().map(|(q, row)| (*q, row)), column)
+    }
+
+    fn training_zero_rows(rows: &FeatureRows, column: usize) -> Vec<QuarterStart> {
+        zero_rows(
+            rows.training.keys.iter().copied().zip(&rows.training.rows),
+            column,
+        )
+    }
+
+    #[test]
+    fn a_missing_day_of_consumption_actuals_takes_an_earlier_week() {
+        let (s, run) = fixture();
+        // The source day of the last predicted day: one week earlier.
+        let last_day = run.start_ms + 2 * DAY_MS;
+        let hole = (last_day - 7 * DAY_MS)..(last_day - 6 * DAY_MS);
+        let holed = with_holes(&s, |_| false, |at| hole.contains(&at), false);
+        let holed_run = run_at(&holed, run.t_ms);
+        let input = holed_run.input();
+
+        // The 1-week extension of the TypeScript rule loses 96 quarters, and
+        // their features read 0 MW.
+        let complete = build_forecast(&run.input(), &zero_rule()).diagnostics;
+        let typescript = build_forecast(&input, &zero_rule()).diagnostics;
+        assert_eq!(
+            typescript.consumption_extended_quarters + 96,
+            complete.consumption_extended_quarters
+        );
+        let zero_filled = feature_rows(&input, &zero_rule());
+        assert_eq!(predicted_zero_rows(&zero_filled, CONSUMPTION).len(), 96);
+
+        // The served rule reads the same quarter two weeks earlier.
+        let served = build_forecast(&input, &ForecastOptions::default()).diagnostics;
+        assert_eq!(served.grid_missing_quarters, 0);
+        assert_eq!(served.training_grid_missing_rows, 0);
+        assert_eq!(served.grid_gap_filled_quarters, 96);
+        let rows = feature_rows(&input, &ForecastOptions::default());
+        assert_eq!(predicted_zero_rows(&rows, CONSUMPTION), Vec::new());
+        let mut checked = 0;
+        for (q, row) in &rows.predicted {
+            let source = q.as_millisecond() - 7 * DAY_MS;
+            if hole.contains(&source) {
+                let two_weeks = source - 7 * DAY_MS;
+                let hour = two_weeks - two_weeks.rem_euclid(HOUR_MS);
+                assert_eq!(row[CONSUMPTION], consumption_actual(hour), "{q:?}");
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 96);
+    }
+
+    #[test]
+    fn a_wind_quarter_without_any_source_week_is_counted() {
+        let (s, run) = fixture();
+        // The last predicted day lacks every source week of the wind
+        // extension and of the gap fill.
+        let last_day = run.start_ms + 2 * DAY_MS;
+        let in_weeks = |weeks: i64| {
+            move |at: i64| {
+                (1..=weeks).any(|week| {
+                    let from = last_day - week * 7 * DAY_MS;
+                    (from..from + DAY_MS).contains(&at)
+                })
+            }
+        };
+        let holed = with_holes(&s, in_weeks(4), |_| false, false);
+        let holed_run = run_at(&holed, run.t_ms);
+        let input = holed_run.input();
+
+        let rows = feature_rows(&input, &ForecastOptions::default());
+        let missing = predicted_zero_rows(&rows, WIND);
+        assert_ne!(missing.len(), 0);
+        assert!(missing.iter().all(|q| q.as_millisecond() >= last_day));
+        let served = build_forecast(&input, &ForecastOptions::default()).diagnostics;
+        assert_eq!(served.grid_missing_quarters, missing.len());
+        // A training quarter of a hole has its stored forecast vintage.
+        assert_eq!(served.training_grid_missing_rows, 0);
+        assert_eq!(training_zero_rows(&rows, WIND), Vec::new());
+
+        // One remaining source week is enough.
+        let holed = with_holes(&s, in_weeks(3), |_| false, false);
+        let holed_run = run_at(&holed, run.t_ms);
+        let input = holed_run.input();
+        let rows = feature_rows(&input, &ForecastOptions::default());
+        assert_eq!(predicted_zero_rows(&rows, WIND), Vec::new());
+        assert_eq!(
+            build_forecast(&input, &ForecastOptions::default())
+                .diagnostics
+                .grid_missing_quarters,
+            0
+        );
+    }
+
+    #[test]
+    fn every_grid_feature_without_a_value_is_counted() {
+        let (s, run) = fixture();
+        // One weekday of consumption without actuals or vintages in four
+        // weeks in a row. The newest three are in the training window, and
+        // no week inside the input fills them.
+        let first = run.start_ms - 10 * DAY_MS;
+        let in_hole = |at: i64| {
+            (0..4).any(|week| {
+                let from = first - week * 7 * DAY_MS;
+                (from..from + DAY_MS).contains(&at)
+            })
+        };
+        // One wind day without actuals or vintages: the gap fill reads the
+        // week before it.
+        let wind_hole = (run.start_ms - 5 * DAY_MS)..(run.start_ms - 4 * DAY_MS);
+        let holed = with_holes(&s, |at| wind_hole.contains(&at), in_hole, true);
+        let holed_run = run_at(&holed, run.t_ms);
+        let input = holed_run.input();
+
+        // The TypeScript rule reads 0 MW for both holes and counts nothing.
+        let rows = feature_rows(&input, &zero_rule());
+        assert_eq!(training_zero_rows(&rows, WIND).len(), 96);
+        assert_eq!(training_zero_rows(&rows, CONSUMPTION).len(), 3 * 96);
+        let diagnostics = build_forecast(&input, &zero_rule()).diagnostics;
+        assert_eq!(diagnostics.training_grid_missing_rows, 0);
+
+        let rows = feature_rows(&input, &ForecastOptions::default());
+        let diagnostics = build_forecast(&input, &ForecastOptions::default()).diagnostics;
+        assert_eq!(training_zero_rows(&rows, WIND), Vec::new());
+        let training_missing = training_zero_rows(&rows, CONSUMPTION);
+        assert_eq!(training_missing.len(), 3 * 96);
+        assert!(training_missing.iter().all(|q| in_hole(q.as_millisecond())));
+        assert_eq!(
+            diagnostics.training_grid_missing_rows,
+            training_missing.len()
+        );
+        let predicted_missing =
+            predicted_zero_rows(&rows, WIND).len() + predicted_zero_rows(&rows, CONSUMPTION).len();
+        assert_eq!(diagnostics.grid_missing_quarters, predicted_missing);
     }
 }

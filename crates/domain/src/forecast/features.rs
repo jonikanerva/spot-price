@@ -262,6 +262,8 @@ fn cyclical(value: u8, period: f64) -> (f64, f64) {
 
 fn assemble_features(at: QuarterStart, ctx: &FeatureContext<'_>, index: &PriceIndex) -> Vec<f64> {
     let neutral = index.neutral;
+    // A missing grid value reads 0 MW. The pipeline fills gaps first and
+    // counts what remains; see `GridGapRule`.
     let wind = ctx.wind.get(&at).copied().unwrap_or(0.0);
     let consumption = ctx.consumption.get(&at).copied().unwrap_or(0.0);
 
