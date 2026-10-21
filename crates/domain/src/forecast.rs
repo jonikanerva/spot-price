@@ -5,8 +5,10 @@
 
 mod conformal;
 mod conformal_artifact;
+mod correction;
 mod entries;
 mod features;
+mod holiday;
 mod issuance;
 mod js;
 mod model;
@@ -22,6 +24,11 @@ pub use conformal::{
     derive_band_offsets, observed_coverage_of, uncalibrated_bands,
 };
 pub use conformal_artifact::CALIBRATED_BANDS;
+pub use correction::{
+    BASELINE_FEATURE_NAME, CORRECTION_HISTORY_DAYS, CorrectionDiagnostics, CorrectionExample,
+    CorrectionExamples, Decomposition, HOLIDAY_FEATURE_NAME, QuarterCorrection,
+    build_correction_examples, correction_feature_names,
+};
 pub use entries::{EntryBand, ForecastEntry, to_forecast_entries};
 pub use features::{
     BuiltTraining, FEATURE_COUNT, FEATURE_NAMES, FeatureContext, LatestPublishedRule,
@@ -29,6 +36,7 @@ pub use features::{
     build_feature_vector, build_feature_vector_indexed, build_forecast_price_index,
     build_price_index_with, build_training_matrix,
 };
+pub use holiday::{easter_sunday, is_finnish_public_holiday};
 pub use issuance::{
     ExcludedExamples, GridVintage, ISSUANCE_EXTRA_FEATURE_NAMES, ISSUANCE_FEATURE_COUNT,
     InputSource, IssuanceExamples, IssuanceHistory, IssuanceSummary, LagAvailability,
@@ -37,7 +45,7 @@ pub use issuance::{
 };
 pub use model::{
     DEFAULT_RIDGE_LAMBDA, FALLBACK_PREDICTION, FitMeta, FitOptions, FittedModel, MIN_FIT_SAMPLES,
-    PriceTransform, TrainingData, fit_ridge,
+    PriceTransform, TrainingData, fit_ridge, fit_ridge_weighted,
 };
 pub use pipeline::{
     CONSUMPTION_EXTENSION_WEEKS, ForecastDiagnostics, ForecastInput, ForecastOptions,
