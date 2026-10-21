@@ -12,7 +12,9 @@ use spot_price_domain::forecast::{ExcludedExamples, PREVIOUS_PUBLISHED_DAY_LOOKB
 use spot_price_domain::js::string_to_number;
 use spot_price_domain::settings::Hour;
 
-use crate::backtest::{DELIVERY_DAY_TIME_ZONE, ForecastVariant, PUBLICATION_HOUR_UTC, Training};
+use crate::backtest::{
+    BASELINE_TIME_ZONE, DELIVERY_DAY_TIME_ZONE, ForecastVariant, PUBLICATION_HOUR_UTC, Training,
+};
 use crate::backtest_cli::{MIN_SCOREABLE_ORIGINS, fmt, iso_or_na, parse_variant, variant_label};
 use crate::bootstrap::{BootstrapOptions, DEFAULT_BOOTSTRAP, MIN_OVERLAP_BLOCK_DAYS};
 use crate::cli::{Output, flag_value, has_flag};
@@ -544,7 +546,9 @@ fn print_profile_rules(out: &mut Output) {
     ));
     out.log("   - P5 DST: a local time in the skipped hour of a 23-hour source day has no profile price (DST gap). In the repeated hour of a 25-hour source day, the source has the UTC offset of the target, else the earlier instant.");
     out.log("   - P6 unavailable: a shape_* arm keeps the flat daily level on a quarter without a profile price. A pure_* arm has no value there, so no arm is paired on that target.");
-    out.log("   - P7 the last_week and last_published_day baselines keep their fixed 168 h and 24 h offsets.");
+    out.log(&format!(
+        "   - P7 the last_week baseline keeps its fixed 168 h offset. last_published_day takes the same local quarter in {BASELINE_TIME_ZONE} on the one local day that ends at the series start. A quarter in the skipped DST hour has no value; in the repeated hour, the source has the UTC offset of the target."
+    ));
 }
 
 fn profile_availability(

@@ -8,8 +8,11 @@ mod evaluation {
     use std::path::PathBuf;
 
     use jiff::Timestamp;
+    use jiff::tz::TimeZone;
     use spot_price_domain::forecast::{QuarterMap, QuarterStart};
-    use spot_price_tools::backtest::{ForecastVariant, IssueTimeInputs, publication_horizon_ms};
+    use spot_price_tools::backtest::{
+        ForecastVariant, IssueTimeInputs, baseline_zone, publication_horizon_ms,
+    };
     use spot_price_tools::bootstrap::{BootstrapOptions, MIN_OVERLAP_BLOCK_DAYS};
     use spot_price_tools::cli::{Context, Output, Stream, run};
     use spot_price_tools::criteria::{Criterion, Op, Outcome, Which, check};
@@ -479,6 +482,10 @@ mod evaluation {
         Pricer::new(&CostBasis::Spot).unwrap()
     }
 
+    fn helsinki() -> TimeZone {
+        baseline_zone().unwrap()
+    }
+
     #[test]
     fn every_arm_gets_the_same_published_prices() {
         let origin = ms(ORIGIN);
@@ -494,6 +501,7 @@ mod evaluation {
             &[forecast],
             &realised,
             &spot(),
+            &helsinki(),
         )
         .unwrap();
         // A, last_week, last_published_day, earliest_start, hindsight.
@@ -513,6 +521,7 @@ mod evaluation {
             &[good, bad],
             &realised,
             &spot(),
+            &helsinki(),
         )
         .unwrap();
         // good, bad, last_week (flat 3: the earliest of the tied starts), last
@@ -526,8 +535,15 @@ mod evaluation {
         let (inputs, mut realised) = hand_inputs(&[], 2.0);
         realised.extend(quarters_from(origin, &[2.0, 7.0, 2.0, 7.0, 2.0, 7.0]));
         let flat = quarters_from(origin, &[2.0; 6]);
-        let costs =
-            schedule_arms(&inputs, &hand_task(0, 6, 1), &[flat], &realised, &spot()).unwrap();
+        let costs = schedule_arms(
+            &inputs,
+            &hand_task(0, 6, 1),
+            &[flat],
+            &realised,
+            &spot(),
+            &helsinki(),
+        )
+        .unwrap();
         assert_eq!(costs, vec![2.0, 2.0, 2.0, 2.0, 2.0]);
     }
 
@@ -539,7 +555,7 @@ mod evaluation {
         let short = quarters_from(origin, &[1.0; 3]);
         let task = hand_task(2, 4, 2);
         assert_eq!(
-            schedule_arms(&inputs, &task, &[short], &realised, &spot()),
+            schedule_arms(&inputs, &task, &[short], &realised, &spot(), &helsinki()),
             Err(Exclusion::MissingForecast(0))
         );
         let full = quarters_from(origin, &[1.0; 4]);
@@ -553,14 +569,22 @@ mod evaluation {
                 &task,
                 std::slice::from_ref(&full),
                 &realised,
-                &spot()
+                &spot(),
+                &helsinki(),
             ),
             Err(Exclusion::MissingLastWeek)
         );
         let mut gap = realised.clone();
         gap.remove(&(origin + QUARTER_MS));
         assert_eq!(
-            schedule_arms(&inputs, &task, std::slice::from_ref(&full), &gap, &spot()),
+            schedule_arms(
+                &inputs,
+                &task,
+                std::slice::from_ref(&full),
+                &gap,
+                &spot(),
+                &helsinki()
+            ),
             Err(Exclusion::MissingRealised)
         );
         assert_eq!(
@@ -569,12 +593,20 @@ mod evaluation {
                 &hand_task(2, 0, 2),
                 std::slice::from_ref(&full),
                 &realised,
-                &spot()
+                &spot(),
+                &helsinki(),
             ),
             Err(Exclusion::FullyPublished)
         );
         assert_eq!(
-            schedule_arms(&inputs, &hand_task(0, 3, 4), &[full], &realised, &spot()),
+            schedule_arms(
+                &inputs,
+                &hand_task(0, 3, 4),
+                &[full],
+                &realised,
+                &spot(),
+                &helsinki()
+            ),
             Err(Exclusion::Infeasible)
         );
     }

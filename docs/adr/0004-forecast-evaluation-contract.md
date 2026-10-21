@@ -98,8 +98,11 @@ revision. The vintage archive covers only a few months.
 - The reconstruction assumptions of the data stay visible in every report.
 - A comparison of a variant uses `--eval --ab`, so both arms get the same
   issuances, targets, and tasks.
-- Limitation: the last-published-day baseline uses a fixed 24-hour offset.
-  Across a DST change, it is one local hour off.
+- The last-published-day baseline takes the same local quarter in
+  Europe/Helsinki on the one local day that ends at the series start. A
+  target in the skipped DST hour of that day has no baseline value and is
+  excluded. In the repeated hour, the source has the UTC offset of the
+  target. The last-week baseline keeps its fixed 168-hour offset.
 
 ## Cost of reversal
 
