@@ -363,13 +363,13 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | Dependency                   | Version            | Why it earns its place                                                             |
 | ---------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
 | axum                         | 0.8.9              | HTTP routing and extraction                                                        |
-| tokio                        | 1.54.0             | Async runtime, timers, signals, blocking pool                                      |
+| tokio                        | 1.54.1             | Async runtime, timers, signals, blocking pool                                      |
 | tower-http                   | 0.6.11             | `CatchPanicLayer`, header layers. 0.6, not 0.7: reqwest already depends on 0.6.11. |
 | tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                              |
 | serde / serde_json           | 1.0.229 / 1.0.154  | Wire types. `float_roundtrip` parses numbers like JavaScript.                      |
 | thiserror                    | 2.0.21             | Error enums with fixed text                                                        |
 | jiff / jiff-sqlx             | 0.2.38 / 0.2.0     | Time values with the bundled tzdb, and their SQLx encoding                         |
-| croner                       | 4.0.1              | Cron schedules with Jiff types                                                     |
+| croner                       | 4.0.2              | Cron schedules with Jiff types                                                     |
 | sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)   |
 | reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                    |
 | futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                      |
@@ -539,7 +539,7 @@ TypeScript service, except the chart drawing. It must be usable without a pointe
 
 - [Axum 0.8](https://docs.rs/axum/0.8.9/), [tower-http 0.6](https://docs.rs/tower-http/0.6.11/), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown)
 - [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.0/), [PostgreSQL 18](https://www.postgresql.org/docs/18/)
-- [Jiff](https://docs.rs/jiff/0.2.38/), [croner 4](https://docs.rs/croner/4.0.1/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
+- [Jiff](https://docs.rs/jiff/0.2.38/), [croner 4](https://docs.rs/croner/4.0.2/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
 - [scrypt](https://docs.rs/scrypt/0.12.0/), [ECMAScript Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)
 - Upstream contracts: Nord Pool Data Portal API, [Fingrid open data](https://data.fingrid.fi/), [OpenWeatherMap One Call 3.0](https://openweathermap.org/api/one-call-3)
 - [Railpack Rust](https://railpack.com/languages/rust/), [Railpack config file](https://railpack.com/config/file/), Railway [healthchecks](https://docs.railway.com/deployments/healthchecks)
