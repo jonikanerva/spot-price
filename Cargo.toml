@@ -18,7 +18,7 @@ license = "LicenseRef-Proprietary"
 # The path dependency has a version, so cargo-deny does not see a wildcard.
 spot-price-domain = { path = "crates/domain", version = "=0.1.0" }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
-croner = { version = "=4.0.1", default-features = false, features = ["jiff"] }
+croner = { version = "=4.0.2", default-features = false, features = ["jiff"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 jiff = { version = "=0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
 jiff-sqlx = { version = "=0.2.0", default-features = false, features = ["postgres"] }
@@ -33,7 +33,7 @@ serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 # TIMESTAMPTZ to Jiff.
 sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "json", "sqlx-toml", "tls-rustls-aws-lc-rs"] }
 thiserror = "=2.0.21"
-tokio = { version = "=1.54.0", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal"] }
+tokio = { version = "=1.54.1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "signal"] }
 tower = { version = "=0.5.3", default-features = false, features = ["util"] }
 # 0.6, not 0.7: reqwest already depends on 0.6.11, so the graph has one copy.
 tower-http = { version = "=0.6.11", default-features = false, features = ["catch-panic", "set-header"] }
