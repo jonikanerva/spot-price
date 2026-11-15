@@ -1,8 +1,6 @@
 -- Read-only release checks of the production database. One SELECT; it
--- changes nothing. Run it like `scripts/schema-snapshot.sql`:
---
---   PGOPTIONS='-c default_transaction_read_only=on' \
---     psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
+-- changes nothing. Run it like `scripts/schema-snapshot.sql`, in a read-only
+-- psql session (STACK.md §15 shows the command).
 --
 -- Expected output (STACK.md §15):
 --

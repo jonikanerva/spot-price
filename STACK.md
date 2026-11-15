@@ -71,7 +71,7 @@ migrations/            # SQLx migrations
 .sqlx/                 # committed SQLx query metadata
 contract/openapi.json  # exported OpenAPI 3.1 document
 e2e/                   # Playwright journeys against the Rust binary
-scripts/               # test-db.sh, smoke-local.sh, schema-snapshot.sql, golden generators (history only)
+scripts/               # db.sh, smoke-local.sh, schema-snapshot.sql, golden generators (history only)
 docs/adr/              # decisions
 Cargo.toml  Cargo.lock  rust-toolchain.toml  clippy.toml  deny.toml  mise.toml
 railpack.json  .gitleaks.toml  package.json  pnpm-lock.yaml
@@ -117,8 +117,11 @@ Install mise and rustup. Then run in the repository root:
 mise trust && mise run setup
 ```
 
-`rust-toolchain.toml` owns the Rust version. `mise.toml` owns the other
-tools: Node, pnpm, PostgreSQL 18.7 (conda package), sqlx-cli 0.9.0,
+Install the Apple `container` tool 1.0.0 or later and run `container system
+start` once. The Mac has no PostgreSQL install: every local server runs in an
+Apple container (§3). `rust-toolchain.toml` owns the Rust version.
+`SPOT_PRICE_PG_IMAGE` in `mise.toml` owns the PostgreSQL image. `mise.toml`
+owns the other tools: Node, pnpm, sqlx-cli 0.9.0,
 cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
 
 ---
@@ -236,37 +239,107 @@ on the blocking pool behind a semaphore of two.
   with `SQLX_OFFLINE=true`, and `tsc` on the e2e TypeScript (`e2e/tsconfig.json`).
 - **build:** `cargo build --release --locked --package spot-price-server`
   with `SQLX_OFFLINE=true`.
-- **test:** starts the isolated database, then `cargo nextest run
+- **test:** starts a new test server, then `cargo nextest run
 --workspace --locked` and `cargo test --doc --workspace --locked`.
-- **e2e:** the Playwright journeys in `e2e/` against the Rust binary.
+- **e2e:** the Playwright journeys in `e2e/` against a copy of the release
+  binary, on a new test server.
 - **verify:** format-check, lint, `sqlx:check`, `contract:check`,
   `scan:secrets`, `scan:deps`, build, test, and e2e, in this order. It stops
   at the first failed step. The Playwright journeys are part of `verify`.
-- **Other tasks:** `db:start` / `db:stop`, `sqlx:prepare` (regenerate
-  `.sqlx` after a query or migration change), and `setup`.
+  All steps of one `verify` run share one test server.
+- **dev:** starts the dev server of the worktree, migrates it, and runs the
+  service with `.env.local`.
+- **Other tasks:** `db:start` / `db:stop` / `db:info` / `db:psql` (the dev
+  server of the worktree), `db:dump` / `db:restore` / `db:clone` (copy dev
+  data), `db:destroy` (delete the dev data of the worktree), `db:gc` (remove abandoned and kept test servers), `sqlx:prepare`
+  (regenerate `.sqlx` after a query or migration change), and `setup`.
 - **Dependency freshness check** (`DOCTRINE.md` P7, read-only): run
   `cargo update --dry-run --verbose`, `pnpm outdated --recursive`, and
   `mise outdated --bump`. Each crate pin in `Cargo.toml` is exact, so also
   compare each direct crate with its latest stable release on crates.io.
   Compare `rust-toolchain.toml` with the latest stable Rust release. Compare
+  `SPOT_PRICE_PG_IMAGE` with the latest `postgres:18.x` tag on Docker Hub.
+  Compare
   each infrastructure version in §15 with its latest stable release. Record
   the release date of each candidate version (§15, Dependencies). The checks
   need network access to crates.io, npm, GitHub, and the mise version
   service. A sandbox that blocks them gives no result; that is a gap, not a
   pass.
 
-**Test database isolation.** `scripts/test-db.sh` runs the pinned PostgreSQL
-18.7 on `127.0.0.1:55436` with trust authentication and data in
-`.tmp/postgres`. The test tasks set `DATABASE_URL` to that server themselves.
-`#[sqlx::test]` creates and drops one database per test.
+**Local PostgreSQL.** `scripts/db.sh` runs every local server in an Apple
+container of `SPOT_PRICE_PG_IMAGE`. Agents and people use only the mise tasks;
+they never start, stop, or remove the containers or volumes by hand.
+
+- **Dev server:** one per worktree, `spot-price-dev-<id>`, with the database
+  `spot_price` in the volume `spot-price-dev-<id>`. `<id>` is a hash of the
+  physical checkout path. The server uses the durable PostgreSQL defaults.
+  `db:stop` stops the container; the data stays in the volume. A lock in
+  `.tmp/db` serialises the creation. `dev` sets `DATABASE_URL`, `PORT`, and
+  `BETTER_AUTH_URL`; the service port is kept per worktree in
+  `.tmp/db/app-port`. A `PORT` and `BETTER_AUTH_URL` of `.env.local` win.
+  A `DATABASE_URL` of `.env.local` never selects the database;
+  `SPOT_PRICE_DATABASE_URL` does.
+- **Test server:** one per independent run of `test`, `e2e`, `sqlx:check`,
+  `sqlx:prepare`, or `verify`, `spot-price-test-<id>-<random>`. It starts
+  empty, is migrated, keeps its data in tmpfs, and runs with `fsync`,
+  `synchronous_commit`, and `full_page_writes` off. These settings never
+  reach a dev server. The test tasks set `DATABASE_URL` to that server and
+  unset the `PG*` variables, so a `DATABASE_URL` of the shell or `.env.local`
+  cannot reach a test. `#[sqlx::test]` creates and drops one database per
+  test. A nested task reuses the server of the enclosing run only when that
+  run passes `--share` (`verify` does) and the server still runs.
+- **Ports and access:** a random host port in 48000–53999 on `127.0.0.1`
+  only; a port in use makes `container run` fail, and the script retries
+  with another port. Each server has a random password (dev:
+  `.tmp/db/dev-password`), because other containers of the Mac can reach the
+  container network. No TLS on local servers.
+- **Other checkouts:** `SPOT_PRICE_DB_ROOT=<checkout>` makes a `db:*` task
+  act on the dev server of that checkout, for example to restore data into
+  it before the checkout has `scripts/db.sh`. `db:destroy` then deletes the
+  data of that checkout. A task that mise finds in the `mise.toml` of an
+  outer checkout stops instead of using the servers of that checkout.
+- **Limits:** 2 CPUs and 1 GiB per server (`SPOT_PRICE_DB_CPUS`,
+  `SPOT_PRICE_DB_MEMORY`). At most 4 test servers run at the same time over
+  all worktrees (`SPOT_PRICE_DB_MAX_TEST`); a run waits for a free slot, at
+  most 2 hours. The locks wait at most 2 hours too.
+- **Clean-up:** a run removes its own test server on exit, also on Ctrl-C.
+  Each new run and `db:gc` remove test servers whose owner process is gone.
+  `SPOT_PRICE_DB_KEEP=failed` (or `always`) keeps the server of a failed run
+  and writes its log to `.tmp/db/logs`; `db:gc` removes it. `db:gc` only lists
+  a dev server of a removed checkout; it never deletes a dev volume. Only
+  `db:destroy --yes` deletes the dev server and volume of its worktree.
+- **E2E files:** each run uses `.tmp/e2e/<test server>/` for the binary copy
+  and the Playwright output, and a free service port. A failed run keeps the
+  directory. The release build and the copy hold a worktree lock.
+- **SQLx metadata:** `sqlx:prepare` and `sqlx:check` hold a worktree lock,
+  because prepare rewrites `.sqlx` and both use the SQLx work files in
+  `target/`.
+
+**Local database measurements** (2026-11-15, Apple silicon Mac, container
+1.0.0, image `postgres:18.7`; other agents loaded the Mac):
+
+| Step                                                      | Result                                                                     |
+| --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Image pull, `--platform linux/arm64`                      | About 8 s. A pull without `--platform` unpacks every platform: about 6 min |
+| Test server: start, migrate, and remove (`-- true`)       | 2.3–5.9 s. The former local `initdb` server took 0.9–1.1 s                 |
+| Dev server: first start / restart / start after `kill`    | 12 s / 4–6 s / 4 s                                                         |
+| `cargo nextest -p spot-price-server` (203 database tests) | 24–29 s in a container, 24–31 s on the former local server                 |
+| `mise run verify`                                         | 671 s, load average above 100                                              |
+| Memory                                                    | Test server about 525 MiB of 1 GiB during `test`; idle dev server 233 MiB  |
+
+The container adds a few seconds of start-up per run. The database work
+itself has the same speed. Limitations: the `container` service must run;
+a sandbox that blocks XPC stops the database tasks; the first start of a
+worktree creates its volume.
 
 **No `.env` file.** The SQLx query macros parse every `.env` file in the
 crate directory and its parent directories at compile time. Keep local
 settings in `.env.local`. sqlx-cli runs with `--no-dotenv`.
 
-**Sandboxes.** PostgreSQL needs System V shared memory, and the tests bind
-`127.0.0.1` ports. A sandbox that blocks either makes `db:start` or the tests
-fail; that is a missing environment, not a pass.
+**Sandboxes.** The `container` tool talks to its system service over XPC,
+and the tests bind `127.0.0.1` ports. A sandbox that blocks either makes the
+database tasks fail with "the container system service does not answer";
+that is a missing environment, not a pass.
 
 ---
 
@@ -405,7 +478,7 @@ The profile list applies. In addition:
   outside Jiff.
 - An external call without a deadline and a degraded result. An upstream
   failure must never block the price request path.
-- A test task that reaches a database other than the isolated server, or a
+- A test task that reaches a database other than its own test server, or a
   test that calls a live upstream.
 
 ### Code comments
@@ -563,17 +636,17 @@ Run the required tests and the full `mise run verify` locally on the version
 to be merged against the current base. Missing or failed mandatory local
 evidence blocks merge. There is no CI.
 
-| Doctrine / applicability      | Required evidence                                                                                                        | Environment / gap                                       |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
-| P1, P6: each task             | Criteria, failures, assumptions, check mapping in the PR                                                                 | Lead records; independent review for material changes   |
-| P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                 | Purity inside the domain crate is review-only           |
-| P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                 | Golden files come from one TypeScript commit            |
-| P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                          | Forecast tolerance (§13)                                |
-| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | Isolated PostgreSQL 18.7; production: `postgres-ssl:18` |
-| P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                     |
-| P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                             |
-| P7: release                   | Before merge: Railpack plan; owner-run schema snapshot and precheck when §15 asks for them. After release: §15 checks    | A local macOS build is not the Linux artifact           |
-| P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                             | Separate reviewer context                               |
+| Doctrine / applicability      | Required evidence                                                                                                        | Environment / gap                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| P1, P6: each task             | Criteria, failures, assumptions, check mapping in the PR                                                                 | Lead records; independent review for material changes                        |
+| P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                 | Purity inside the domain crate is review-only                                |
+| P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                 | Golden files come from one TypeScript commit                                 |
+| P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                          | Forecast tolerance (§13)                                                     |
+| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | PostgreSQL 18.7 test server (Apple container); production: `postgres-ssl:18` |
+| P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                                          |
+| P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                                                  |
+| P7: release                   | Before merge: Railpack plan; owner-run schema snapshot and precheck when §15 asks for them. After release: §15 checks    | A local macOS build is not the Linux artifact                                |
+| P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                             | Separate reviewer context                                                    |
 
 ### Golden files
 
@@ -654,14 +727,16 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 2. Before the merge of a release that adds a migration, or that changes the
    database connection, `BETTER_AUTH_URL`, or the start command, the owner
    checks production read-only:
-   - Run both scripts with the public database URL:
+   - Run both scripts with the public database URL. `psql` runs in a
+     throw-away container of the pinned image; the Mac has no `psql`:
 
      ```bash
-     PGOPTIONS='-c default_transaction_read_only=on' \
-       psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/schema-snapshot.sql \
+     pgc() { container run --rm --interactive --progress none \
+       --env PGOPTIONS='-c default_transaction_read_only=on' \
+       "$(mise env --json | jq -r .SPOT_PRICE_PG_IMAGE)" psql "$@"; }
+     pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/schema-snapshot.sql \
        | diff crates/server/tests/fixtures/schema-snapshot.txt -
-     PGOPTIONS='-c default_transaction_read_only=on' \
-       psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
+     pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/release-precheck.sql
      ```
 
    - The snapshot differs only by the Rust migrations that production
@@ -717,12 +792,12 @@ and an API key.
 
 - **Infrastructure:**
 
-  | Component      | Production                                                                                        | Test and local                         | How to read the version                                                        |
-  | -------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------ |
-  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | 18.7 (`mise.toml`, `conda:postgresql`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise.toml`. |
-  | Source builder | Railpack; Railway selects the version                                                             | Not used                               | The Railway build log                                                          |
-  | Runtime image  | Railpack runtime image; Railway selects the version                                               | Not used                               | The Railway build log                                                          |
-  | Rust toolchain | 1.100.0 (`rust-toolchain.toml`)                                                                   | 1.100.0                                | `rust-toolchain.toml`                                                          |
+  | Component      | Production                                                                                        | Test and local                                                                     | How to read the version                                                               |
+  | -------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | Image `postgres:18.7` in an Apple container (`SPOT_PRICE_PG_IMAGE` in `mise.toml`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise run db:info`. |
+  | Source builder | Railpack; Railway selects the version                                                             | Not used                                                                           | The Railway build log                                                                 |
+  | Runtime image  | Railpack runtime image; Railway selects the version                                               | Not used                                                                           | The Railway build log                                                                 |
+  | Rust toolchain | 1.100.0 (`rust-toolchain.toml`)                                                                   | 1.100.0                                                                            | `rust-toolchain.toml`                                                                 |
 
   Keep test and production PostgreSQL on the same major version (§5).
 

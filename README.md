@@ -131,18 +131,30 @@ Finland (FI), Sweden (SE1-SE4), Norway (NO1-NO5), Denmark (DK1-DK2), Estonia (EE
 
 ### Prerequisites
 
-Install [mise](https://mise.jdx.dev) and [rustup](https://rustup.rs). `rust-toolchain.toml` pins Rust. `mise.toml` pins the other tools: Node and pnpm (Playwright and Prettier only), PostgreSQL 18.7, sqlx-cli, cargo-deny, cargo-nextest, cargo-shear, and Gitleaks. Docker is not needed.
+Install [mise](https://mise.jdx.dev), [rustup](https://rustup.rs), and the Apple [`container`](https://github.com/apple/container/releases) tool 1.0.0 or later on an Apple silicon Mac. Run `container system start` once. `rust-toolchain.toml` pins Rust. `mise.toml` pins the PostgreSQL image (`SPOT_PRICE_PG_IMAGE`) and the other tools: Node and pnpm (Playwright and Prettier only), sqlx-cli, cargo-deny, cargo-nextest, cargo-shear, and Gitleaks. Do not install PostgreSQL on the Mac. Docker, Colima, and OrbStack are not needed.
 
 ### Setup
 
 ```bash
 git clone https://github.com/jonikanerva/spot-price.git
 cd spot-price
-mise trust && mise run setup   # tools, locked dependencies, Playwright browser
-mise run db:start              # isolated PostgreSQL 18.7 on 127.0.0.1:55436
+mise trust && mise run setup   # tools, locked dependencies, Playwright browser, PostgreSQL image
+mise run dev                   # dev PostgreSQL of this worktree, migrations, and the service
 ```
 
 Keep local settings in `.env.local`, not `.env`: the SQLx query macros read every `.env` file at compile time.
+
+### Local PostgreSQL
+
+Every local PostgreSQL server runs in an Apple container (`scripts/db.sh`, `STACK.md` §3). Use only the mise tasks below; do not start or remove the containers by hand.
+
+- **Dev server:** one per worktree. The data stays in a named volume when you stop the container. `mise run db:info` shows its port, database, and password file.
+- **Service address:** `mise run dev` serves each worktree on its own port, not on 3000. It prints the address, and `mise run db:info` shows it. `mise run smoke` uses it. Set both `PORT` and `BETTER_AUTH_URL` in `.env.local` to choose another address.
+- **Test server:** each run of `test`, `e2e`, `sqlx:check`, `sqlx:prepare`, or `verify` gets a new, empty, migrated server and removes it at the end. Runs in parallel, in one worktree or in many, do not share a database. The tests never use the `DATABASE_URL` of `.env.local` or the shell.
+- **Keep a failed run:** `SPOT_PRICE_DB_KEEP=failed mise run test` keeps the server and its log; `mise run db:gc` removes it.
+- **Copy dev data:** `mise run db:clone <path of another worktree>` copies its dev database into the empty dev database of this worktree. `db:dump <file>` and `db:restore <file>` write and load a `pg_dump` archive.
+- **Remove a worktree:** run `mise run db:destroy --yes` in it first. It deletes the dev server and the dev volume of that worktree. `db:gc` lists dev servers of removed checkouts but never deletes them.
+- **Sandbox:** the database tasks need the XPC service of `container`. In a sandbox that blocks it, they stop with "the container system service does not answer".
 
 ### Tasks
 
@@ -151,12 +163,15 @@ Keep local settings in `.env.local`, not `.env`: the SQLx query macros read ever
 | `mise run format`               | Format Rust and the other files (rustfmt, Prettier)                             |
 | `mise run lint`                 | Clippy on every target; warnings are errors                                     |
 | `mise run build`                | Release build of the server                                                     |
-| `mise run test`                 | All Rust tests against the isolated database                                    |
+| `mise run test`                 | All Rust tests against a new test server                                        |
 | `mise run e2e`                  | Playwright journeys against the Rust binary                                     |
 | `mise run verify`               | The full gate: format, lint, query metadata, contract, scans, build, tests, e2e |
-| `mise run dev`                  | Migrate and run the service with `.env.local` and readable logs                 |
+| `mise run dev`                  | Start and migrate the dev server, then run the service with `.env.local`        |
 | `mise run sqlx:prepare`         | Regenerate `.sqlx` after a query or migration change                            |
-| `mise run db:start` / `db:stop` | Start or stop the isolated test database                                        |
+| `mise run db:start` / `db:stop` | Start or stop the dev server of this worktree; stop keeps the data              |
+| `mise run db:info` / `db:psql`  | Show the servers of this worktree; open `psql` on the dev database              |
+| `mise run db:clone <path>`      | Copy the dev database of another worktree into the empty dev database           |
+| `mise run db:gc`                | Remove abandoned test servers and the kept test servers of this worktree        |
 
 The server binary has three commands: `spot-price migrate`, `spot-price serve`, and `spot-price export-openapi <path>`.
 

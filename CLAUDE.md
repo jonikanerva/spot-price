@@ -156,6 +156,11 @@ These rules narrow or extend the defaults above for this repository.
 - **Agent Teams.** `.claude/settings.json` enables
   `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`. Use Teams only when teammate
   coordination helps the task.
+- **Local databases.** Use only the mise tasks of `STACK.md §3` for local
+  PostgreSQL (`dev`, `test`, `e2e`, `sqlx:*`, `verify`, `db:*`). Never run
+  your own `container`, `docker`, `psql`, `pg_ctl`, or clean-up commands for
+  the local servers, and never run a general `container prune`. The tasks
+  isolate each worktree and each run.
 - **Local guards.** `.claude/settings.json` blocks every push to `main`,
   `rm -rf`, `claude` CLI spawns, and Read-tool reads of `.env` files. The
   guards apply only to commands that Claude Code runs, and the `.env` guard

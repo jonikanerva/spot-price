@@ -6,13 +6,19 @@
 [settings]
 idiomatic_version_file_enable_tools = ["rust"]
 
+[env]
+# The only PostgreSQL version setting of the local servers (STACK.md §3 and
+# §15 Infrastructure). The major version follows production (Railway image
+# postgres-ssl:18). The digest pins the multi-platform image index; the tag is
+# for people. scripts/db.sh runs every local server from this image in an
+# Apple container; the Mac has no PostgreSQL install.
+SPOT_PRICE_PG_IMAGE = "docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc"
+
 [tools]
 # Node and pnpm run only the Playwright journeys and Prettier. They do not
 # ship in the production image.
 node = "26.13.1"
 pnpm = "12.21.0"
-# The PostgreSQL version of production (Railway image postgres-ssl:18).
-"conda:postgresql" = "18.7"
 # Keep the options equal to the pin of the owner's other projects; a different
 # option set makes mise reinstall the tool on every project switch.
 "cargo:sqlx-cli" = { version = "0.9.0", default-features = false, features = "postgres,rustls", locked = true }
@@ -21,30 +27,62 @@ cargo-deny = "0.20.2"
 "github:Boshen/cargo-shear" = "1.14.1"
 gitleaks = "8.30.1"
 
-# The tests and the query checks use only the isolated server of
-# scripts/test-db.sh. Their tasks set DATABASE_URL themselves, so a
-# DATABASE_URL in the shell or in .env.local cannot reach them.
+# Local PostgreSQL (STACK.md §3). scripts/db.sh starts every server in an
+# Apple container. The tests, the e2e journeys, and the query checks get a new
+# test server per run and set DATABASE_URL to it, so a DATABASE_URL in the
+# shell or in .env.local cannot reach them. `dev` uses the dev server of this
+# worktree unless SPOT_PRICE_DATABASE_URL is set.
 #
 # The local settings of the service are in .env.local, not .env: the SQLx
 # query macros parse every .env file in the crate directory and its parents
 # at compile time.
 
 [tasks.setup]
-description = "Install the pinned tools, the locked dependencies, and the Playwright browser"
+description = "Install the pinned tools, the locked dependencies, the Playwright browser, and the PostgreSQL image"
 run = [
   "mise install",
   "cargo fetch --locked",
   "pnpm install --frozen-lockfile",
   "pnpm exec playwright install chromium",
+  "scripts/db.sh setup",
 ]
 
 [tasks."db:start"]
-description = "Start the isolated test PostgreSQL on 127.0.0.1:55436 and migrate it"
-run = "scripts/test-db.sh start"
+description = "Start the dev PostgreSQL of this worktree (a container with a persistent volume)"
+run = "scripts/db.sh start"
 
 [tasks."db:stop"]
-description = "Stop the isolated test PostgreSQL"
-run = "scripts/test-db.sh stop"
+description = "Stop the dev PostgreSQL of this worktree; the data stays in its volume"
+run = "scripts/db.sh stop"
+
+[tasks."db:info"]
+description = "Show the container, version, port, and database of this worktree's servers"
+run = "scripts/db.sh info"
+
+[tasks."db:psql"]
+description = "Open psql on the dev PostgreSQL of this worktree"
+raw = true
+run = "scripts/db.sh psql"
+
+[tasks."db:clone"]
+description = "Copy the dev database of another worktree into the empty dev database here: mise run db:clone <path>"
+run = "scripts/db.sh clone"
+
+[tasks."db:dump"]
+description = "Write the dev database of this worktree to a pg_dump archive: mise run db:dump <file>"
+run = "scripts/db.sh dump"
+
+[tasks."db:restore"]
+description = "Load a pg_dump archive into the empty dev database of this worktree: mise run db:restore <file>"
+run = "scripts/db.sh restore"
+
+[tasks."db:destroy"]
+description = "Delete the dev PostgreSQL and its volume of this worktree, with all data: mise run db:destroy --yes"
+run = "scripts/db.sh destroy"
+
+[tasks."db:gc"]
+description = "Remove abandoned test servers and the kept test servers of this worktree"
+run = "scripts/db.sh gc"
 
 [tasks.format]
 description = "Format the Rust sources and the Prettier files (TypeScript, Markdown, JSON, YAML)"
@@ -63,16 +101,12 @@ run = [
 ]
 
 [tasks."sqlx:prepare"]
-description = "Regenerate .sqlx query metadata from the isolated database"
-depends = ["db:start"]
-env = { DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_dev" }
-run = "cargo sqlx prepare --no-dotenv --workspace -- --all-targets --locked"
+description = "Regenerate .sqlx query metadata from a new test server"
+run = "scripts/db.sh with-test-db -- scripts/db.sh sqlx prepare"
 
 [tasks."sqlx:check"]
 description = "Fail when .sqlx differs from the queries and the migrated schema"
-depends = ["db:start"]
-env = { DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_dev" }
-run = "cargo sqlx prepare --no-dotenv --workspace --check -- --all-targets --locked"
+run = "scripts/db.sh with-test-db -- scripts/db.sh sqlx check"
 
 [tasks.build]
 description = "The locked release build with the committed query metadata"
@@ -80,13 +114,9 @@ env = { SQLX_OFFLINE = "true" }
 run = "cargo build --release --locked --package spot-price-server"
 
 [tasks.test]
-description = "Nextest and the doc tests against the isolated database"
-depends = ["db:start"]
-env = { DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_dev", SQLX_OFFLINE = "true" }
-run = [
-  "cargo nextest run --workspace --locked --no-tests=fail",
-  "cargo test --doc --workspace --locked",
-]
+description = "Nextest and the doc tests against a new test server"
+env = { SQLX_OFFLINE = "true" }
+run = "scripts/db.sh with-test-db -- sh -c 'cargo nextest run --workspace --locked --no-tests=fail && cargo test --doc --workspace --locked'"
 
 [tasks."contract:check"]
 description = "Fail when contract/openapi.json differs from the Rust HTTP types; change no file"
@@ -120,26 +150,21 @@ run = [
   "pnpm audit --audit-level high",
 ]
 
-# The browser journeys run against the release binary on the database
-# spot_price_e2e of the isolated test server (playwright.config.ts).
+# The browser journeys run against a copy of the release binary on the
+# database spot_price_e2e of a new test server (playwright.config.ts).
 [tasks.e2e]
-description = "Build the release binary, reset and seed the e2e database, and run the Playwright journeys"
-depends = ["db:start", "build"]
-env = { E2E_DATABASE_URL = "postgres://postgres@127.0.0.1:55436/spot_price_e2e" }
-run = '''
-set -eu
-bin="$(mise where conda:postgresql)/bin"
-psql() { "$bin/psql" --host=127.0.0.1 --port=55436 --username=postgres --quiet --set=ON_ERROR_STOP=1 "$@"; }
-psql --dbname=postgres \
-  --command="DROP DATABASE IF EXISTS spot_price_e2e WITH (FORCE)" \
-  --command="CREATE DATABASE spot_price_e2e"
-DATABASE_URL="$E2E_DATABASE_URL" LOG_FORMAT=text ./target/release/spot-price migrate
-psql --dbname=spot_price_e2e --file=e2e/seed.sql
-pnpm exec playwright test
-'''
+description = "Build the release binary, create and seed the e2e database, and run the Playwright journeys"
+run = "scripts/db.sh with-test-db -- scripts/db.sh e2e"
 
 [tasks.verify]
 description = "The full verification (VERIFY_CMD); stops at the first failed step"
+# One test server for all steps: --share lets the nested sqlx:check, test,
+# and e2e tasks use it. An independent run beside verify gets its own server.
+run = "scripts/db.sh with-test-db --share -- mise run verify:steps"
+
+[tasks."verify:steps"]
+description = "The steps of verify; run verify instead"
+hide = true
 run = [
   { task = "format-check" },
   { task = "lint" },
@@ -153,15 +178,13 @@ run = [
 ]
 
 [tasks.smoke]
-description = "Smoke check of a locally running server (BASE_URL, default http://localhost:3000); never production"
-run = "scripts/smoke-local.sh"
+description = "Smoke check of the service of `mise run dev` in this worktree (or BASE_URL); never production"
+run = 'BASE_URL="${BASE_URL:-http://localhost:$(cat .tmp/db/app-port 2>/dev/null || echo 3000)}" scripts/smoke-local.sh'
 
-# SQLX_OFFLINE: the query macros use .sqlx, not the database of .env.local.
+# SQLX_OFFLINE: the query macros use .sqlx, not a database.
+# `dev` runs `migrate` before `serve`, like the production start command.
 [tasks.dev]
-description = "Migrate the database of .env.local and run the service with readable logs"
+description = "Migrate the dev PostgreSQL of this worktree and run the service with .env.local and readable logs"
 env = { _.file = ".env.local", LOG_FORMAT = "text", SQLX_OFFLINE = "true" }
 raw = true
-run = [
-  "cargo run --locked --package spot-price-server -- migrate",
-  "cargo run --locked --package spot-price-server -- serve",
-]
+run = "scripts/db.sh with-dev-db -- sh -c 'cargo run --locked --package spot-price-server -- migrate && exec cargo run --locked --package spot-price-server -- serve'"

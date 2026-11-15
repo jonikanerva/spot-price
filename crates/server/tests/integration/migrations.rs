@@ -382,7 +382,7 @@ async fn an_unsuccessful_ledger_row_fails_as_dirty(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn a_server_without_tls_fails_a_required_tls_connection(pool: PgPool) {
-    // The isolated test server runs with `ssl = off`.
+    // The local test server runs with `ssl = off`.
     let options = (*pool.connect_options())
         .clone()
         .ssl_mode(PgSslMode::Require);
