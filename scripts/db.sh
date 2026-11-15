@@ -154,12 +154,14 @@ owner_alive() { # $1 = owner token
 
 # A lock or slot directory is stale when its owner is gone, or when it has no
 # owner a minute after its creation (a crash between mkdir and the write of
-# the owner). A missing directory is not stale.
+# the owner). A missing directory is not stale. The owner can unlock, and
+# another process can lock, between the read and the check: the owner file
+# must still name the gone owner.
 dir_stale() { # $1 = directory
   local owner
   owner="$(cat "$1/owner" 2>/dev/null || true)"
   if [ -n "$owner" ]; then
-    ! owner_alive "$owner"
+    ! owner_alive "$owner" && [ "$(cat "$1/owner" 2>/dev/null || true)" = "$owner" ]
   else
     [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
   fi
@@ -331,6 +333,11 @@ sys.exit(0 if s.recv(1) in (b"N", b"S") else 1)
 PY
 }
 
+# Two failed probes, 1 s apart: one slow answer under load is no failure.
+host_silent() { # $1 = port
+  ! host_answers "$1" && sleep 1 && ! host_answers "$1"
+}
+
 ready_inside() { # $1 = name
   container exec "$1" pg_isready --quiet --host=127.0.0.1 --username=postgres 2>/dev/null
 }
@@ -466,7 +473,7 @@ dev_ensure_locked() {
     line=""
     state=""
   fi
-  if [ "$state" = running ] && ! host_answers "$port" &&
+  if [ "$state" = running ] && host_silent "$port" &&
     { ready_inside "$DEV_NAME" || ! ready_within "$DEV_NAME" "$port"; }; then
     # The container runs, but PostgreSQL does not answer through the
     # published port: the port of an older container after a change of the

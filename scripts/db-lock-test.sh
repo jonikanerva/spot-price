@@ -9,6 +9,10 @@
 # verdict (the second one is the check again before the removal). Process A
 # then finds the same stale lock. B continues only after A holds the lock,
 # or after 3 s. A correct lock never lets both hold it.
+#
+# A last case changes the owner during the stale check: B reads the owner X
+# of a live lock, X unlocks and ends, and C takes the lock before B checks X.
+# B must not remove the lock of C.
 set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -67,10 +71,45 @@ worker() { # $1 = directory, $2 = lock or slot, $3 = role a or b, $4 = pause ver
   fi
 }
 
+owner_change() { # $1 = test directory
+  local x b
+  # A global: the functions of db.sh can have a local named dir.
+  OWNER_TEST_DIR="$1"
+  # shellcheck source=scripts/db.sh
+  . "$SCRIPTS/db.sh"
+  sleep 30 &
+  x=$!
+  mkdir "$OWNER_TEST_DIR/the.lock"
+  owner_of "$x" >"$OWNER_TEST_DIR/the.lock/owner"
+  (
+    eval "orig_$(declare -f owner_alive)"
+    owner_alive() {
+      : >"$OWNER_TEST_DIR/b-read"
+      wait_for "$OWNER_TEST_DIR/c-holds" 50 || true
+      orig_owner_alive "$1"
+    }
+    remove_if_stale "$OWNER_TEST_DIR/the.lock"
+  ) &
+  b=$!
+  wait_for "$OWNER_TEST_DIR/b-read" 50 || return 1
+  rm -r -f "$OWNER_TEST_DIR/the.lock"
+  kill "$x"
+  wait "$x" 2>/dev/null || true
+  mkdir "$OWNER_TEST_DIR/the.lock"
+  owner_of $$ >"$OWNER_TEST_DIR/the.lock/owner"
+  : >"$OWNER_TEST_DIR/c-holds"
+  wait "$b" || true
+  [ -d "$OWNER_TEST_DIR/the.lock" ]
+}
+
 if [ "${1:-}" = worker ]; then
   shift
   worker "$@"
   exit 0
+fi
+if [ "${1:-}" = owner-change ]; then
+  owner_change "$2"
+  exit $?
 fi
 
 base="$(mktemp -d "${TMPDIR:-/tmp}/db-lock-test.XXXXXX")"
@@ -106,4 +145,11 @@ for case in lock:1 slot:1 lock:2 slot:2; do
     echo "$label: ok"
   fi
 done
+mkdir -p "$base/owner-change"
+if "$0" owner-change "$base/owner-change"; then
+  echo "db-lock-test: owner change during the check: ok"
+else
+  echo "db-lock-test: owner change during the check: the check removed a live lock" >&2
+  failed=1
+fi
 exit $failed
