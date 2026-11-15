@@ -382,6 +382,19 @@ remembered_path() { # $1 = worktree id
   cat "$COMMON/dev-paths/$1" 2>/dev/null || true
 }
 
+# Record the path of every worktree that git lists now, so the clean-up
+# still finds its dev volume after the worktree is removed, also when the
+# volume has no path label and no container.
+remember_worktrees() {
+  local path id
+  while IFS= read -r path; do
+    [ -d "$path" ] || continue
+    path="$(cd "$path" && pwd -P)"
+    id="$(worktree_id "$path")"
+    [ -s "$COMMON/dev-paths/$id" ] || remember_path "$id" "$path"
+  done < <(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+}
+
 # Remove a stopped dev container of a worktree that still exists, under the
 # dev lock of that worktree. A new container shows the state stopped for a
 # few seconds while `container run` creates it; the command that creates it
@@ -409,6 +422,7 @@ remove_stopped_dev() { # $1 = name, $2 = path of its worktree
 # dev server and dev volumes of worktrees that are gone.
 clean_up_servers() {
   local name state role worktree owner port run repo path major gone_ids=" "
+  remember_worktrees
   while IFS=$'\t' read -r name state role worktree owner port run repo path major; do
     if [ "$role" = dev ]; then
       [ "$path" = "-" ] || remember_path "${name#"$DB_PROJECT"-dev-}" "$path"
