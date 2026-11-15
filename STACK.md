@@ -71,7 +71,7 @@ migrations/            # SQLx migrations
 .sqlx/                 # committed SQLx query metadata
 contract/openapi.json  # exported OpenAPI 3.1 document
 e2e/                   # Playwright journeys against the Rust binary
-scripts/               # db.sh, smoke-local.sh, schema-snapshot.sql, golden generators (history only)
+scripts/               # db.sh, db-lock-test.sh, smoke-local.sh, schema-snapshot.sql, golden generators (history only)
 docs/adr/              # decisions
 Cargo.toml  Cargo.lock  rust-toolchain.toml  clippy.toml  deny.toml  mise.toml
 railpack.json  .gitleaks.toml  package.json  pnpm-lock.yaml
@@ -239,8 +239,10 @@ on the blocking pool behind a semaphore of two.
   with `SQLX_OFFLINE=true`, and `tsc` on the e2e TypeScript (`e2e/tsconfig.json`).
 - **build:** `cargo build --release --locked --package spot-price-server`
   with `SQLX_OFFLINE=true`.
-- **test:** starts a new test server, then `cargo nextest run
---workspace --locked` and `cargo test --doc --workspace --locked`.
+- **test:** runs `scripts/db-lock-test.sh` (the lock test of
+  `scripts/db.sh`; a temporary directory only, no container). Then it starts
+  a new test server and runs `cargo nextest run --workspace --locked` and
+  `cargo test --doc --workspace --locked`.
 - **e2e:** the Playwright journeys in `e2e/` against a copy of the release
   binary, on a new test server.
 - **verify:** format-check, lint, `sqlx:check`, `contract:check`,
@@ -273,8 +275,8 @@ themselves, so a developer or an agent runs only `dev`, `test`, `e2e`,
 `sqlx:*`, or `verify`. Agents and people never start, stop, or remove the
 containers or volumes by hand.
 
-`scripts/db.sh` is the same file in caltodo, mastofeed, and spot-price; keep
-it byte-identical. `scripts/db-project.sh` holds the settings and the
+`scripts/db.sh` and `scripts/db-lock-test.sh` are the same files in caltodo,
+mastofeed, and spot-price; keep them byte-identical. `scripts/db-project.sh` holds the settings and the
 commands of this project: the names, the port range, the service address of
 `dev`, and `e2e`.
 
@@ -318,6 +320,9 @@ commands of this project: the names, the port range, the service address of
   `SPOT_PRICE_DB_MEMORY`). At most 4 test servers run at the same time over
   all worktrees of this repository (`SPOT_PRICE_DB_MAX_TEST`); a run waits
   for a free slot, at most 2 hours. The locks wait at most 2 hours too.
+  A lock or a slot is a directory with an owner file. A process removes a
+  stale one only under a kernel lock (`flock`) on its `.guard` file, after
+  a second check, so two processes never hold one lock.
 - **Clean-up:** a run removes its own test server on exit, also on Ctrl-C and
   on a SIGTERM to the script: the command runs in its own process group, and
   the clean-up stops it first. Every command that starts a server, and
