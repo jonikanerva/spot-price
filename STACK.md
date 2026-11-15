@@ -248,11 +248,12 @@ on the blocking pool behind a semaphore of two.
   at the first failed step. The Playwright journeys are part of `verify`.
   All steps of one `verify` run share one test server.
 - **dev:** starts the dev server of the worktree, migrates it, and runs the
-  service with `.env.local`.
-- **Other tasks:** `db:start` / `db:stop` / `db:info` / `db:psql` (the dev
-  server of the worktree), `db:dump` / `db:restore` / `db:clone` (copy dev
-  data), `db:destroy` (delete the dev data of the worktree), `db:gc` (remove abandoned and kept test servers), `sqlx:prepare`
-  (regenerate `.sqlx` after a query or migration change), and `setup`.
+  service with `.env.local`. At exit it stops the dev server.
+- **Other tasks:** `sqlx:prepare` (regenerate `.sqlx` after a query or
+  migration change) and `setup`. The `db:` tasks are optional tools:
+  `db:start` / `db:stop` (keep the dev server running / stop it), `db:info`,
+  `db:psql`, `db:dump`, `db:restore`, `db:clone`, `db:reset` (dev data), and
+  `db:gc` (the clean-up now, and the kept test servers of the worktree).
 - **Dependency freshness check** (`DOCTRINE.md` P7, read-only): run
   `cargo update --dry-run --verbose`, `pnpm outdated --recursive`, and
   `mise outdated --bump`. Each crate pin in `Cargo.toml` is exact, so also
@@ -267,18 +268,33 @@ on the blocking pool behind a semaphore of two.
   pass.
 
 **Local PostgreSQL.** `scripts/db.sh` runs every local server in an Apple
-container of `SPOT_PRICE_PG_IMAGE`. Agents and people use only the mise tasks;
-they never start, stop, or remove the containers or volumes by hand.
+container of `SPOT_PRICE_PG_IMAGE`. The tasks start and remove the servers
+themselves, so a developer or an agent runs only `dev`, `test`, `e2e`,
+`sqlx:*`, or `verify`. Agents and people never start, stop, or remove the
+containers or volumes by hand.
+
+`scripts/db.sh` is the same file in caltodo, mastofeed, and spot-price; keep
+it byte-identical. `scripts/db-project.sh` holds the settings and the
+commands of this project: the names, the port range, the service address of
+`dev`, and `e2e`.
 
 - **Dev server:** one per worktree, `spot-price-dev-<id>`, with the database
-  `spot_price` in the volume `spot-price-dev-<id>`. `<id>` is a hash of the
-  physical checkout path. The server uses the durable PostgreSQL defaults.
-  `db:stop` stops the container; the data stays in the volume. A lock in
-  `.tmp/db` serialises the creation. `dev` sets `DATABASE_URL`, `PORT`, and
-  `BETTER_AUTH_URL`; the service port is kept per worktree in
-  `.tmp/db/app-port`. A `PORT` and `BETTER_AUTH_URL` of `.env.local` win.
-  A `DATABASE_URL` of `.env.local` never selects the database;
-  `SPOT_PRICE_DATABASE_URL` does.
+  `spot_price` in the volume `spot-price-dev-<id>-pg<major>`. `<id>` is a hash
+  of the physical checkout path. The server uses the durable PostgreSQL
+  defaults. A command that needs it (`dev`, `db:psql`, `db:dump`,
+  `db:restore`, `db:clone`, `db:reset`) starts it, and the last such command
+  of the worktree stops it at exit. `db:start` keeps it running until
+  `db:stop`. The data stays in the volume. A volume of another major version
+  stays, and the new major version gets a new volume; move data with
+  `db:dump` and `db:restore`. A volume without the `-pg<major>` suffix comes
+  from the first version of the script and holds major version 18. `dev`
+  sets `DATABASE_URL`, `PORT`, and `BETTER_AUTH_URL`; the service port is
+  kept per worktree in `.tmp/db/app-port`. A `PORT` and `BETTER_AUTH_URL` of
+  `.env.local` win. A `DATABASE_URL` of `.env.local` never selects the
+  database; `SPOT_PRICE_DATABASE_URL` does.
+- **Dev data:** `db:restore`, `db:clone`, and `db:reset` replace the dev
+  database. They first write a non-empty database to `.tmp/db/backups/`. The
+  next `dev` migrates the result.
 - **Test server:** one per independent run of `test`, `e2e`, `sqlx:check`,
   `sqlx:prepare`, or `verify`, `spot-price-test-<id>-<random>`. It starts
   empty, is migrated, keeps its data in tmpfs, and runs with `fsync`,
@@ -288,27 +304,33 @@ they never start, stop, or remove the containers or volumes by hand.
   cannot reach a test. `#[sqlx::test]` creates and drops one database per
   test. A nested task reuses the server of the enclosing run only when that
   run passes `--share` (`verify` does) and the server still runs.
-- **Ports and access:** a random host port in 48000–53999 on `127.0.0.1`
-  only; a port in use makes `container run` fail, and the script retries
-  with another port. Each server has a random password (dev:
-  `.tmp/db/dev-password`), because other containers of the Mac can reach the
-  container network. No TLS on local servers.
+- **Ports and access:** a random host port in 40000–48999 on `127.0.0.1`
+  only. caltodo uses 20000–29999 and mastofeed 30000–39999; all stay below
+  the macOS ephemeral range. A port in use makes `container run` fail, and
+  the script retries with another port. Each server has a random password
+  (dev: `.tmp/db/dev-password`), because other containers of the Mac can
+  reach the container network. No TLS on local servers.
 - **Other checkouts:** `SPOT_PRICE_DB_ROOT=<checkout>` makes a `db:*` task
-  act on the dev server of that checkout, for example to restore data into
-  it before the checkout has `scripts/db.sh`. `db:destroy` then deletes the
-  data of that checkout. A task that mise finds in the `mise.toml` of an
-  outer checkout stops instead of using the servers of that checkout.
+  act on the dev server of that checkout. A task that mise finds in the
+  `mise.toml` of an outer checkout stops instead of using the servers of
+  that checkout.
 - **Limits:** 2 CPUs and 1 GiB per server (`SPOT_PRICE_DB_CPUS`,
   `SPOT_PRICE_DB_MEMORY`). At most 4 test servers run at the same time over
-  all worktrees (`SPOT_PRICE_DB_MAX_TEST`); a run waits for a free slot, at
-  most 2 hours. The locks wait at most 2 hours too.
-- **Clean-up:** a run removes its own test server on exit, also on Ctrl-C.
-  Each new run and `db:gc` remove test servers of this repository whose
-  owner process is gone; a test server of another clone stays.
-  `SPOT_PRICE_DB_KEEP=failed` (or `always`) keeps the server of a failed run
-  and writes its log to `.tmp/db/logs`; `db:gc` removes it. `db:gc` only lists
-  a dev server of a removed checkout; it never deletes a dev volume. Only
-  `db:destroy --yes` deletes the dev server and volume of its worktree.
+  all worktrees of this repository (`SPOT_PRICE_DB_MAX_TEST`); a run waits
+  for a free slot, at most 2 hours. The locks wait at most 2 hours too.
+- **Clean-up:** a run removes its own test server on exit, also on Ctrl-C and
+  on a SIGTERM to the script: the command runs in its own process group, and
+  the clean-up stops it first. Every command that starts a server, and
+  `db:gc`, first removes:
+  - the test servers of this repository whose owner process is gone; a kept
+    test server stays;
+  - the dev server and the dev volume of a worktree whose directory is gone,
+    when git no longer lists the worktree and the parent directory still
+    exists. This deletes the dev data of that worktree. Move a worktree only
+    with its data: `db:dump` before, `db:restore` after.
+- **Keep a failed run:** `SPOT_PRICE_DB_KEEP=failed` (or `always`) keeps the
+  server of a failed run and writes its log to `.tmp/db/logs`; `db:gc`
+  removes it.
 - **E2E files:** each run uses `.tmp/e2e/<test server>/` for the binary copy
   and the Playwright output, and a free service port. A failed run keeps the
   directory. The release build and the copy hold a worktree lock. A manual
@@ -317,6 +339,10 @@ they never start, stop, or remove the containers or volumes by hand.
 - **SQLx metadata:** `sqlx:prepare` and `sqlx:check` hold a worktree lock,
   because prepare rewrites `.sqlx` and both use the SQLx work files in
   `target/`.
+- **Agent sandbox:** `.claude/settings.json` lists these tasks in
+  `sandbox.excludedCommands`, because the `container` tool needs XPC. The
+  entries match only a plain call such as `mise run verify`. A call with
+  `cd`, a pipe, or a redirect stays in the sandbox and fails.
 
 **Local database measurements** (2026-11-15, Apple silicon Mac, container
 1.0.0, image `postgres:18.7`; other agents loaded the Mac):

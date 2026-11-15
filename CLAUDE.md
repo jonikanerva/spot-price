@@ -160,7 +160,11 @@ These rules narrow or extend the defaults above for this repository.
   PostgreSQL (`dev`, `test`, `e2e`, `sqlx:*`, `verify`, `db:*`). Never run
   your own `container`, `docker`, `psql`, `pg_ctl`, or clean-up commands for
   the local servers, and never run a general `container prune`. The tasks
-  isolate each worktree and each run.
+  isolate each worktree and each run, start and stop their servers, and
+  clean up after ended runs and removed worktrees. `.claude/settings.json`
+  runs these tasks outside the sandbox (the `container` tool needs XPC), but
+  only for a plain call such as `mise run verify`: no `cd`, pipe, redirect,
+  or `&&` chain in the same call.
 - **Local guards.** `.claude/settings.json` blocks every push to `main`,
   `rm -rf`, `claude` CLI spawns, and Read-tool reads of `.env` files. The
   guards apply only to commands that Claude Code runs, and the `.env` guard
