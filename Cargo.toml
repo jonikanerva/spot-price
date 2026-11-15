@@ -7,7 +7,7 @@ resolver = "3"
 # crates/server/Cargo.toml repeats these values for Railpack. Keep them equal.
 [workspace.package]
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100"
 publish = false
 license = "LicenseRef-Proprietary"
 

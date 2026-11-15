@@ -95,8 +95,8 @@ STACK.md  VISION.md  DOCTRINE.md  CLAUDE.md
 
 ## 1. Language & Runtime
 
-- **Language:** Rust 1.99.1, edition 2024, pinned in `rust-toolchain.toml`
-  with rustfmt and Clippy. `rust-version = "1.99"` in the workspace; the
+- **Language:** Rust 1.100.0, edition 2024, pinned in `rust-toolchain.toml`
+  with rustfmt and Clippy. `rust-version = "1.100"` in the workspace; the
   server crate repeats it (§15, Railpack).
 - **Runtime:** a native Linux binary in the Railpack runtime image. A local
   macOS build does not validate the Linux artifact.
@@ -601,7 +601,7 @@ reserves merge (`CLAUDE.md`).
 | Item          | Value                                                                                                                                                   |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Builder       | Railpack, Rust provider (`"provider": "rust"`: the root also has `package.json`)                                                                        |
-| Toolchain     | Rust 1.99.1 from `rust-toolchain.toml`                                                                                                                  |
+| Toolchain     | Rust 1.100.0 from `rust-toolchain.toml`                                                                                                                 |
 | Build         | One command: remove the old binary, `SQLX_OFFLINE=true cargo build --release --locked --package spot-price-server`, copy it to `bin/`                   |
 | Caches        | `cargo_registry`, `cargo_git`, `cargo_target` (`"type": "locked"`: one build at a time)                                                                 |
 | Image content | `bin/spot-price` only                                                                                                                                   |
@@ -681,7 +681,7 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
    - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
      slash, no path. The `Origin` check compares it byte for byte.
 
-3. Merge. Watch the build log: the Railpack version, Rust 1.99.1, the
+3. Merge. Watch the build log: the Railpack version, Rust 1.100.0, the
    offline build, `migrations are up to date`, and a passing healthcheck.
 4. Run the post-release checks.
 
@@ -722,7 +722,7 @@ and an API key.
   | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | 18.6 (`mise.toml`, `conda:postgresql`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise.toml`. |
   | Source builder | Railpack; Railway selects the version                                                             | Not used                               | The Railway build log                                                          |
   | Runtime image  | Railpack runtime image; Railway selects the version                                               | Not used                               | The Railway build log                                                          |
-  | Rust toolchain | 1.99.1 (`rust-toolchain.toml`)                                                                    | 1.99.1                                 | `rust-toolchain.toml`                                                          |
+  | Rust toolchain | 1.100.0 (`rust-toolchain.toml`)                                                                   | 1.100.0                                | `rust-toolchain.toml`                                                          |
 
   Keep test and production PostgreSQL on the same major version (§5).
 

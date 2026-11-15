@@ -18,7 +18,7 @@ Supports all 21 Nord Pool delivery areas across the Nordics, Baltics, and Centra
 
 | Component  | Choice                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
-| Language   | Rust 1.99 (edition 2024)                                               |
+| Language   | Rust 1.100 (edition 2024)                                              |
 | Framework  | [Axum](https://docs.rs/axum) + Tokio                                   |
 | Database   | PostgreSQL via [SQLx](https://docs.rs/sqlx) (checked queries, no ORM)  |
 | Time       | [Jiff](https://docs.rs/jiff) with the bundled time zone database       |
