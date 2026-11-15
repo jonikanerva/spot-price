@@ -324,6 +324,7 @@ commands of this project: the names, the port range, the service address of
   on a SIGTERM to the script: the command runs in its own process group, and
   the clean-up stops it first. Every command that starts a server, and
   `db:gc`, first removes:
+  - the stopped dev containers that no command is creating (under the dev lock of their worktree; their volumes stay);
   - the test servers of this repository whose owner process is gone; a kept
     test server stays;
   - the dev server and the dev volume of a worktree whose directory is gone,
@@ -361,7 +362,7 @@ commands of this project: the names, the port range, the service address of
 The readiness check sends a PostgreSQL SSLRequest to the published port; an
 open TCP port is not enough. When the Mac changes the bridge of the container
 network, the published port of an older container accepts connections but
-never answers. `db:start` and `dev` then restart the dev container; the data
+never answers. `db:start` and `dev` then create the dev container again; the data
 stays in the volume.
 
 The container adds a few seconds of start-up per run. The database work

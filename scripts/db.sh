@@ -17,8 +17,8 @@
 #   memory (tmpfs) with fsync off. The run removes it at the end.
 #
 # Every command that starts a server first cleans up: it removes the test
-# servers of runs that ended, the stopped dev containers (their volumes
-# stay), and the dev server and dev volume of a worktree that git no longer
+# servers of runs that ended, the stopped dev containers that no command
+# is creating (their volumes stay), and the dev server and dev volume of a worktree that git no longer
 # knows and whose directory is gone.
 #
 # The worktree id is a hash of the physical checkout path, so two worktrees
@@ -371,20 +371,55 @@ worktree_gone() { # $1 = path
   ! git -C "$ROOT" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $path"
 }
 
+# The path of each worktree id, for dev volumes of earlier script versions
+# that have no path label. Shared by all worktrees of this repository.
+remember_path() { # $1 = worktree id, $2 = path
+  mkdir -p "$COMMON/dev-paths"
+  printf '%s\n' "$2" >"$COMMON/dev-paths/$1"
+}
+
+remembered_path() { # $1 = worktree id
+  cat "$COMMON/dev-paths/$1" 2>/dev/null || true
+}
+
+# Remove a stopped dev container of a worktree that still exists, under the
+# dev lock of that worktree. A new container shows the state stopped for a
+# few seconds while `container run` creates it; the command that creates it
+# holds the lock, so a held lock means: leave the container alone.
+remove_stopped_dev() { # $1 = name, $2 = path of its worktree
+  local dir="$2/.tmp/db/dev.lock" line
+  # A worktree without .tmp/db has never run this script; its own first
+  # command removes the container. No file goes into another worktree.
+  [ -d "$2/.tmp/db" ] || return 0
+  if ! mkdir "$dir" 2>/dev/null; then
+    dir_stale "$dir" || return 0
+    rm -r -f "${dir:?}"
+    mkdir "$dir" 2>/dev/null || return 0
+  fi
+  owner_of $$ >"$dir/owner"
+  line="$(server_line "$1")"
+  if [ -n "$line" ] && [ "$(field "$line" 2)" = stopped ]; then
+    say "removing the stopped dev container $1 (its volume stays)"
+    remove_server "$1"
+  fi
+  unlock "$dir"
+}
+
 # Remove the test servers of runs that ended (a kept server stays), and the
 # dev server and dev volumes of worktrees that are gone.
 clean_up_servers() {
   local name state role worktree owner port run repo path major gone_ids=" "
   while IFS=$'\t' read -r name state role worktree owner port run repo path major; do
     if [ "$role" = dev ]; then
+      [ "$path" = "-" ] || remember_path "${name#"$DB_PROJECT"-dev-}" "$path"
       if worktree_gone "$path"; then
         say "removing the dev server $name (worktree $path is gone)"
         remove_server "$name"
         gone_ids="$gone_ids${name#"$DB_PROJECT"-dev-} "
-      elif [ "$state" = stopped ]; then
+      elif [ "$state" = stopped ] && [ "$path" != "-" ]; then
         # A stopped container keeps a copy of the image; the data is in the
         # volume. The next command that needs the server creates it again.
-        remove_server "$name"
+        remove_stopped_dev "$name" "$path"
       fi
       continue
     fi
@@ -402,6 +437,7 @@ clean_up_servers() {
       # label; its name carries the worktree id.
       worktree="${name#"$DB_PROJECT"-dev-}"
       worktree="${worktree%%-pg*}"
+      [ "$path" != "-" ] || path="$(remembered_path "$worktree")"
       worktree_gone "$path" || case "$gone_ids" in *" $worktree "*) ;; *) continue ;; esac
       say "removing the dev volume $name and its data (worktree ${path#-} is gone)"
       container volume delete "$name" >/dev/null 2>&1 || true
@@ -436,6 +472,7 @@ dev_labels() {
 dev_ensure_locked() {
   local line state port password major
   dev_volume_resolve
+  remember_path "$WORKTREE_ID" "$DB_ROOT"
   dev_password >/dev/null
   password="$(cat "$STATE/dev-password")"
   dev_labels
@@ -467,7 +504,9 @@ dev_ensure_locked() {
   fi
   if [ -n "$line" ] && [ "$state" != running ]; then
     # A container that does not run is created again (on a new port); the
-    # data stays in the volume.
+    # data stays in the volume. A stop first lets a running PostgreSQL shut
+    # down cleanly.
+    container stop "$DEV_NAME" >/dev/null 2>&1 || true
     remove_server "$DEV_NAME"
     line=""
   fi
@@ -672,7 +711,7 @@ cmd_clone() { # $1 = source worktree
   [ "$source_root" != "$DB_ROOT" ] || die "the source is this worktree"
   source_id="$(worktree_id "$source_root")"
   container volume inspect "$DB_PROJECT-dev-$source_id-pg$MAJOR" >/dev/null 2>&1 ||
-    container volume inspect "$DB_PROJECT-dev-$source_id" >/dev/null 2>&1 ||
+    { [ "$MAJOR" = 18 ] && container volume inspect "$DB_PROJECT-dev-$source_id" >/dev/null 2>&1; } ||
     die "$source_root has no dev data of PostgreSQL $MAJOR"
   mkdir -p "$STATE"
   file="$STATE/clone-$$.dump"

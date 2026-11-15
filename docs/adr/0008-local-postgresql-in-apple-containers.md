@@ -34,7 +34,8 @@ away without a manual step.
    use of stopped containers.
 4. Each independent test run gets a new test server on tmpfs with fsync
    off. `verify` shares one server over its steps.
-5. Every command that starts a server first removes the test servers of
+5. Every command that starts a server first removes the stopped dev
+   containers that no command is creating, the test servers of
    ended runs and the dev server and dev volume of removed worktrees. A
    worktree counts as removed only when git no longer lists it, its
    directory is gone, and its parent directory exists.
