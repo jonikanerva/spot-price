@@ -118,7 +118,7 @@ mise trust && mise run setup
 ```
 
 `rust-toolchain.toml` owns the Rust version. `mise.toml` owns the other
-tools: Node, pnpm, PostgreSQL 18.6 (conda package), sqlx-cli 0.9.0,
+tools: Node, pnpm, PostgreSQL 18.7 (conda package), sqlx-cli 0.9.0,
 cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
 
 ---
@@ -256,7 +256,7 @@ on the blocking pool behind a semaphore of two.
   pass.
 
 **Test database isolation.** `scripts/test-db.sh` runs the pinned PostgreSQL
-18.6 on `127.0.0.1:55436` with trust authentication and data in
+18.7 on `127.0.0.1:55436` with trust authentication and data in
 `.tmp/postgres`. The test tasks set `DATABASE_URL` to that server themselves.
 `#[sqlx::test]` creates and drops one database per test.
 
@@ -569,7 +569,7 @@ evidence blocks merge. There is no CI.
 | P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                 | Purity inside the domain crate is review-only           |
 | P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                 | Golden files come from one TypeScript commit            |
 | P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                          | Forecast tolerance (§13)                                |
-| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | Isolated PostgreSQL 18.6; production: `postgres-ssl:18` |
+| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | Isolated PostgreSQL 18.7; production: `postgres-ssl:18` |
 | P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                     |
 | P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                             |
 | P7: release                   | Before merge: Railpack plan; owner-run schema snapshot and precheck when §15 asks for them. After release: §15 checks    | A local macOS build is not the Linux artifact           |
@@ -719,7 +719,7 @@ and an API key.
 
   | Component      | Production                                                                                        | Test and local                         | How to read the version                                                        |
   | -------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------ |
-  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | 18.6 (`mise.toml`, `conda:postgresql`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise.toml`. |
+  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | 18.7 (`mise.toml`, `conda:postgresql`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise.toml`. |
   | Source builder | Railpack; Railway selects the version                                                             | Not used                               | The Railway build log                                                          |
   | Runtime image  | Railpack runtime image; Railway selects the version                                               | Not used                               | The Railway build log                                                          |
   | Rust toolchain | 1.100.0 (`rust-toolchain.toml`)                                                                   | 1.100.0                                | `rust-toolchain.toml`                                                          |

@@ -9,16 +9,16 @@ idiomatic_version_file_enable_tools = ["rust"]
 [tools]
 # Node and pnpm run only the Playwright journeys and Prettier. They do not
 # ship in the production image.
-node = "24.22.1"
-pnpm = "12.15.0"
+node = "24.22.3"
+pnpm = "12.21.0"
 # The PostgreSQL version of production (Railway image postgres-ssl:18).
-"conda:postgresql" = "18.6"
+"conda:postgresql" = "18.7"
 # Keep the options equal to the pin of the owner's other projects; a different
 # option set makes mise reinstall the tool on every project switch.
 "cargo:sqlx-cli" = { version = "0.9.0", default-features = false, features = "postgres,rustls", locked = true }
 cargo-deny = "0.20.2"
-"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.149"
-"github:Boshen/cargo-shear" = "1.14.0"
+"aqua:nextest-rs/nextest/cargo-nextest" = "0.9.152"
+"github:Boshen/cargo-shear" = "1.14.1"
 gitleaks = "8.30.1"
 
 # The tests and the query checks use only the isolated server of
