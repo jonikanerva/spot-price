@@ -365,7 +365,7 @@ worktree_gone() { # $1 = path
 
 # Remove the test servers of runs that ended (a kept server stays), and the
 # dev server and dev volumes of worktrees that are gone.
-cleanup() {
+clean_up_servers() {
   local name state role worktree owner port run repo path major gone_ids=" "
   while IFS=$'\t' read -r name state role worktree owner port run repo path major; do
     if [ "$role" = dev ]; then
@@ -511,7 +511,7 @@ dev_exit() {
 dev_acquire() {
   require_container
   mkdir -p "$STATE/dev-users"
-  cleanup
+  clean_up_servers
   lock "$STATE/dev.lock" "the dev server lock of this worktree"
   DEV_USER="$STATE/dev-users/$$"
   owner_of $$ >"$DEV_USER"
@@ -533,7 +533,7 @@ dev_url() { # $1 = port
 cmd_start() {
   require_container
   mkdir -p "$STATE"
-  cleanup
+  clean_up_servers
   lock "$STATE/dev.lock" "the dev server lock of this worktree"
   dev_ensure_locked
   : >"$STATE/dev-pinned"
@@ -780,7 +780,7 @@ cmd_with_test_db() {
   fi
   require_container
   mkdir -p "$STATE"
-  cleanup
+  clean_up_servers
   acquire_slot
   TEST_NAME="$DB_PROJECT-test-$WORKTREE_ID-$(openssl rand -hex 4)"
   trap test_exit EXIT
@@ -825,7 +825,7 @@ cmd_with_test_db() {
 cmd_gc() {
   local name state role worktree owner port run repo path major marker
   require_container
-  cleanup
+  clean_up_servers
   while IFS=$'\t' read -r name state role worktree owner port run repo path major; do
     [ "$role" != dev ] && [ "$worktree" = "$WORKTREE_ID" ] && [ -e "$COMMON/kept/$name" ] || continue
     say "removing the kept $role server $name"
@@ -877,6 +877,8 @@ cmd_setup() {
 }
 
 # Other scripts (for example a rehearsal) source this file for its functions.
+# Keep the function names apart from common names such as `cleanup`, which a
+# sourcing script can define for itself.
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0
 
 command="${1:-}"
