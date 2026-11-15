@@ -159,7 +159,7 @@ pub fn router(state: AppState) -> Router {
         .layer(from_fn(log_request))
         // A panic in a handler becomes the generic 500; the panic hook logs
         // only its source location.
-        .layer(CatchPanicLayer::custom(|_| wire::internal_error()));
+        .layer(CatchPanicLayer::custom(panic_response));
     // The `Allow` header is set after the route middleware, so only a layer
     // outside the routed router can remove it.
     Router::new()
@@ -193,6 +193,12 @@ async fn global_limit(State(state): State<AppState>, request: Request, next: Nex
     response
 }
 
+/// The answer to a handler panic: the generic 500. The panic payload is
+/// dropped, so the body never names the cause.
+fn panic_response(_payload: Box<dyn std::any::Any + Send + 'static>) -> Response {
+    wire::internal_error()
+}
+
 /// Removes the `Allow` header that axum adds to a wrong-method answer: the
 /// TypeScript service answered a plain 404 without it.
 async fn drop_allow(request: Request, next: Next) -> Response {
@@ -220,4 +226,44 @@ async fn log_request(request: Request, next: Next) -> Response {
         "request"
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::{Body, to_bytes};
+    use axum::http::StatusCode;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// A handler panic answers the generic plain-text 500 through the
+    /// `CatchPanicLayer` of the router, and the service keeps answering.
+    #[tokio::test]
+    async fn a_handler_panic_answers_the_generic_500() {
+        let app = Router::new()
+            .route("/panic", get(|| async { panic!("handler failure") }))
+            .layer(CatchPanicLayer::custom(panic_response));
+
+        let response = app
+            .clone()
+            .oneshot(Request::get("/panic").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            wire::TEXT
+        );
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(&body[..], b"Internal Server Error");
+
+        let again = app
+            .oneshot(Request::get("/panic").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(again.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }

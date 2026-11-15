@@ -127,7 +127,7 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
 
 | Concern             | Technology                                   | Role                                           |
 | ------------------- | -------------------------------------------- | ---------------------------------------------- |
-| HTTP                | Axum 0.8, tower-http 0.6                     | Routes, extraction, panic containment          |
+| HTTP                | Axum 0.8, tower-http 0.7                     | Routes, extraction, panic containment          |
 | Concurrency         | Tokio 1 (multi-thread, 2 workers)            | Async I/O, jobs, signals, blocking pool        |
 | Errors              | `Result`, enums, thiserror                   | Fixed-text error kinds per adapter             |
 | Wire representation | serde, serde_json, a first-party JSON writer | JavaScript number format (docs/adr/0003)       |
@@ -360,28 +360,28 @@ result.
 Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 2026-10-14 in the Rust port PR.
 
-| Dependency                   | Version            | Why it earns its place                                                             |
-| ---------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
-| axum                         | 0.8.9              | HTTP routing and extraction                                                        |
-| tokio                        | 1.54.1             | Async runtime, timers, signals, blocking pool                                      |
-| tower-http                   | 0.6.11             | `CatchPanicLayer`, header layers. 0.6, not 0.7: reqwest already depends on 0.6.11. |
-| tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                              |
-| serde / serde_json           | 1.0.229 / 1.0.154  | Wire types. `float_roundtrip` parses numbers like JavaScript.                      |
-| thiserror                    | 2.0.21             | Error enums with fixed text                                                        |
-| jiff / jiff-sqlx             | 0.2.43 / 0.2.2     | Time values with the bundled tzdb, and their SQLx encoding                         |
-| croner                       | 4.0.3              | Cron schedules with Jiff types                                                     |
-| sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)   |
-| reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                    |
-| futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                      |
-| tracing / tracing-subscriber | 0.1.44 / 0.3.23    | Structured logs; the formatter is first-party (§8)                                 |
-| utoipa / utoipa-axum         | 6.0.0 / 0.3.0      | OpenAPI 3.1 document of the routes                                                 |
-| scrypt                       | 0.12.0             | Better Auth password hashes (N=16384, r=16, p=1, 64 bytes)                         |
-| unicode-normalization        | 0.1.26             | NFKC of a password, like `String.prototype.normalize`                              |
-| subtle                       | 2.6.1              | Constant-time comparison of a password hash                                        |
-| sha2                         | 0.11.1             | SHA-256 of a stored session token                                                  |
-| getrandom                    | 0.4.3              | Random tokens, API keys, ids, and salts                                            |
-| @playwright/test (dev, Node) | see `package.json` | Browser journeys                                                                   |
-| prettier (dev, Node)         | see `package.json` | Format check of Markdown, JSON, YAML, and e2e TypeScript                           |
+| Dependency                   | Version            | Why it earns its place                                                                                       |
+| ---------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| axum                         | 0.8.9              | HTTP routing and extraction                                                                                  |
+| tokio                        | 1.54.1             | Async runtime, timers, signals, blocking pool                                                                |
+| tower-http                   | 0.7.1              | `CatchPanicLayer`, header layers. reqwest 0.13.5 still brings 0.6.11: two copies until reqwest moves to 0.7. |
+| tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                                                        |
+| serde / serde_json           | 1.0.229 / 1.0.154  | Wire types. `float_roundtrip` parses numbers like JavaScript.                                                |
+| thiserror                    | 2.0.21             | Error enums with fixed text                                                                                  |
+| jiff / jiff-sqlx             | 0.2.43 / 0.2.2     | Time values with the bundled tzdb, and their SQLx encoding                                                   |
+| croner                       | 4.0.3              | Cron schedules with Jiff types                                                                               |
+| sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)                             |
+| reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                                              |
+| futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                                                |
+| tracing / tracing-subscriber | 0.1.44 / 0.3.23    | Structured logs; the formatter is first-party (§8)                                                           |
+| utoipa / utoipa-axum         | 6.0.0 / 0.3.0      | OpenAPI 3.1 document of the routes                                                                           |
+| scrypt                       | 0.12.0             | Better Auth password hashes (N=16384, r=16, p=1, 64 bytes)                                                   |
+| unicode-normalization        | 0.1.26             | NFKC of a password, like `String.prototype.normalize`                                                        |
+| subtle                       | 2.6.1              | Constant-time comparison of a password hash                                                                  |
+| sha2                         | 0.11.1             | SHA-256 of a stored session token                                                                            |
+| getrandom                    | 0.4.3              | Random tokens, API keys, ids, and salts                                                                      |
+| @playwright/test (dev, Node) | see `package.json` | Browser journeys                                                                                             |
+| prettier (dev, Node)         | see `package.json` | Format check of Markdown, JSON, YAML, and e2e TypeScript                                                     |
 
 The dev profile builds scrypt, salsa20, pbkdf2, and sha2 with `opt-level =
 3`, because an unoptimized scrypt takes seconds per hash in tests.
@@ -537,7 +537,7 @@ TypeScript service, except the chart drawing. It must be usable without a pointe
 
 ## 12. Best practices source
 
-- [Axum 0.8](https://docs.rs/axum/0.8.9/), [tower-http 0.6](https://docs.rs/tower-http/0.6.11/), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown)
+- [Axum 0.8](https://docs.rs/axum/0.8.9/), [tower-http 0.7](https://docs.rs/tower-http/0.7.1/), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown)
 - [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.2/), [PostgreSQL 18](https://www.postgresql.org/docs/18/)
 - [Jiff](https://docs.rs/jiff/0.2.43/), [croner 4](https://docs.rs/croner/4.0.3/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
 - [scrypt](https://docs.rs/scrypt/0.12.0/), [ECMAScript Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)
