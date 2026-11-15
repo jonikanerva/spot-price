@@ -303,14 +303,17 @@ they never start, stop, or remove the containers or volumes by hand.
   all worktrees (`SPOT_PRICE_DB_MAX_TEST`); a run waits for a free slot, at
   most 2 hours. The locks wait at most 2 hours too.
 - **Clean-up:** a run removes its own test server on exit, also on Ctrl-C.
-  Each new run and `db:gc` remove test servers whose owner process is gone.
+  Each new run and `db:gc` remove test servers of this repository whose
+  owner process is gone; a test server of another clone stays.
   `SPOT_PRICE_DB_KEEP=failed` (or `always`) keeps the server of a failed run
   and writes its log to `.tmp/db/logs`; `db:gc` removes it. `db:gc` only lists
   a dev server of a removed checkout; it never deletes a dev volume. Only
   `db:destroy --yes` deletes the dev server and volume of its worktree.
 - **E2E files:** each run uses `.tmp/e2e/<test server>/` for the binary copy
   and the Playwright output, and a free service port. A failed run keeps the
-  directory. The release build and the copy hold a worktree lock.
+  directory. The release build and the copy hold a worktree lock. A manual
+  `mise run build` does not take the lock, so do not run it beside `e2e` in
+  the same worktree.
 - **SQLx metadata:** `sqlx:prepare` and `sqlx:check` hold a worktree lock,
   because prepare rewrites `.sqlx` and both use the SQLx work files in
   `target/`.
@@ -326,6 +329,12 @@ they never start, stop, or remove the containers or volumes by hand.
 | `cargo nextest -p spot-price-server` (203 database tests) | 24–29 s in a container, 24–31 s on the former local server                 |
 | `mise run verify`                                         | 671 s, load average above 100                                              |
 | Memory                                                    | Test server about 525 MiB of 1 GiB during `test`; idle dev server 233 MiB  |
+
+The readiness check sends a PostgreSQL SSLRequest to the published port; an
+open TCP port is not enough. When the Mac changes the bridge of the container
+network, the published port of an older container accepts connections but
+never answers. `db:start` and `dev` then restart the dev container; the data
+stays in the volume.
 
 The container adds a few seconds of start-up per run. The database work
 itself has the same speed. Limitations: the `container` service must run;

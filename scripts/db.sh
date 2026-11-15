@@ -57,6 +57,9 @@ STATE="$DB_ROOT/.tmp/db"
 # Shared by all worktrees of this repository: the test server slots and the
 # markers of kept test servers.
 COMMON="$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/spot-price-db"
+# Test servers of another clone of this repository have other markers, so
+# the clean-up leaves them to that clone.
+REPO_ID="$(printf '%s' "$COMMON" | shasum -a 256 | cut -c1-12)"
 DEV_NAME="spot-price-dev-$WORKTREE_ID"
 DEV_VOLUME="spot-price-dev-$WORKTREE_ID"
 DEV_DATABASE="spot_price"
@@ -102,13 +105,24 @@ owner_alive() { # $1 = owner token
   [ "$(owner_of "$pid" 2>/dev/null || true)" = "$1" ]
 }
 
-# A directory lock with owner identity. A lock of a dead owner is stale.
+# A lock or slot directory is stale when its owner is gone, or when it has
+# no owner file a minute after its creation (a crash between mkdir and the
+# write of the owner).
+dir_stale() { # $1 = directory
+  if [ -f "$1/owner" ]; then
+    ! owner_alive "$(cat "$1/owner" 2>/dev/null)"
+  else
+    [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
+  fi
+}
+
+# A directory lock with owner identity. A stale lock is removed.
 lock() { # $1 = lock directory, $2 = description
   local dir="$1" waited=0 me
   me="$(owner_of $$)"
   mkdir -p "$(dirname "$dir")"
   until mkdir "$dir" 2>/dev/null; do
-    if [ -f "$dir/owner" ] && ! owner_alive "$(cat "$dir/owner" 2>/dev/null)"; then
+    if dir_stale "$dir"; then
       rm -r -f "${dir:?}"
       continue
     fi
@@ -122,7 +136,7 @@ lock() { # $1 = lock directory, $2 = description
 
 unlock() { rm -r -f "${1:?}"; }
 
-# Lines: name<TAB>state<TAB>role<TAB>worktree<TAB>owner<TAB>port<TAB>run
+# Lines: name<TAB>state<TAB>role<TAB>worktree<TAB>owner<TAB>port<TAB>run<TAB>repo
 list_servers() {
   container list --all --format json | python3 -c '
 import json, sys
@@ -135,7 +149,8 @@ for c in json.load(sys.stdin):
     port = ports[0].get("hostPort", "") if ports else ""
     print("\t".join(str(v) for v in (cfg.get("id"), c.get("status", {}).get("state", ""),
         labels.get("spot-price.role", ""), labels.get("spot-price.worktree", ""),
-        labels.get("spot-price.owner", ""), port, labels.get("spot-price.run", ""))))
+        labels.get("spot-price.owner", ""), port, labels.get("spot-price.run", ""),
+        labels.get("spot-price.repo", ""))))
 '
 }
 
@@ -194,11 +209,24 @@ run_server() {
 # Wait until the final server accepts TCP connections in the container and
 # the published port answers on the host. The image runs a temporary server
 # without TCP during the first initialization; it does not count.
+# PostgreSQL answers an SSLRequest with one byte, N or S. An open TCP port
+# is not enough: after a change of the container network, the published
+# port of an older container accepts connections but never answers.
+host_answers() { # $1 = port
+  python3 - "$1" <<'PY' 2>/dev/null
+import socket, struct, sys
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2)
+s.settimeout(2)
+s.sendall(struct.pack("!ii", 8, 80877103))
+sys.exit(0 if s.recv(1) in (b"N", b"S") else 1)
+PY
+}
+
 wait_ready() { # $1 = name, $2 = port
   local i
   for i in $(seq 1 240); do
     if container exec "$1" pg_isready --quiet --host=127.0.0.1 --username=postgres 2>/dev/null &&
-      nc -z 127.0.0.1 "$2" 2>/dev/null; then
+      host_answers "$2"; then
       return 0
     fi
     sleep 0.25
@@ -250,6 +278,14 @@ dev_ensure() {
   line="$(server_line "$DEV_NAME")"
   state="$(cut -f2 <<<"$line")"
   port="$(cut -f6 <<<"$line")"
+  if [ "$state" = "running" ] && ! host_answers "$port" &&
+    container exec "$DEV_NAME" pg_isready --quiet --host=127.0.0.1 --username=postgres 2>/dev/null; then
+    # The server runs, but its published port does not answer: restart the
+    # container. The data stays in the volume.
+    say "the published port of $DEV_NAME does not answer; restarting the container"
+    container stop "$DEV_NAME" >/dev/null 2>&1 || true
+    state="stopped"
+  fi
   if [ -n "$line" ] && [ "$state" != "running" ]; then
     # The published port can be in use now. Then recreate the container on
     # another port; the data stays in the volume.
@@ -347,8 +383,8 @@ cmd_psql() {
     psql --username=postgres --dbname="$DEV_DATABASE" "$@"
 }
 
-# The dev database has no table other than the SQLx ledger of an empty
-# migration run.
+# The dev database has no table in any schema other than the system
+# schemas. Even an SQLx ledger makes it not empty.
 dev_is_empty() {
   local count
   count="$(psql_in "$DEV_NAME" "$DEV_DATABASE" --command="SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema')")"
@@ -410,7 +446,7 @@ cmd_destroy() { # $1 = --yes
 }
 
 cmd_info() {
-  local line found=0 name state role worktree owner port run
+  local line found=0 name state role worktree owner port run repo
   require_container
   echo "worktree:    $DB_ROOT"
   echo "worktree id: $WORKTREE_ID"
@@ -430,7 +466,7 @@ cmd_info() {
   if [ -s "$STATE/app-port" ]; then
     echo "service:     http://localhost:$(cat "$STATE/app-port") (mise run dev)"
   fi
-  while IFS=$'\t' read -r name state role worktree owner port run; do
+  while IFS=$'\t' read -r name state role worktree owner port run repo; do
     [ "$role" = "test" ] && [ "$worktree" = "$WORKTREE_ID" ] || continue
     found=1
     echo "test server: $name ($state) on 127.0.0.1:$port"
@@ -455,7 +491,7 @@ acquire_slot() {
         SLOT="$COMMON/slots/$i"
         return 0
       fi
-      if [ -f "$COMMON/slots/$i/owner" ] && ! owner_alive "$(cat "$COMMON/slots/$i/owner" 2>/dev/null)"; then
+      if [ -d "$COMMON/slots/$i" ] && dir_stale "$COMMON/slots/$i"; then
         rm -r -f "${COMMON:?}/slots/$i"
       fi
     done
@@ -469,9 +505,9 @@ acquire_slot() {
 # Remove test servers whose owner process is gone, in every worktree of this
 # Mac. A kept server has a marker and stays. Dev servers never go here.
 reap_abandoned() {
-  local name state role worktree owner port run
-  while IFS=$'\t' read -r name state role worktree owner port run; do
-    [ "$role" = "test" ] || continue
+  local name state role worktree owner port run repo
+  while IFS=$'\t' read -r name state role worktree owner port run repo; do
+    [ "$role" = "test" ] && [ "$repo" = "$REPO_ID" ] || continue
     [ -n "$owner" ] && ! owner_alive "$owner" || continue
     [ -e "$COMMON/kept/$name" ] && continue
     say "removing abandoned test server $name"
@@ -530,6 +566,7 @@ cmd_with_test_db() {
     --tmpfs /var/lib/postgresql \
     --label spot-price.role=test --label "spot-price.worktree=$WORKTREE_ID" \
     --label "spot-price.owner=$(owner_of $$)" --label "spot-price.run=$TEST_NAME" \
+    --label "spot-price.repo=$REPO_ID" \
     --env "POSTGRES_PASSWORD=$password" --env "POSTGRES_DB=$TEST_DATABASE" -- \
     -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=200
   wait_ready "$TEST_NAME" "$HOST_PORT"
@@ -549,10 +586,10 @@ cmd_with_test_db() {
 }
 
 cmd_gc() {
-  local name state role worktree owner port run marker
+  local name state role worktree owner port run repo marker
   require_container
   reap_abandoned
-  while IFS=$'\t' read -r name state role worktree owner port run; do
+  while IFS=$'\t' read -r name state role worktree owner port run repo; do
     [ "$role" = "test" ] || continue
     [ "$worktree" = "$WORKTREE_ID" ] && [ -e "$COMMON/kept/$name" ] || continue
     say "removing kept test server $name"
@@ -566,7 +603,7 @@ cmd_gc() {
   done
   # Dev servers of checkouts that no longer exist. Their volumes hold data,
   # so they are only listed.
-  while IFS=$'\t' read -r name state role worktree owner port run; do
+  while IFS=$'\t' read -r name state role worktree owner port run repo; do
     [ "$role" = "dev" ] || continue
     local path
     path="$(container list --all --format json | python3 -c '
