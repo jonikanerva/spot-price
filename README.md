@@ -146,14 +146,14 @@ Keep local settings in `.env.local`, not `.env`: the SQLx query macros read ever
 
 ### Local PostgreSQL
 
-Every local PostgreSQL server runs in an Apple container (`scripts/db.sh`, `STACK.md` §3). Use only the mise tasks below; do not start or remove the containers by hand.
+Every local PostgreSQL server runs in an Apple container (`scripts/db.sh`, `STACK.md` §3). You do not start or stop a database yourself: `mise run dev` starts the dev database of the worktree and stops it at exit, and each test task starts its own test database and removes it at the end. Do not start or remove the containers by hand.
 
-- **Dev server:** one per worktree. The data stays in a named volume when you stop the container. `mise run db:info` shows its port, database, and password file.
+- **Dev server:** one per worktree. The data stays in a named volume between runs. `mise run db:info` shows its port, database, and password file. `mise run db:start` keeps it running, for example for a database tool, until `mise run db:stop`.
 - **Service address:** `mise run dev` serves each worktree on its own port, not on 3000. It prints the address, and `mise run db:info` shows it. `mise run smoke` uses it. Set both `PORT` and `BETTER_AUTH_URL` in `.env.local` to choose another address.
 - **Test server:** each run of `test`, `e2e`, `sqlx:check`, `sqlx:prepare`, or `verify` gets a new, empty, migrated server and removes it at the end. Runs in parallel, in one worktree or in many, do not share a database. The tests never use the `DATABASE_URL` of `.env.local` or the shell.
+- **Clean-up:** each task first removes the test servers of ended runs and the dev data of removed worktrees. Before you move a worktree, write its data with `mise run db:dump <file>`.
 - **Keep a failed run:** `SPOT_PRICE_DB_KEEP=failed mise run test` keeps the server and its log; `mise run db:gc` removes it.
-- **Copy dev data:** `mise run db:clone <path of another worktree>` copies its dev database into the empty dev database of this worktree. `db:dump <file>` and `db:restore <file>` write and load a `pg_dump` archive.
-- **Remove a worktree:** run `mise run db:destroy --yes` in it first. It deletes the dev server and the dev volume of that worktree. `db:gc` lists dev servers of removed checkouts but never deletes them.
+- **Copy dev data:** `mise run db:clone <path of another worktree>`, `db:restore <file>`, and `db:reset` replace the dev database. They first write the old database to `.tmp/db/backups/`. `db:dump <file>` writes a `pg_dump` archive.
 - **Sandbox:** the database tasks need the XPC service of `container`. In a sandbox that blocks it, they stop with "the container system service does not answer".
 
 ### Tasks
@@ -168,10 +168,13 @@ Every local PostgreSQL server runs in an Apple container (`scripts/db.sh`, `STAC
 | `mise run verify`               | The full gate: format, lint, query metadata, contract, scans, build, tests, e2e |
 | `mise run dev`                  | Start and migrate the dev server, then run the service with `.env.local`        |
 | `mise run sqlx:prepare`         | Regenerate `.sqlx` after a query or migration change                            |
-| `mise run db:start` / `db:stop` | Start or stop the dev server of this worktree; stop keeps the data              |
+| `mise run db:start` / `db:stop` | Optional: keep the dev server running / stop it; the data stays                 |
 | `mise run db:info` / `db:psql`  | Show the servers of this worktree; open `psql` on the dev database              |
-| `mise run db:clone <path>`      | Copy the dev database of another worktree into the empty dev database           |
-| `mise run db:gc`                | Remove abandoned test servers and the kept test servers of this worktree        |
+| `mise run db:dump <file>`       | Write the dev database to a `pg_dump` archive                                   |
+| `mise run db:restore <file>`    | Replace the dev database with an archive (backup in `.tmp/db/backups/`)         |
+| `mise run db:clone <path>`      | Replace the dev database with the one of another worktree (backup first)        |
+| `mise run db:reset`             | Replace the dev database with an empty one (backup first)                       |
+| `mise run db:gc`                | Run the clean-up now and remove the kept test servers of this worktree          |
 
 The server binary has three commands: `spot-price migrate`, `spot-price serve`, and `spot-price export-openapi <path>`.
 

@@ -122,7 +122,25 @@
     ]
   },
   "sandbox": {
-    "excludedCommands": ["open"],
+    "excludedCommands": [
+      "open",
+      "mise run setup *",
+      "mise run dev *",
+      "mise run test *",
+      "mise run e2e *",
+      "mise run verify *",
+      "mise run sqlx:check *",
+      "mise run sqlx:prepare *",
+      "mise run db:start *",
+      "mise run db:stop *",
+      "mise run db:info *",
+      "mise run db:psql *",
+      "mise run db:dump *",
+      "mise run db:restore *",
+      "mise run db:clone *",
+      "mise run db:reset *",
+      "mise run db:gc *"
+    ],
     "filesystem": {
       "allowWrite": ["~/.gnupg"]
     }

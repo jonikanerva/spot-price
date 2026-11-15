@@ -47,8 +47,10 @@ run = [
   "scripts/db.sh setup",
 ]
 
+# `dev`, `test`, `e2e`, `sqlx:*`, and `verify` start and stop their servers
+# themselves. The db: tasks below are optional tools.
 [tasks."db:start"]
-description = "Start the dev PostgreSQL of this worktree (a container with a persistent volume)"
+description = "Keep the dev PostgreSQL of this worktree running until db:stop"
 run = "scripts/db.sh start"
 
 [tasks."db:stop"]
@@ -56,32 +58,32 @@ description = "Stop the dev PostgreSQL of this worktree; the data stays in its v
 run = "scripts/db.sh stop"
 
 [tasks."db:info"]
-description = "Show the container, version, port, and database of this worktree's servers"
+description = "Show the PostgreSQL servers of this worktree"
 run = "scripts/db.sh info"
 
 [tasks."db:psql"]
-description = "Open psql on the dev PostgreSQL of this worktree"
+description = "Open psql on the dev database of this worktree (arguments go to psql)"
 raw = true
 run = "scripts/db.sh psql"
-
-[tasks."db:clone"]
-description = "Copy the dev database of another worktree into the empty dev database here: mise run db:clone <path>"
-run = "scripts/db.sh clone"
 
 [tasks."db:dump"]
 description = "Write the dev database of this worktree to a pg_dump archive: mise run db:dump <file>"
 run = "scripts/db.sh dump"
 
 [tasks."db:restore"]
-description = "Load a pg_dump archive into the empty dev database of this worktree: mise run db:restore <file>"
+description = "Replace the dev database with a pg_dump archive; the old one goes to .tmp/db/backups: mise run db:restore <file>"
 run = "scripts/db.sh restore"
 
-[tasks."db:destroy"]
-description = "Delete the dev PostgreSQL and its volume of this worktree, with all data: mise run db:destroy --yes"
-run = "scripts/db.sh destroy"
+[tasks."db:clone"]
+description = "Replace the dev database with the one of another worktree; the old one goes to .tmp/db/backups: mise run db:clone <path>"
+run = "scripts/db.sh clone"
+
+[tasks."db:reset"]
+description = "Replace the dev database with an empty one; the old one goes to .tmp/db/backups"
+run = "scripts/db.sh reset"
 
 [tasks."db:gc"]
-description = "Remove abandoned test servers and the kept test servers of this worktree"
+description = "Run the database clean-up now, and remove the kept test servers of this worktree"
 run = "scripts/db.sh gc"
 
 [tasks.format]
