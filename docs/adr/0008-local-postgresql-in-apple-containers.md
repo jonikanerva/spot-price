@@ -28,7 +28,10 @@ away without a manual step.
    database names, the port range, TLS, and the project commands.
 3. Each worktree has one dev server with a volume named by the major
    version. The commands that need it start it; the last one stops it at
-   exit. `db:start` keeps it running until `db:stop`.
+   exit. `db:start` keeps it running until `db:stop`. A stop removes the
+   container and keeps the volume: a stopped container keeps a copy of the
+   image (about 750 MB). Added on 2026-11-15 after the owner saw the disk
+   use of stopped containers.
 4. Each independent test run gets a new test server on tmpfs with fsync
    off. `verify` shares one server over its steps.
 5. Every command that starts a server first removes the test servers of

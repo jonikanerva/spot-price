@@ -284,7 +284,9 @@ commands of this project: the names, the port range, the service address of
   defaults. A command that needs it (`dev`, `db:psql`, `db:dump`,
   `db:restore`, `db:clone`, `db:reset`) starts it, and the last such command
   of the worktree stops it at exit. `db:start` keeps it running until
-  `db:stop`. The data stays in the volume. A volume of another major version
+  `db:stop`. The data stays in the volume. A stop removes the container, because a stopped container keeps a copy of the image (about 750 MB). The data stays in the volume, and the next start creates the container again on a new port. The clean-up also removes stopped dev containers, for example of an earlier version of the script.
+  `db:clone` dumps the source worktree through the same rules: it starts the
+  source server when needed and stops it again. A volume of another major version
   stays, and the new major version gets a new volume; move data with
   `db:dump` and `db:restore`. A volume without the `-pg<major>` suffix comes
   from the first version of the script and holds major version 18. `dev`
