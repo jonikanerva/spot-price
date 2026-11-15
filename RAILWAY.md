@@ -28,12 +28,16 @@ Before the merge of a release that adds a migration, or that changes the
 database connection, `BETTER_AUTH_URL`, or the start command, run these
 checks read-only against production (`STACK.md → Release procedure`):
 
+`psql` runs in a throw-away container of the pinned image; the Mac has no
+`psql`:
+
 ```bash
-PGOPTIONS='-c default_transaction_read_only=on' \
-  psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/schema-snapshot.sql \
+pgc() { container run --rm --interactive --progress none \
+  --env PGOPTIONS='-c default_transaction_read_only=on' \
+  "$(mise env --json | jq -r .SPOT_PRICE_PG_IMAGE)" psql "$@"; }
+pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/schema-snapshot.sql \
   | diff crates/server/tests/fixtures/schema-snapshot.txt -
-PGOPTIONS='-c default_transaction_read_only=on' \
-  psql "$DATABASE_PUBLIC_URL" -X -q -A -t -f scripts/release-precheck.sql
+pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/release-precheck.sql
 ```
 
 - The snapshot differs only by the Rust migrations that production already

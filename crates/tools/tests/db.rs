@@ -1,6 +1,6 @@
 //! The `--db` reads against PostgreSQL. `DATABASE_URL` must point to an
 //! isolated server where the test user can create databases;
-//! `scripts/test-db.sh start` starts one. Each test gets a fresh database
+//! `mise run test` starts one. Each test gets a fresh database
 //! with the workspace migrations.
 
 #[cfg(test)]

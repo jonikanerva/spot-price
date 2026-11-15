@@ -1,29 +1,43 @@
 // The browser journeys of `mise run e2e`.
 //
-// One server runs the release binary `target/release/spot-price serve`: the
+// One server runs a copy of the release binary (`spot-price serve`): the
 // production router, middleware, session rules, and jobs. `mise run e2e`
-// builds the binary, creates the database of `E2E_DATABASE_URL` empty on the
-// isolated test server, migrates it, and seeds it with e2e/seed.sql. Run the
-// journeys only through that task: without the seed, the start-up price
-// fetch would call Nord Pool.
+// builds the binary, copies it to the run directory, creates the database of
+// `E2E_DATABASE_URL` empty on the test server of the run, migrates it, and
+// seeds it with e2e/seed.sql. Run the journeys only through that task:
+// without the seed, the start-up price fetch would call Nord Pool.
 import { defineConfig } from "@playwright/test";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const SERVER = path.join(ROOT, "target/release/spot-price");
-const PORT = 3100;
+// `scripts/db.sh e2e` sets these values for each run, so two runs never
+// share a server port, a database, a binary, or an output directory.
+const required = (name: string): string => {
+  const value = process.env[name] ?? "";
+  if (value === "") {
+    throw new Error(
+      `${name} is not set; run the journeys with \`mise run e2e\`.`,
+    );
+  }
+  return value;
+};
+const SERVER = required("E2E_SERVER");
+const PORT = Number(required("E2E_PORT"));
+const OUTPUT_DIR = required("E2E_OUTPUT_DIR");
 // The server compares the `Origin` header of a state change byte for byte
 // with the origin of BETTER_AUTH_URL, so both use this exact value.
 const BASE_URL = `http://127.0.0.1:${String(PORT)}`;
 
-// The journeys reset and fill this database. Only a database of the isolated
-// test server of scripts/test-db.sh is accepted.
-const ISOLATED_SERVER = "postgres://postgres@127.0.0.1:55436/";
-const DATABASE_URL = process.env["E2E_DATABASE_URL"] ?? "";
-if (!DATABASE_URL.startsWith(ISOLATED_SERVER)) {
+// The journeys reset and fill this database. Only a database on the local
+// test server of this run is accepted.
+const DATABASE_URL = required("E2E_DATABASE_URL");
+const TEST_SERVER = required("SPOT_PRICE_DB_CONTAINER");
+if (
+  !/^postgres:\/\/postgres:[0-9a-f]+@127\.0\.0\.1:\d+\/spot_price_e2e$/.test(
+    DATABASE_URL,
+  ) ||
+  !TEST_SERVER.startsWith("spot-price-test-")
+) {
   throw new Error(
-    `E2E_DATABASE_URL must name a database on ${ISOLATED_SERVER}; run the journeys with \`mise run e2e\`.`,
+    "E2E_DATABASE_URL must name spot_price_e2e on a local test server; run the journeys with `mise run e2e`.",
   );
 }
 
@@ -34,6 +48,7 @@ const DEAD_PROXY = "http://127.0.0.1:9";
 
 export default defineConfig({
   testDir: "./e2e",
+  outputDir: OUTPUT_DIR,
   forbidOnly: true,
   timeout: 30_000,
   // A failure is investigated, never retried away (DOCTRINE.md P6).
