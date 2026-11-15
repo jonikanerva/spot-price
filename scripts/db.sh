@@ -321,7 +321,7 @@ ready_inside() { # $1 = name
 # Wait until the final server accepts TCP connections in the container and
 # the published port answers on the host. The image runs a temporary server
 # without TCP during the first initialization; it does not count.
-wait_ready() { # $1 = name, $2 = port
+ready_within() { # $1 = name, $2 = port; true when ready within 60 s
   local i
   for i in $(seq 1 240); do
     if ready_inside "$1" && host_answers "$2"; then
@@ -329,6 +329,11 @@ wait_ready() { # $1 = name, $2 = port
     fi
     sleep 0.25
   done
+  return 1
+}
+
+wait_ready() { # $1 = name, $2 = port
+  ready_within "$1" "$2" && return 0
   container logs "$1" >&2 2>/dev/null || true
   die "server $1 did not become ready in 60 s"
 }
@@ -441,13 +446,14 @@ dev_ensure_locked() {
     remove_server "$DEV_NAME"
     line=""
   fi
-  if [ "$state" = running ] && ! host_answers "$port"; then
+  if [ "$state" = running ] && ! host_answers "$port" &&
+    { ready_inside "$DEV_NAME" || ! ready_within "$DEV_NAME" "$port"; }; then
     # The container runs, but PostgreSQL does not answer through the
     # published port: the port of an older container after a change of the
-    # container network, or a PostgreSQL that stopped inside a running
-    # container. Every start holds this lock and waits until the server is
-    # ready, so no start is in progress. Restart the container; the data
-    # stays in the volume.
+    # container network (PostgreSQL is ready inside), or a PostgreSQL that
+    # is not ready inside for 60 s more. The wait protects a slow first
+    # initialization whose earlier start gave up after its own 60 s. Restart
+    # the container; the data stays in the volume.
     say "$DEV_NAME runs but does not answer; restarting the container"
     container stop "$DEV_NAME" >/dev/null 2>&1 || true
     state=stopped
