@@ -596,8 +596,13 @@ dev_is_empty() {
   [ "$count" = "0" ]
 }
 
+# Explicit returns: a caller in an `||` or `if` context turns `set -e` off
+# inside this function.
 dump_to() { # $1 = container, $2 = file
-  container exec "$1" pg_dump --username=postgres --format=custom --dbname="$DB_DEV_DATABASE" >"$2.partial"
+  container exec "$1" pg_dump --username=postgres --format=custom --dbname="$DB_DEV_DATABASE" >"$2.partial" || {
+    rm -f "$2.partial"
+    return 1
+  }
   mv "$2.partial" "$2"
 }
 

@@ -328,8 +328,9 @@ commands of this project: the names, the port range, the service address of
     when git no longer lists the worktree and the parent directory still
     exists. This deletes the dev data of that worktree. Move a worktree only
     with its data: `db:dump` before, `db:restore` after.
-    `SPOT_PRICE_DB_KEEP=failed` (or `always`) keeps the server of a failed run
-    and writes its log to `.tmp/db/logs`; `db:gc` removes it.
+- **Keep a failed run:** `SPOT_PRICE_DB_KEEP=failed` (or `always`) keeps the
+  server of a failed run and writes its log to `.tmp/db/logs`; `db:gc`
+  removes it.
 - **E2E files:** each run uses `.tmp/e2e/<test server>/` for the binary copy
   and the Playwright output, and a free service port. A failed run keeps the
   directory. The release build and the copy hold a worktree lock. A manual
