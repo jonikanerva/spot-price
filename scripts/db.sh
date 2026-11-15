@@ -441,10 +441,14 @@ dev_ensure_locked() {
     remove_server "$DEV_NAME"
     line=""
   fi
-  if [ "$state" = running ] && ! host_answers "$port" && ready_inside "$DEV_NAME"; then
-    # The server runs, but its published port does not answer: restart the
-    # container. The data stays in the volume.
-    say "the published port of $DEV_NAME does not answer; restarting the container"
+  if [ "$state" = running ] && ! host_answers "$port"; then
+    # The container runs, but PostgreSQL does not answer through the
+    # published port: the port of an older container after a change of the
+    # container network, or a PostgreSQL that stopped inside a running
+    # container. Every start holds this lock and waits until the server is
+    # ready, so no start is in progress. Restart the container; the data
+    # stays in the volume.
+    say "$DEV_NAME runs but does not answer; restarting the container"
     container stop "$DEV_NAME" >/dev/null 2>&1 || true
     state=stopped
   fi
