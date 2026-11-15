@@ -116,9 +116,12 @@ env = { SQLX_OFFLINE = "true" }
 run = "cargo build --release --locked --package spot-price-server"
 
 [tasks.test]
-description = "Nextest and the doc tests against a new test server"
+description = "The lock test of scripts/db.sh, then nextest and the doc tests against a new test server"
 env = { SQLX_OFFLINE = "true" }
-run = "scripts/db.sh with-test-db -- sh -c 'cargo nextest run --workspace --locked --no-tests=fail && cargo test --doc --workspace --locked'"
+run = [
+  "scripts/db-lock-test.sh",
+  "scripts/db.sh with-test-db -- sh -c 'cargo nextest run --workspace --locked --no-tests=fail && cargo test --doc --workspace --locked'",
+]
 
 [tasks."contract:check"]
 description = "Fail when contract/openapi.json differs from the Rust HTTP types; change no file"

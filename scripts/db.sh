@@ -148,30 +148,49 @@ owner_of() { # $1 = pid
 
 owner_alive() { # $1 = owner token
   local pid="${1%%@*}"
+  [ -n "$1" ] || return 1
   [ "$(owner_of "$pid" 2>/dev/null || true)" = "$1" ]
 }
 
 # A lock or slot directory is stale when its owner is gone, or when it has no
-# owner file a minute after its creation (a crash between mkdir and the write
-# of the owner).
+# owner a minute after its creation (a crash between mkdir and the write of
+# the owner). A missing directory is not stale. The owner can unlock, and
+# another process can lock, between the read and the check: the owner file
+# must still name the gone owner.
 dir_stale() { # $1 = directory
-  if [ -f "$1/owner" ]; then
-    ! owner_alive "$(cat "$1/owner" 2>/dev/null)"
+  local owner
+  owner="$(cat "$1/owner" 2>/dev/null || true)"
+  if [ -n "$owner" ]; then
+    ! owner_alive "$owner" && [ "$(cat "$1/owner" 2>/dev/null || true)" = "$owner" ]
   else
     [ -n "$(find "$1" -maxdepth 0 -mmin +1 2>/dev/null)" ]
   fi
 }
 
+# Remove a stale lock or slot directory. Two processes can find the same
+# stale directory. The check runs again under a kernel lock on the guard file
+# next to the directory, so a lock that another process took a moment ago
+# stays. The kernel releases the guard when its holder ends. Never remove a
+# guard file: a new guard file would not exclude the holder of the old one.
+remove_if_stale() { # $1 = directory
+  (
+    exec 9>>"$1.guard"
+    python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX)'
+    if dir_stale "$1"; then
+      rm -r -f "${1:?}"
+    fi
+  )
+}
+
 # A directory lock with owner identity (macOS has no flock(1)). A stale lock
-# is removed. Two waiters that see the same stale lock at the same moment can
-# both take it; the window is short.
+# is removed.
 lock() { # $1 = lock directory, $2 = description
   local dir="$1" waited=0 me
   me="$(owner_of $$)"
   mkdir -p "$(dirname "$dir")"
   until mkdir "$dir" 2>/dev/null; do
     if dir_stale "$dir"; then
-      rm -r -f "${dir:?}"
+      remove_if_stale "$dir"
       continue
     fi
     [ $waited -eq 0 ] && say "waiting for $2"
@@ -314,6 +333,11 @@ sys.exit(0 if s.recv(1) in (b"N", b"S") else 1)
 PY
 }
 
+# Two failed probes, 1 s apart: one slow answer under load is no failure.
+host_silent() { # $1 = port
+  ! host_answers "$1" && sleep 1 && ! host_answers "$1"
+}
+
 ready_inside() { # $1 = name
   container exec "$1" pg_isready --quiet --host=127.0.0.1 --username=postgres 2>/dev/null
 }
@@ -321,9 +345,11 @@ ready_inside() { # $1 = name
 # Wait until the final server accepts TCP connections in the container and
 # the published port answers on the host. The image runs a temporary server
 # without TCP during the first initialization; it does not count.
+# The limit is time, not a number of tries: one probe of a port that accepts
+# connections but never answers takes seconds.
 ready_within() { # $1 = name, $2 = port; true when ready within 60 s
-  local i
-  for i in $(seq 1 240); do
+  local deadline=$((SECONDS + 60))
+  while [ $SECONDS -lt $deadline ]; do
     if ready_inside "$1" && host_answers "$2"; then
       return 0
     fi
@@ -445,8 +471,9 @@ dev_ensure_locked() {
     say "replacing $DEV_NAME (PostgreSQL ${major:-18}); its volume stays"
     remove_server "$DEV_NAME"
     line=""
+    state=""
   fi
-  if [ "$state" = running ] && ! host_answers "$port" &&
+  if [ "$state" = running ] && host_silent "$port" &&
     { ready_inside "$DEV_NAME" || ! ready_within "$DEV_NAME" "$port"; }; then
     # The container runs, but PostgreSQL does not answer through the
     # published port: the port of an older container after a change of the
@@ -735,7 +762,7 @@ acquire_slot() {
         return 0
       fi
       if [ -d "$COMMON/slots/$i" ] && dir_stale "$COMMON/slots/$i"; then
-        rm -r -f "${COMMON:?}/slots/$i"
+        remove_if_stale "$COMMON/slots/$i"
       fi
     done
     [ $waited -eq 0 ] && say "waiting for a test server slot (${DB_ENV}_DB_MAX_TEST=$MAX_TEST)"
