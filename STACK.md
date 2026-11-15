@@ -95,8 +95,8 @@ STACK.md  VISION.md  DOCTRINE.md  CLAUDE.md
 
 ## 1. Language & Runtime
 
-- **Language:** Rust 1.99.1, edition 2024, pinned in `rust-toolchain.toml`
-  with rustfmt and Clippy. `rust-version = "1.99"` in the workspace; the
+- **Language:** Rust 1.100.0, edition 2024, pinned in `rust-toolchain.toml`
+  with rustfmt and Clippy. `rust-version = "1.100"` in the workspace; the
   server crate repeats it (§15, Railpack).
 - **Runtime:** a native Linux binary in the Railpack runtime image. A local
   macOS build does not validate the Linux artifact.
@@ -118,7 +118,7 @@ mise trust && mise run setup
 ```
 
 `rust-toolchain.toml` owns the Rust version. `mise.toml` owns the other
-tools: Node, pnpm, PostgreSQL 18.6 (conda package), sqlx-cli 0.9.0,
+tools: Node, pnpm, PostgreSQL 18.7 (conda package), sqlx-cli 0.9.0,
 cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
 
 ---
@@ -256,7 +256,7 @@ on the blocking pool behind a semaphore of two.
   pass.
 
 **Test database isolation.** `scripts/test-db.sh` runs the pinned PostgreSQL
-18.6 on `127.0.0.1:55436` with trust authentication and data in
+18.7 on `127.0.0.1:55436` with trust authentication and data in
 `.tmp/postgres`. The test tasks set `DATABASE_URL` to that server themselves.
 `#[sqlx::test]` creates and drops one database per test.
 
@@ -368,8 +368,8 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                              |
 | serde / serde_json           | 1.0.229 / 1.0.154  | Wire types. `float_roundtrip` parses numbers like JavaScript.                      |
 | thiserror                    | 2.0.21             | Error enums with fixed text                                                        |
-| jiff / jiff-sqlx             | 0.2.38 / 0.2.0     | Time values with the bundled tzdb, and their SQLx encoding                         |
-| croner                       | 4.0.2              | Cron schedules with Jiff types                                                     |
+| jiff / jiff-sqlx             | 0.2.43 / 0.2.2     | Time values with the bundled tzdb, and their SQLx encoding                         |
+| croner                       | 4.0.3              | Cron schedules with Jiff types                                                     |
 | sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)   |
 | reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                    |
 | futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                      |
@@ -538,8 +538,8 @@ TypeScript service, except the chart drawing. It must be usable without a pointe
 ## 12. Best practices source
 
 - [Axum 0.8](https://docs.rs/axum/0.8.9/), [tower-http 0.6](https://docs.rs/tower-http/0.6.11/), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown)
-- [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.0/), [PostgreSQL 18](https://www.postgresql.org/docs/18/)
-- [Jiff](https://docs.rs/jiff/0.2.38/), [croner 4](https://docs.rs/croner/4.0.2/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
+- [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.2/), [PostgreSQL 18](https://www.postgresql.org/docs/18/)
+- [Jiff](https://docs.rs/jiff/0.2.43/), [croner 4](https://docs.rs/croner/4.0.3/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
 - [scrypt](https://docs.rs/scrypt/0.12.0/), [ECMAScript Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)
 - Upstream contracts: Nord Pool Data Portal API, [Fingrid open data](https://data.fingrid.fi/), [OpenWeatherMap One Call 3.0](https://openweathermap.org/api/one-call-3)
 - [Railpack Rust](https://railpack.com/languages/rust/), [Railpack config file](https://railpack.com/config/file/), Railway [healthchecks](https://docs.railway.com/deployments/healthchecks)
@@ -569,7 +569,7 @@ evidence blocks merge. There is no CI.
 | P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                 | Purity inside the domain crate is review-only           |
 | P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                 | Golden files come from one TypeScript commit            |
 | P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                          | Forecast tolerance (§13)                                |
-| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | Isolated PostgreSQL 18.6; production: `postgres-ssl:18` |
+| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | Isolated PostgreSQL 18.7; production: `postgres-ssl:18` |
 | P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                     |
 | P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                             |
 | P7: release                   | Before merge: Railpack plan; owner-run schema snapshot and precheck when §15 asks for them. After release: §15 checks    | A local macOS build is not the Linux artifact           |
@@ -601,7 +601,7 @@ reserves merge (`CLAUDE.md`).
 | Item          | Value                                                                                                                                                   |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Builder       | Railpack, Rust provider (`"provider": "rust"`: the root also has `package.json`)                                                                        |
-| Toolchain     | Rust 1.99.1 from `rust-toolchain.toml`                                                                                                                  |
+| Toolchain     | Rust 1.100.0 from `rust-toolchain.toml`                                                                                                                 |
 | Build         | One command: remove the old binary, `SQLX_OFFLINE=true cargo build --release --locked --package spot-price-server`, copy it to `bin/`                   |
 | Caches        | `cargo_registry`, `cargo_git`, `cargo_target` (`"type": "locked"`: one build at a time)                                                                 |
 | Image content | `bin/spot-price` only                                                                                                                                   |
@@ -681,7 +681,7 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
    - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
      slash, no path. The `Origin` check compares it byte for byte.
 
-3. Merge. Watch the build log: the Railpack version, Rust 1.99.1, the
+3. Merge. Watch the build log: the Railpack version, Rust 1.100.0, the
    offline build, `migrations are up to date`, and a passing healthcheck.
 4. Run the post-release checks.
 
@@ -719,10 +719,10 @@ and an API key.
 
   | Component      | Production                                                                                        | Test and local                         | How to read the version                                                        |
   | -------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------ |
-  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | 18.6 (`mise.toml`, `conda:postgresql`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise.toml`. |
+  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | 18.7 (`mise.toml`, `conda:postgresql`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise.toml`. |
   | Source builder | Railpack; Railway selects the version                                                             | Not used                               | The Railway build log                                                          |
   | Runtime image  | Railpack runtime image; Railway selects the version                                               | Not used                               | The Railway build log                                                          |
-  | Rust toolchain | 1.99.1 (`rust-toolchain.toml`)                                                                    | 1.99.1                                 | `rust-toolchain.toml`                                                          |
+  | Rust toolchain | 1.100.0 (`rust-toolchain.toml`)                                                                   | 1.100.0                                | `rust-toolchain.toml`                                                          |
 
   Keep test and production PostgreSQL on the same major version (§5).
 

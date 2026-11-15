@@ -5,7 +5,7 @@ description = "Spot-price REST API, setup UI, and scheduled data fetch jobs"
 # Railpack cannot read inherited package fields in the binary crate
 # (STACK.md §15). Keep these values equal to the workspace values.
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100"
 publish = false
 license = "LicenseRef-Proprietary"
 
