@@ -15,8 +15,9 @@
 # of a live lock, X unlocks and ends, and C takes the lock before B checks X.
 # B must not remove the lock of C.
 #
-# The ps case makes ps fail. A live owner must stay alive, and its lock must
-# stay. With a working ps, the owner is gone only after it ends.
+# The ps case makes ps fail, and makes ps write a warning on stderr. A live
+# owner must stay alive, and its lock must stay. The owner is gone only after
+# it ends, also with the warning.
 set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -137,13 +138,20 @@ ps_failure() { # $1 = test directory
   PATH="$fake:$PATH" owner_alive "$token" || failed=1
   PATH="$fake:$PATH" remove_if_stale "$1/the.lock"
   [ -d "$1/the.lock" ] || failed=1
-  printf '#!/bin/sh\necho "ps: an error" >&2\nexit 1\n' >"$fake/ps"
+  # A warning of ps on stderr changes nothing. With MallocStackLogging set,
+  # macOS ps writes one.
+  printf '#!/bin/sh\necho "ps: a warning" >&2\nexec /bin/ps "$@"\n' >"$fake/ps"
   PATH="$fake:$PATH" owner_alive "$token" || failed=1
+  MallocStackLogging=1 owner_alive "$token" || failed=1
+  MallocStackLogging=1 remove_if_stale "$1/the.lock"
+  [ -d "$1/the.lock" ] || failed=1
   # With a working ps: the live owner stays, and the gone owner is gone.
   owner_alive "$token" || failed=1
   kill "$x"
   wait "$x" 2>/dev/null || true
   ! owner_alive "$token" || failed=1
+  ! PATH="$fake:$PATH" owner_alive "$token" || failed=1
+  ! MallocStackLogging=1 owner_alive "$token" || failed=1
   dir_stale "$1/the.lock" || failed=1
   return $failed
 }
