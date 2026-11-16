@@ -432,7 +432,7 @@ remove_stopped_dev() { # $1 = name, $2 = path of its worktree
   [ -d "$2/.tmp/db" ] || return 0
   if ! mkdir "$dir" 2>/dev/null; then
     dir_stale "$dir" || return 0
-    rm -r -f "${dir:?}"
+    remove_if_stale "$dir"
     mkdir "$dir" 2>/dev/null || return 0
   fi
   owner_of $$ >"$dir/owner"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Test of the locks of scripts/db.sh: two processes never hold one lock or
-# one test server slot, also when both find the same stale lock.
+# Test of the locks of scripts/db.sh: two processes never hold one lock, one
+# test server slot, or the dev lock of the clean-up, also when both find the
+# same stale lock.
 #
 # This file is the same in caltodo, mastofeed, and spot-price. It uses only a
 # temporary directory: no container and no database.
@@ -53,6 +54,20 @@ worker() { # $1 = directory, $2 = lock or slot, $3 = role a or b, $4 = pause ver
     fi
     return 0
   }
+  if [ "$LOCK_TEST_KIND" = dev ]; then
+    # remove_stopped_dev holds the dev lock while it reads the container
+    # state. The stub checks the holder there and finds no container.
+    server_line() {
+      [ "$LOCK_TEST_ROLE" = a ] && : >"$LOCK_TEST_DIR/a-holds"
+      if ! mkdir "$LOCK_TEST_DIR/holder" 2>/dev/null; then
+        echo "$LOCK_TEST_ROLE" >>"$LOCK_TEST_DIR/violations"
+      fi
+      sleep 1
+      rmdir "$LOCK_TEST_DIR/holder" 2>/dev/null || true
+    }
+    remove_stopped_dev the-dev-server "$LOCK_TEST_DIR/worktree"
+    return 0
+  fi
   if [ "$LOCK_TEST_KIND" = lock ]; then
     lock "$LOCK_TEST_DIR/the.lock" "the test lock"
   else
@@ -115,13 +130,15 @@ fi
 base="$(mktemp -d "${TMPDIR:-/tmp}/db-lock-test.XXXXXX")"
 trap 'rm -r -f "$base"' EXIT
 failed=0
-for case in lock:1 slot:1 lock:2 slot:2; do
+for case in lock:1 slot:1 dev:1 lock:2 slot:2 dev:2; do
   kind="${case%:*}"
   pause="${case#*:}"
   dir="$base/$kind-$pause"
   mkdir -p "$dir"
   if [ "$kind" = lock ]; then
     stale="$dir/the.lock"
+  elif [ "$kind" = dev ]; then
+    stale="$dir/worktree/.tmp/db/dev.lock"
   else
     stale="$dir/slots/1"
   fi
