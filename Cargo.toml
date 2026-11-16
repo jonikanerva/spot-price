@@ -20,7 +20,7 @@ spot-price-domain = { path = "crates/domain", version = "=0.1.0" }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
 croner = { version = "=4.0.3", default-features = false, features = ["jiff"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
-jiff = { version = "=0.2.44", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
+jiff = { version = "=0.2.45", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
 jiff-sqlx = { version = "=0.2.2", default-features = false, features = ["postgres"] }
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "gzip", "query"] }
 serde = { version = "=1.0.229", features = ["derive"] }
