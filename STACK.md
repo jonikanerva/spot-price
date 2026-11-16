@@ -71,7 +71,7 @@ migrations/            # SQLx migrations
 .sqlx/                 # committed SQLx query metadata
 contract/openapi.json  # exported OpenAPI 3.1 document
 e2e/                   # Playwright journeys against the Rust binary
-scripts/               # db.sh, smoke-local.sh, schema-snapshot.sql, golden generators (history only)
+scripts/               # db.sh, db-lock-test.sh, smoke-local.sh, schema-snapshot.sql, golden generators (history only)
 docs/adr/              # decisions
 Cargo.toml  Cargo.lock  rust-toolchain.toml  clippy.toml  deny.toml  mise.toml
 railpack.json  .gitleaks.toml  package.json  pnpm-lock.yaml
@@ -239,8 +239,10 @@ on the blocking pool behind a semaphore of two.
   with `SQLX_OFFLINE=true`, and `tsc` on the e2e TypeScript (`e2e/tsconfig.json`).
 - **build:** `cargo build --release --locked --package spot-price-server`
   with `SQLX_OFFLINE=true`.
-- **test:** starts a new test server, then `cargo nextest run
---workspace --locked` and `cargo test --doc --workspace --locked`.
+- **test:** runs `scripts/db-lock-test.sh` (the lock test of
+  `scripts/db.sh`; a temporary directory only, no container). Then it starts
+  a new test server and runs `cargo nextest run --workspace --locked` and
+  `cargo test --doc --workspace --locked`.
 - **e2e:** the Playwright journeys in `e2e/` against a copy of the release
   binary, on a new test server.
 - **verify:** format-check, lint, `sqlx:check`, `contract:check`,
@@ -273,8 +275,8 @@ themselves, so a developer or an agent runs only `dev`, `test`, `e2e`,
 `sqlx:*`, or `verify`. Agents and people never start, stop, or remove the
 containers or volumes by hand.
 
-`scripts/db.sh` is the same file in caltodo, mastofeed, and spot-price; keep
-it byte-identical. `scripts/db-project.sh` holds the settings and the
+`scripts/db.sh` and `scripts/db-lock-test.sh` are the same files in caltodo,
+mastofeed, and spot-price; keep them byte-identical. `scripts/db-project.sh` holds the settings and the
 commands of this project: the names, the port range, the service address of
 `dev`, and `e2e`.
 
@@ -320,6 +322,9 @@ commands of this project: the names, the port range, the service address of
   `SPOT_PRICE_DB_MEMORY`). At most 4 test servers run at the same time over
   all worktrees of this repository (`SPOT_PRICE_DB_MAX_TEST`); a run waits
   for a free slot, at most 2 hours. The locks wait at most 2 hours too.
+  A lock or a slot is a directory with an owner file. A process removes a
+  stale one only under a kernel lock (`flock`) on its `.guard` file, after
+  a second check, so two processes never hold one lock.
 - **Clean-up:** a run removes its own test server on exit, also on Ctrl-C and
   on a SIGTERM to the script: the command runs in its own process group, and
   the clean-up stops it first. Every command that starts a server, and
@@ -479,7 +484,7 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | tower (dev)                  | 0.5.3              | `ServiceExt::oneshot` in router tests                                                                        |
 | serde / serde_json           | 1.0.229 / 1.0.154  | Wire types. `float_roundtrip` parses numbers like JavaScript.                                                |
 | thiserror                    | 2.0.21             | Error enums with fixed text                                                                                  |
-| jiff / jiff-sqlx             | 0.2.43 / 0.2.2     | Time values with the bundled tzdb, and their SQLx encoding                                                   |
+| jiff / jiff-sqlx             | 0.2.44 / 0.2.2     | Time values with the bundled tzdb, and their SQLx encoding                                                   |
 | croner                       | 4.0.3              | Cron schedules with Jiff types                                                                               |
 | sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)                             |
 | reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                                              |
@@ -650,7 +655,7 @@ TypeScript service, except the chart drawing. It must be usable without a pointe
 
 - [Axum 0.8](https://docs.rs/axum/0.8.9/), [tower-http 0.7](https://docs.rs/tower-http/0.7.1/), [Tokio shutdown](https://tokio.rs/tokio/topics/shutdown)
 - [SQLx 0.9](https://docs.rs/sqlx/0.9.0/), [jiff-sqlx](https://docs.rs/jiff-sqlx/0.2.2/), [PostgreSQL 18](https://www.postgresql.org/docs/18/)
-- [Jiff](https://docs.rs/jiff/0.2.43/), [croner 4](https://docs.rs/croner/4.0.3/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
+- [Jiff](https://docs.rs/jiff/0.2.44/), [croner 4](https://docs.rs/croner/4.0.3/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
 - [scrypt](https://docs.rs/scrypt/0.12.0/), [ECMAScript Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)
 - Upstream contracts: Nord Pool Data Portal API, [Fingrid open data](https://data.fingrid.fi/), [OpenWeatherMap One Call 3.0](https://openweathermap.org/api/one-call-3)
 - [Railpack Rust](https://railpack.com/languages/rust/), [Railpack config file](https://railpack.com/config/file/), Railway [healthchecks](https://docs.railway.com/deployments/healthchecks)
