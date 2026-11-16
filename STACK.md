@@ -24,8 +24,10 @@ grants no authority beyond `CLAUDE.md`.
   contract settings, and API keys (`VISION.md → Persistence and Privacy
 Posture`). Price and grid data are public and can be fetched again. Most
   failures are recoverable by a revert PR or a fix PR within minutes. The
-  database has no backup (§5), so a destructive migration or a database
-  loss is the main irreversible risk.
+  database has no backup. The only restore path is the Neon history window
+  of 6 hours (§5), so a destructive migration or a database loss is the
+  main irreversible risk. Fingrid forecast vintages and weather forecasts
+  cannot be fetched again.
 - **Change risk:** assess each change against that rationale. Changes to
   price math, the cheapest-window answer, the v1 wire format, sign-in,
   sessions, API keys, migrations, retention, or the release configuration
@@ -260,6 +262,9 @@ on the blocking pool behind a semaphore of two.
   `cargo update --dry-run --verbose`, `pnpm outdated --recursive`, and
   `mise outdated --bump`. Each crate pin in `Cargo.toml` is exact, so also
   compare each direct crate with its latest stable release on crates.io.
+  Read the PostgreSQL major version of production with
+  `neon projects get autumn-dream-98820540` (field `pg_version`). Neon
+  applies the minor updates.
   Compare `rust-toolchain.toml` with the latest stable Rust release. Compare
   `SPOT_PRICE_PG_IMAGE` with the latest `postgres:18.x` tag on Docker Hub.
   Compare
@@ -392,22 +397,34 @@ that is a missing environment, not a pass.
 
 ## 4. Performance budgets
 
-| Budget      | Adopted value and conditions                                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------- |
-| API request | p99 100 ms, p50 30 ms per route, excluding upstream calls (unchanged from the TypeScript service) |
-| Cold start  | Ready within 2 s, excluding migrations                                                            |
-| Memory      | Container limit 375 MB (Railway setting). scrypt uses at most 64 MiB (two hashes at 32 MiB).      |
+| Budget     | Adopted value and conditions                                                                 |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| Cold start | Ready within 2 s, excluding migrations                                                       |
+| Memory     | Container limit 375 MB (Railway setting). scrypt uses at most 64 MiB (two hashes at 32 MiB). |
 
 The PR of the port records the measurements. Do not raise a budget to fit a
 result.
+
+API requests have no latency budget. The owner decided this on 2026-11-16
+(#188): the only callers are the owner's home automations, which poll a
+few times an hour. The database on Neon adds latency (§5). The first
+request after a compute suspend waits for the compute start and a new TLS
+connection.
 
 ---
 
 ## 5. Persistence shape
 
-- **Storage:** Railway PostgreSQL 18 (image `postgres-ssl:18`). The schema
-  is the schema of the TypeScript migrations `001`–`007` plus
-  `app_sessions`.
+- **Storage:** PostgreSQL 18 in the Neon project `spot-price` (project id
+  `autumn-dream-98820540`, region `aws-eu-central-1`, branch `production`,
+  database `neondb`, role `neondb_owner`), on the Neon Free plan (owner
+  decision 2026-11-16, docs/adr/0009). The service stays on Railway. Until
+  2026-11-16 the database was the Railway service `Postgres spot-price`.
+  That service stays unchanged as the rollback database until the owner
+  removes it (§15). The schema is the schema of the TypeScript migrations
+  `001`–`007` plus `app_sessions`. The schema `public` also holds the
+  extension `pg_stat_statements`; the copy brought it from the Railway
+  database.
 - **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
   is idempotent and changes nothing on the production schema; the old ledger
   `_migrations` stays. `0002_app_sessions.sql` adds the session table.
@@ -421,22 +438,63 @@ result.
   TypeScript revert path until the owner ends it (docs/adr/0001).
 - **Queries:** SQLx `query!` macros with committed `.sqlx` metadata. The
   offline tools use runtime queries with bound parameters.
-- **Connection:** over the Railway private network. Pool of 10 connections,
-  acquire timeout 10 s, `statement_timeout` 30 s. The pool keeps no idle
-  connection open (`min_connections` 0). A pool that opens connections
-  again keeps a scale-to-zero database compute active all the time (#188).
-  The cost is a new connection on the request path: the first request
-  after 10 idle minutes opens one or two connections, about 100 ms each in
-  production, and took 110–250 ms on Railway PostgreSQL (#150). The other
-  pool options are the SQLx defaults: `idle_timeout` 10 min,
-  `max_lifetime` 30 min, and a ping before each acquire.
-- **TLS:** SQLx with rustls (`tls-rustls-aws-lc-rs`). With the default
-  `sslmode=prefer`, SQLx asks for TLS. It uses plain text only when the
-  server declines TLS. When the server accepts, a failed handshake fails
-  the connection; there is no fallback to plain text. `prefer` and `require` do not verify the certificate, so
-  the self-signed certificate of the Railway image works. `verify-ca` and
-  `verify-full` reject that certificate. `migrate` logs a TLS failure as
-  `migrate_tls`.
+- **Connection:** `DATABASE_URL` uses the direct Neon endpoint with
+  `sslmode=verify-full`, over the public internet from `europe-west4` to
+  `aws-eu-central-1`. Do not use the Neon pooler endpoint (host name with
+  `-pooler`): the pooler runs PgBouncer in transaction mode, the SQLx
+  migrator holds a session advisory lock, and the pool sends
+  `statement_timeout` as a startup parameter. Pool of 10 connections,
+  acquire timeout 10 s, `statement_timeout` 30 s, `min_connections` 0. The
+  other pool options are the SQLx defaults: `idle_timeout` 10 min,
+  `max_lifetime` 30 min, and a ping before each acquire. An unused
+  connection closes 10–20 min after its last use.
+- **Compute time:** an idle connection does not keep the Neon compute
+  active. The compute suspends after 5 minutes without queries and closes
+  the connections. SQLx replaces a closed connection at the next acquire.
+  The rehearsal of 2026-11-16 showed the suspend with `serve` running. The
+  database work comes at HH:00 (the jobs, the forecast recompute, and Home
+  Assistant) and at HH:30 (Home Assistant), and every 10 minutes in the
+  price burst of 12:00–13:59 Europe/Oslo. The estimate is about 43
+  CU-hours a month at 0.25 CU. A `min_connections` above 0, a new periodic
+  query, or an uptime check of `/health` keeps the compute active longer
+  (0.25 CU for 730 hours is about 182 CU-hours) and needs a new estimate.
+- **Neon Free plan limits** (read 2026-11-16): 100 CU-hours a month, 1 GB
+  of storage, and a history window of 6 hours with up to 1 GB of changes.
+  The compute suspends after 5 minutes without queries; the Free plan
+  cannot disable this. When the project uses all CU-hours of a month, Neon
+  suspends the compute until the next month, and every database request
+  fails. At the storage limit, writes fail and reads continue: the price
+  job then stores no new prices. Neon does not upgrade the plan
+  automatically.
+- **TLS:** SQLx with rustls (`tls-rustls-aws-lc-rs`) and
+  `sslmode=verify-full`. SQLx checks the Neon certificate against its
+  bundled roots and checks the host name. Neon rejects a connection
+  without TLS. A libpq client (`psql`, `pg_dump`, `pg_restore`) needs
+  `sslmode=verify-full&sslrootcert=system`. `migrate` logs a TLS failure
+  as `migrate_tls`.
+- **Data move** (the move to Neon on 2026-11-16, a PostgreSQL major
+  upgrade, or a move to another database host): the owner decides it.
+  Issue #188 records the full procedure and its evidence. In short:
+  1. Pass the connection strings through `railway run` and
+     `neon connection-string`, never through a file, a log, or a chat. Use
+     the client of the newer major version, for example
+     `mise x conda:postgresql@18.7 -- pg_dump`.
+  2. Rehearse first. Copy with `pg_dump -Fc -O -x --lock-wait-timeout=20s`
+     and `pg_restore -O -x --single-transaction` into a private temporary
+     directory. Compare the checksum of every table on both sides. The
+     rehearsal of 2026-11-16 took about 8 minutes.
+  3. Do the move in one hour, from HH:06 to HH:55. The HH:00 jobs then
+     finish before the copy, and the next HH:00 jobs run after the switch,
+     so no vintage or weather row is lost. A price row that reaches the
+     source after the copy is not lost: the new deployment fetches the
+     prices again at start. The move of 2026-11-16 ran from 11:17 to
+     11:28 UTC.
+  4. Copy again with `--clean --if-exists`, compare the checksums, and
+     delete the dump file. It holds the account and the API key.
+  5. Change `DATABASE_URL`. When the previous deployment is `REMOVED`, read
+     the source checksums again. Only `api_keys.last_used_at` can differ.
+     Another difference is a lost write: stop, and let the owner decide.
+     Never run a second `--clean` copy over a target that the service uses.
 - **`prices`:** upsert by `(delivery_start, area)`. Kept; no pruning.
 - **`fingrid_actuals`:** upsert-latest by `(dataset_id, start_time)` with a
   change guard: `DO UPDATE … WHERE (end_time, value) IS DISTINCT FROM
@@ -450,12 +508,14 @@ result.
   `issued_at` beyond `VINTAGE_RETENTION_DAYS` (730), for every dataset,
   after a successful first Fingrid request (§2.3). The served forecast reads
   only 245 and 165; 166 and 248 are archived for offline evaluation. At 730
-  days the table holds about 3.3–4.3 GB. Reassess the retention when the
-  database reaches 4 GB of the 5 GB Hobby volume limit (#168). **Live
+  days the table holds about 3.0–4.3 GB. The database grows about 5 MB a
+  day and passes the 1 GB of the Neon Free plan near March 2027. The owner
+  keeps this retention and changes to a paid Neon plan before the database
+  reaches 850 MB (owner decision 2026-11-16, #168, docs/adr/0009). **Live
   read shape (do not change):** the latest-per-target read is a LATERAL
   skip-scan on `idx_fingrid_forecasts_target_issued`, not `DISTINCT ON`;
-  `DISTINCT ON` sorts every in-range issuance to disk and breaks the §4
-  budget.
+  `DISTINCT ON` sorts every in-range issuance to disk and makes the
+  forecast read take seconds.
 - **`weather_forecasts`, `weather_daily_forecasts`:** append-only per
   issuance; never collapse to the latest issuance. `target_date` is the UTC
   calendar date of `dt`. Pruned beyond `WEATHER_RETENTION_DAYS` (400). The
@@ -465,12 +525,13 @@ result.
 - **Accounts:** `"user"`, `"account"`, `usernames`, `user_settings`,
   `api_keys` (plaintext keys, `VISION.md`). The Better Auth `"session"` and
   `"verification"` tables stay untouched for the revert path.
-- **Recovery:** none for the database. The owner's Railway Hobby plan has
-  no database backups, so there is no restore path. The owner accepts the
-  data-loss risk (2026-10-19). After a loss, the jobs fetch the public price
-  and grid data again within upstream limits. The account, the contract
-  settings, and the API key are lost; the owner creates them again, and the
-  home automations need the new key.
+- **Recovery:** the Neon history window of 6 hours gives a point-in-time
+  restore of the branch in the Neon Console. Older data has no restore
+  path. The owner accepts the data-loss risk (2026-10-19). After a loss,
+  the jobs fetch the public price and grid actuals again within upstream
+  limits. The Fingrid forecast vintages and the weather forecasts are lost.
+  The account, the contract settings, and the API key are lost; the owner
+  creates them again, and the home automations need the new key.
 
 ---
 
@@ -661,6 +722,7 @@ TypeScript service, except the chart drawing. It must be usable without a pointe
 - [Jiff](https://docs.rs/jiff/0.2.45/), [croner 4](https://docs.rs/croner/4.0.3/), [reqwest 0.13](https://docs.rs/reqwest/0.13.5/), [utoipa](https://docs.rs/utoipa/6.0.0/)
 - [scrypt](https://docs.rs/scrypt/0.12.0/), [ECMAScript Number::toString](https://tc39.es/ecma262/#sec-numeric-types-number-tostring)
 - Upstream contracts: Nord Pool Data Portal API, [Fingrid open data](https://data.fingrid.fi/), [OpenWeatherMap One Call 3.0](https://openweathermap.org/api/one-call-3)
+- Neon: [plans](https://neon.com/docs/introduction/plans), [compute lifecycle](https://neon.com/docs/introduction/compute-lifecycle), [connection pooling](https://neon.com/docs/connect/connection-pooling), [history window](https://neon.com/docs/postgres/backup-restore/history-window)
 - [Railpack Rust](https://railpack.com/languages/rust/), [Railpack config file](https://railpack.com/config/file/), Railway [healthchecks](https://docs.railway.com/deployments/healthchecks)
 - [WCAG 2.2](https://www.w3.org/TR/WCAG22/), [Playwright](https://playwright.dev/)
 
@@ -682,17 +744,17 @@ Run the required tests and the full `mise run verify` locally on the version
 to be merged against the current base. Missing or failed mandatory local
 evidence blocks merge. There is no CI.
 
-| Doctrine / applicability      | Required evidence                                                                                                        | Environment / gap                                                            |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| P1, P6: each task             | Criteria, failures, assumptions, check mapping in the PR                                                                 | Lead records; independent review for material changes                        |
-| P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                 | Purity inside the domain crate is review-only                                |
-| P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                 | Golden files come from one TypeScript commit                                 |
-| P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                          | Forecast tolerance (§13)                                                     |
-| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | PostgreSQL 18.7 test server (Apple container); production: `postgres-ssl:18` |
-| P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                                          |
-| P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                                                  |
-| P7: release                   | Before merge: Railpack plan; owner-run schema snapshot and precheck when §15 asks for them. After release: §15 checks    | A local macOS build is not the Linux artifact                                |
-| P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                             | Separate reviewer context                                                    |
+| Doctrine / applicability      | Required evidence                                                                                                        | Environment / gap                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| P1, P6: each task             | Criteria, failures, assumptions, check mapping in the PR                                                                 | Lead records; independent review for material changes                                                       |
+| P2–P4: types and dependencies | Clippy, cargo-deny, cargo-shear; dependency reasons (§6); crate boundary                                                 | Purity inside the domain crate is review-only                                                               |
+| P3, P5: API contract          | HTTP golden replay; `contract:check`; OpenAPI comparison                                                                 | Golden files come from one TypeScript commit                                                                |
+| P5: data meaning              | Domain golden files (price math, local days, queries, forecast)                                                          | Forecast tolerance (§13)                                                                                    |
+| P5–P7: storage                | `sqlx:check`; migration tests (TS schema, empty, repeat, partial ledger, failure kinds); snapshot; precheck; store tests | PostgreSQL 18.7 test server (Apple container); production: PostgreSQL 18 on Neon with `sslmode=verify-full` |
+| P3, P7: security              | Gitleaks; cargo-deny; `pnpm audit`; password vector tests; session expiry, renewal, sign-out, and Origin tests           | Scanners do not prove authorization                                                                         |
+| P5–P7: browser                | Playwright journeys against the Rust binary                                                                              | Chromium only; no axe check                                                                                 |
+| P7: release                   | Before merge: Railpack plan; owner-run schema snapshot and precheck when §15 asks for them. After release: §15 checks    | A local macOS build is not the Linux artifact                                                               |
+| P8–P9: material change        | Independent review with the reviewer's own `mise run verify`                                                             | Separate reviewer context                                                                                   |
 
 ### Golden files
 
@@ -757,7 +819,10 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 
 ### Runtime variables (names only)
 
-- Required in production: `DATABASE_URL`, `BETTER_AUTH_URL` (the public
+- Required in production: `DATABASE_URL` (the direct Neon URL with
+  `?sslmode=verify-full`, from `neon connection-string`; §5. Set it with
+  `railway variables --set` from the shell, so the value never appears in
+  a log or a chat), `BETTER_AUTH_URL` (the public
   origin; it sets the cookie security and the `Origin` check),
   `BETTER_AUTH_SECRET` (unused by the Rust service; kept for the revert
   path), `NODE_ENV=production`.
@@ -773,32 +838,30 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 2. Before the merge of a release that adds a migration, or that changes the
    database connection, `BETTER_AUTH_URL`, or the start command, the owner
    checks production read-only:
-   - Run both scripts with the public database URL. `psql` runs in a
-     throw-away container of the pinned image; the Mac has no `psql`:
+   - Run both scripts with the Neon URL. The Mac has no `psql`; the
+     conda client of mise is the client. `PGOPTIONS` makes the session
+     read-only:
 
      ```bash
-     pgc() { container run --rm --interactive --progress none \
-       --env PGOPTIONS='-c default_transaction_read_only=on' \
-       "$(mise env --json | jq -r .SPOT_PRICE_PG_IMAGE)" psql "$@"; }
-     pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/schema-snapshot.sql \
+     NEON="$(neon connection-string --project-id autumn-dream-98820540 \
+       --database-name neondb --role-name neondb_owner | sed 's/?.*$//')?sslmode=verify-full&sslrootcert=system"
+     pgc() { PGOPTIONS='-c default_transaction_read_only=on' \
+       mise x conda:postgresql@18.7 -- psql "$@"; }
+     pgc "$NEON" -X -q -A -t -f - <scripts/schema-snapshot.sql \
        | diff crates/server/tests/fixtures/schema-snapshot.txt -
-     pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/release-precheck.sql
+     pgc "$NEON" -X -q -A -t -f - <scripts/release-precheck.sql
      ```
 
    - The snapshot differs only by the Rust migrations that production
-     already has. Through migration 3, that is the three indexes that
-     migration 3 drops (§5). The precheck prints
+     already has, and by the objects of the extension `pg_stat_statements`.
+     Through migration 3, the migrations add `app_sessions` and drop three
+     indexes (§5). The precheck prints
      `typescript_migrations|1,2,3,4,5,6,7`, the server version, and `0` for
      each `user_settings_invalid_*` count. A non-zero count is a user for
      whom the Rust service answers 500. It blocks the merge until the owner
      decides how to correct the row.
-   - `DATABASE_URL` of the service has no `sslmode`, or `sslmode=prefer` or
-     `sslmode=disable` (§5). The service has no `PGSSLMODE` variable, or it
-     is `prefer` or `disable`: SQLx reads it when the URL has no `sslmode`.
-   - The server certificate is version 3. SQLx with rustls rejects a
-     version 1 certificate, and `psql` does not show the difference:
-     `openssl s_client -starttls postgres -connect <public host>:<port>
-</dev/null 2>/dev/null | openssl x509 -noout -text | grep Version`.
+   - `DATABASE_URL` of the service uses the direct Neon endpoint (no
+     `-pooler` in the host name) with `sslmode=verify-full` (§5).
    - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
      slash, no path. The `Origin` check compares it byte for byte.
 
@@ -832,18 +895,26 @@ and an API key.
   Fingrid run. That deletion cannot be undone. Sessions created
   by the Rust service end at a revert; users sign in again. `_sqlx_migrations` and `app_sessions` stay and are
   harmless.
-- **Database loss:** no backup and no restore path (§5).
+- **Database:** the Railway service `Postgres spot-price` holds the data of
+  2026-11-16 and stays unchanged until the owner removes it. A switch
+  back sets `DATABASE_URL` to the reference
+  `${{Postgres spot-price.DATABASE_URL}}`. Rows written to Neon after the
+  switch to Neon do not reach Railway: the jobs fetch prices and grid
+  actuals again, but the vintage and weather rows of those hours are lost.
+  Only the owner decides a switch back.
+- **Database loss:** the Neon history window of 6 hours is the only
+  restore path (§5).
 
 ### Maintenance
 
 - **Infrastructure:**
 
-  | Component      | Production                                                                                        | Test and local                                                                     | How to read the version                                                               |
-  | -------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-  | PostgreSQL     | Railway image `ghcr.io/railwayapp-templates/postgres-ssl:18`; the minor version follows the image | Image `postgres:18.7` in an Apple container (`SPOT_PRICE_PG_IMAGE` in `mise.toml`) | Production: `SHOW server_version`, read-only, by the owner. Test: `mise run db:info`. |
-  | Source builder | Railpack; Railway selects the version                                                             | Not used                                                                           | The Railway build log                                                                 |
-  | Runtime image  | Railpack runtime image; Railway selects the version                                               | Not used                                                                           | The Railway build log                                                                 |
-  | Rust toolchain | 1.100.0 (`rust-toolchain.toml`)                                                                   | 1.100.0                                                                            | `rust-toolchain.toml`                                                                 |
+  | Component      | Production                                                                                                          | Test and local                                                                     | How to read the version                                                                                               |
+  | -------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+  | PostgreSQL     | 18.7 on Neon (project `spot-price`, `aws-eu-central-1`, Free plan; read 2026-11-16); Neon applies the minor updates | Image `postgres:18.7` in an Apple container (`SPOT_PRICE_PG_IMAGE` in `mise.toml`) | Production: `neon projects get autumn-dream-98820540` (`pg_version`) or `SELECT version()`. Test: `mise run db:info`. |
+  | Source builder | Railpack; Railway selects the version                                                                               | Not used                                                                           | The Railway build log                                                                                                 |
+  | Runtime image  | Railpack runtime image; Railway selects the version                                                                 | Not used                                                                           | The Railway build log                                                                                                 |
+  | Rust toolchain | 1.100.0 (`rust-toolchain.toml`)                                                                                     | 1.100.0                                                                            | `rust-toolchain.toml`                                                                                                 |
 
   Keep test and production PostgreSQL on the same major version (§5).
 

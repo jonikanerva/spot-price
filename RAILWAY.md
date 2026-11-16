@@ -8,12 +8,15 @@ page is a short checklist.
 1. Create a Railway project from this repository.
 2. Add one service for the app. Railpack builds it from `railpack.json`
    (Rust provider). Do not pin the Railpack version; Railway selects it.
-3. Add a PostgreSQL service. Railway sets `DATABASE_URL`.
+3. The database is the Neon project `spot-price` (`STACK.md` §5). Set
+   `DATABASE_URL` to the direct Neon URL with `sslmode=verify-full`. Do not
+   use the `-pooler` endpoint.
 
 ## Required environment variables
 
 - `NODE_ENV=production`
-- `DATABASE_URL` (set by Railway)
+- `DATABASE_URL` (the direct Neon URL; set it with `railway variables --set`
+  from the shell, so the value never appears in a log or a chat)
 - `BETTER_AUTH_URL=https://spot.calmdonut.com` (the public origin)
 - `BETTER_AUTH_SECRET=<32+ char random secret>` (kept for the revert path)
 - Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY`, `LOG_FORMAT`
@@ -28,27 +31,27 @@ Before the merge of a release that adds a migration, or that changes the
 database connection, `BETTER_AUTH_URL`, or the start command, run these
 checks read-only against production (`STACK.md → Release procedure`):
 
-`psql` runs in a throw-away container of the pinned image; the Mac has no
-`psql`:
+The Mac has no `psql`; the conda client of mise is the client. `PGOPTIONS`
+makes the session read-only:
 
 ```bash
-pgc() { container run --rm --interactive --progress none \
-  --env PGOPTIONS='-c default_transaction_read_only=on' \
-  "$(mise env --json | jq -r .SPOT_PRICE_PG_IMAGE)" psql "$@"; }
-pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/schema-snapshot.sql \
+NEON="$(neon connection-string --project-id autumn-dream-98820540 \
+  --database-name neondb --role-name neondb_owner | sed 's/?.*$//')?sslmode=verify-full&sslrootcert=system"
+pgc() { PGOPTIONS='-c default_transaction_read_only=on' \
+  mise x conda:postgresql@18.7 -- psql "$@"; }
+pgc "$NEON" -X -q -A -t -f - <scripts/schema-snapshot.sql \
   | diff crates/server/tests/fixtures/schema-snapshot.txt -
-pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/release-precheck.sql
+pgc "$NEON" -X -q -A -t -f - <scripts/release-precheck.sql
 ```
 
 - The snapshot differs only by the Rust migrations that production already
-  has. Through migration 3, that is the three indexes that migration 3 drops
+  has, and by the objects of the extension `pg_stat_statements`. Through
+  migration 3, the migrations add `app_sessions` and drop three indexes
   (`STACK.md` §5).
 - The precheck prints `typescript_migrations|1,2,3,4,5,6,7` and `0` for each
   `user_settings_invalid_*` count.
-- `DATABASE_URL` has no `sslmode`, or `sslmode=prefer` or `sslmode=disable`.
-  The service has no `PGSSLMODE` variable, or it is `prefer` or `disable`.
-- The database certificate is version 3 (`STACK.md` §15 has the `openssl`
-  command). The Rust service rejects a version 1 certificate.
+- `DATABASE_URL` uses the direct Neon endpoint (no `-pooler` in the host
+  name) with `sslmode=verify-full`.
 - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`, with no trailing
   slash.
 
@@ -56,8 +59,12 @@ pgc "$DATABASE_PUBLIC_URL" -X -q -A -t -f - <scripts/release-precheck.sql
 
 - Fix a bad release with a revert PR or a fix PR. Do not use the Railway
   rollback after a migration (owner decision, 2026-10-19).
-- The Railway Hobby plan has no database backups. A lost database cannot be
-  restored; the owner accepts this risk (`STACK.md` §5).
+- The Neon history window of 6 hours is the only restore path for the
+  database. Older data cannot be restored; the owner accepts this risk
+  (`STACK.md` §5).
+- The Railway service `Postgres spot-price` holds the data of 2026-11-16. It
+  is the rollback database. Only the owner decides a switch back
+  (`STACK.md` §15).
 
 ## Start and health check
 

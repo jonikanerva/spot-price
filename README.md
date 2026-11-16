@@ -16,16 +16,16 @@ Supports all 21 Nord Pool delivery areas across the Nordics, Baltics, and Centra
 
 ## Tech stack
 
-| Component  | Choice                                                                 |
-| ---------- | ---------------------------------------------------------------------- |
-| Language   | Rust 1.100 (edition 2024)                                              |
-| Framework  | [Axum](https://docs.rs/axum) + Tokio                                   |
-| Database   | PostgreSQL via [SQLx](https://docs.rs/sqlx) (checked queries, no ORM)  |
-| Time       | [Jiff](https://docs.rs/jiff) with the bundled time zone database       |
-| Auth       | Username and password (Better Auth-compatible scrypt hashes), API keys |
-| Scheduling | In-process jobs (croner): Nord Pool, Fingrid, OpenWeatherMap           |
-| Testing    | nextest, golden files from the former TypeScript service, Playwright   |
-| Hosting    | Railway (Railpack, `railpack.json`)                                    |
+| Component  | Choice                                                                     |
+| ---------- | -------------------------------------------------------------------------- |
+| Language   | Rust 1.100 (edition 2024)                                                  |
+| Framework  | [Axum](https://docs.rs/axum) + Tokio                                       |
+| Database   | PostgreSQL via [SQLx](https://docs.rs/sqlx) (checked queries, no ORM)      |
+| Time       | [Jiff](https://docs.rs/jiff) with the bundled time zone database           |
+| Auth       | Username and password (Better Auth-compatible scrypt hashes), API keys     |
+| Scheduling | In-process jobs (croner): Nord Pool, Fingrid, OpenWeatherMap               |
+| Testing    | nextest, golden files from the former TypeScript service, Playwright       |
+| Hosting    | Railway for the service (Railpack, `railpack.json`); Neon for the database |
 
 `STACK.md` holds the full technical contract.
 
@@ -184,17 +184,17 @@ There is no CI. Run `mise run verify` before pushing. A material change also get
 
 ### Environment variables
 
-| Variable                 | Default                 | Description                                                                                                |
-| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `PORT`                   | `3000`                  | Server port                                                                                                |
-| `DATABASE_URL`           | —                       | PostgreSQL connection string (required)                                                                    |
-| `NODE_ENV`               | `development`           | `production` makes `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET` required                                     |
-| `BETTER_AUTH_URL`        | `http://localhost:3000` | Public origin. It sets the cookie security and the allowed `Origin` of session requests                    |
-| `BETTER_AUTH_SECRET`     | —                       | Required in production. The Rust service does not use it; it stays for the revert path                     |
-| `FINGRID_API_KEY`        | —                       | Fingrid Open Data key. Without it the Fingrid job does not run and the forecast returns `available: false` |
-| `OPENWEATHERMAP_API_KEY` | —                       | OpenWeatherMap One Call 3.0 key. Without it the weather job does not run                                   |
-| `LOG_FORMAT`             | `json`                  | `text` gives readable logs                                                                                 |
-| `DATABASE_PUBLIC_URL`    | —                       | Only for `spot-price-tools --db` from a dev machine                                                        |
+| Variable                 | Default                 | Description                                                                                                         |
+| ------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                   | `3000`                  | Server port                                                                                                         |
+| `DATABASE_URL`           | —                       | PostgreSQL connection string (required)                                                                             |
+| `NODE_ENV`               | `development`           | `production` makes `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET` required                                              |
+| `BETTER_AUTH_URL`        | `http://localhost:3000` | Public origin. It sets the cookie security and the allowed `Origin` of session requests                             |
+| `BETTER_AUTH_SECRET`     | —                       | Required in production. The Rust service does not use it; it stays for the revert path                              |
+| `FINGRID_API_KEY`        | —                       | Fingrid Open Data key. Without it the Fingrid job does not run and the forecast returns `available: false`          |
+| `OPENWEATHERMAP_API_KEY` | —                       | OpenWeatherMap One Call 3.0 key. Without it the weather job does not run                                            |
+| `LOG_FORMAT`             | `json`                  | `text` gives readable logs                                                                                          |
+| `DATABASE_PUBLIC_URL`    | —                       | Only for `spot-price-tools --db` from a dev machine. For production, the direct Neon URL with `sslmode=verify-full` |
 
 ## How it works
 
