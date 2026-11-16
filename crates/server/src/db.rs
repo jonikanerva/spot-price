@@ -16,12 +16,10 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 #[derive(Debug, Clone, Copy)]
 pub struct PoolSettings {
     pub max_connections: u32,
-    /// The connections that the pool keeps open, idle or in use. A new
-    /// connection costs about 100 ms, so without them the first request
-    /// after 10 idle minutes opens one or two connections on the request
-    /// path (#150).
-    /// Three cover the longest serial query chain of one request while the
-    /// pool pings the released connection in the background.
+    /// The connections that the pool keeps open, idle or in use. Keep it at
+    /// 0: a pool that reopens connections keeps a scale-to-zero database
+    /// compute active all the time. The cost is a new connection on the
+    /// request path of the first request after an idle period.
     pub min_connections: u32,
     pub acquire_timeout: Duration,
     /// PostgreSQL `statement_timeout` of each connection.
@@ -32,7 +30,7 @@ impl Default for PoolSettings {
     fn default() -> Self {
         Self {
             max_connections: 10,
-            min_connections: 3,
+            min_connections: 0,
             acquire_timeout: Duration::from_secs(10),
             statement_timeout: Duration::from_secs(30),
         }
@@ -72,8 +70,8 @@ impl From<sqlx::Error> for StoreError {
     }
 }
 
-/// Creates a lazy pool. No connection opens before the first query. The
-/// pool keeps `min_connections` open from its first close of an idle
+/// Creates a lazy pool. No connection opens before the first query. A
+/// `min_connections` above 0 takes effect from the first close of an idle
 /// connection on.
 ///
 /// # Errors
@@ -286,9 +284,9 @@ mod tests {
     }
 
     #[test]
-    fn the_default_pool_keeps_three_connections_open() {
+    fn the_default_pool_keeps_no_idle_connection_open() {
         let settings = PoolSettings::default();
-        assert_eq!(settings.min_connections, 3);
+        assert_eq!(settings.min_connections, 0);
         assert_eq!(settings.max_connections, 10);
         assert!(settings.min_connections <= settings.max_connections);
     }
