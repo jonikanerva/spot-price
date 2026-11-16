@@ -65,8 +65,8 @@ server start.
 - Update 2026-11-16: the database moved to Neon (ADR 0009). A revert
   keeps the same `DATABASE_URL`, with `sslmode=verify-full`. The
   TypeScript service uses `pg` 8 (`node-postgres`). Its
-  `pg-connection-string` maps `sslmode=verify-full` to `ssl: true`, so
-  Node checks the Neon certificate and the host name with its default
+  `pg-connection-string` maps `sslmode=verify-full` to `ssl = {}` (TLS
+  with the default options), so Node checks the Neon certificate and the host name with its default
   roots. The revert path needs no URL change. This is a documentation
   check of `node-postgres`, not a test against Neon.
 - During a deploy, the old and the new service run their jobs for a short

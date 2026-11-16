@@ -28,8 +28,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 # `tls-rustls-aws-lc-rs`: TLS to PostgreSQL when the server offers it, with
 # the rustls provider of reqwest; a second provider makes `sslmode=verify-ca`
-# panic. With `prefer` or `require`, SQLx does not verify the certificate
-# (STACK.md §5). `sqlx-toml` reads crates/server/sqlx.toml, which maps
+# panic. Production uses `sslmode=verify-full` (STACK.md §5). `sqlx-toml` reads crates/server/sqlx.toml, which maps
 # TIMESTAMPTZ to Jiff.
 sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate", "json", "sqlx-toml", "tls-rustls-aws-lc-rs"] }
 thiserror = "=2.0.21"

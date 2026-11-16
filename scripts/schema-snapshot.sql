@@ -7,7 +7,7 @@
 -- database with the expected snapshot of the TypeScript migrations. Run
 -- psql in a read-only session and compare its output with
 -- crates/server/tests/fixtures/schema-snapshot.txt; STACK.md §15 shows the
--- command (psql runs in a container of the pinned image).
+-- command (psql is the conda client of mise).
 --
 -- NOT NULL constraint rows are left out because PostgreSQL 18 names them
 -- after the table name at creation time. The `column` rows show nullability.

@@ -8,8 +8,8 @@ idiomatic_version_file_enable_tools = ["rust"]
 
 [env]
 # The only PostgreSQL version setting of the local servers (STACK.md §3 and
-# §15 Infrastructure). The major version follows production (Railway image
-# postgres-ssl:18). The digest pins the multi-platform image index; the tag is
+# §15 Infrastructure). The major version follows production (PostgreSQL 18
+# on Neon). The digest pins the multi-platform image index; the tag is
 # for people. scripts/db.sh runs every local server from this image in an
 # Apple container; the Mac has no PostgreSQL install.
 SPOT_PRICE_PG_IMAGE = "docker.io/library/postgres:18.7@sha256:2ea8630df176ad090ec92136dee850397c5af8781e4bcf2e4162593691c61bbc"

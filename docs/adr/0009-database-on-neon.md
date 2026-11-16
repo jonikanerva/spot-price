@@ -54,8 +54,8 @@ Issue #188 records the facts, the procedure, and the evidence.
   It keeps the Railway cost of the database service.
 - **Move and shorten the vintage retention** (180 days without datasets
   166 and 248, or 75 days for all datasets). The database then stays under
-  1 GB for about three years. Rejected by the owner: the offline
-  evaluations (#158, #159, #162) need the archive.
+  1 GB for about three years. Rejected by the owner: keep the archive and
+  the retention (D1).
 - **Paid plan with an always-active compute and `min_connections` 3.**
   Rejected: about 182 CU-hours a month for a latency that the owner does
   not need.

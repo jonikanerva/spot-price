@@ -422,8 +422,9 @@ connection.
   2026-11-16 the database was the Railway service `Postgres spot-price`.
   That service stays unchanged as the rollback database until the owner
   removes it (§15). The schema is the schema of the TypeScript migrations
-  `001`–`007` plus `app_sessions`. Neon adds the extension
-  `pg_stat_statements` in the schema `public`.
+  `001`–`007` plus `app_sessions`. The schema `public` also holds the
+  extension `pg_stat_statements`; the copy brought it from the Railway
+  database.
 - **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
   is idempotent and changes nothing on the production schema; the old ledger
   `_migrations` stays. `0002_app_sessions.sql` adds the session table.
@@ -852,7 +853,7 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
      ```
 
    - The snapshot differs only by the Rust migrations that production
-     already has, and by the `pg_stat_statements` objects that Neon adds.
+     already has, and by the objects of the extension `pg_stat_statements`.
      Through migration 3, the migrations add `app_sessions` and drop three
      indexes (§5). The precheck prints
      `typescript_migrations|1,2,3,4,5,6,7`, the server version, and `0` for
