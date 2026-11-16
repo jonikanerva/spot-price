@@ -323,8 +323,12 @@ commands of this project: the names, the port range, the service address of
   all worktrees of this repository (`SPOT_PRICE_DB_MAX_TEST`); a run waits
   for a free slot, at most 2 hours. The locks wait at most 2 hours too.
   A lock or a slot is a directory with an owner file. A process removes a
-  stale one only under a kernel lock (`flock`) on its `.guard` file, after
-  a second check, so two processes never hold one lock.
+  stale one only under a kernel lock (`flock`) on its `.guard` file, after a
+  second check. Two processes never hold one lock when every worktree runs
+  this version of `scripts/db.sh`. An owner counts as gone only when `ps` and
+  `kill -0` both find no process with its PID, or `ps` finds another start
+  time. An error of `ps` keeps the lock, the slot, and the test server of the
+  owner.
 - **Clean-up:** a run removes its own test server on exit, also on Ctrl-C and
   on a SIGTERM to the script: the command runs in its own process group, and
   the clean-up stops it first. Every command that starts a server, and

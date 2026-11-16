@@ -14,6 +14,10 @@
 # A last case changes the owner during the stale check: B reads the owner X
 # of a live lock, X unlocks and ends, and C takes the lock before B checks X.
 # B must not remove the lock of C.
+#
+# The ps case makes ps fail, also with status 1 and no stdout, and makes ps
+# write a warning on stderr. A live owner must stay alive, and its lock must
+# stay. The owner is gone only after it ends, also with these failures.
 set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -117,6 +121,49 @@ owner_change() { # $1 = test directory
   [ -d "$OWNER_TEST_DIR/the.lock" ]
 }
 
+ps_failure() { # $1 = test directory
+  local x token fake failed=0
+  # shellcheck source=scripts/db.sh
+  . "$SCRIPTS/db.sh"
+  sleep 30 &
+  x=$!
+  token="$(owner_of "$x")"
+  mkdir "$1/the.lock"
+  echo "$token" >"$1/the.lock/owner"
+  fake="$1/bin"
+  mkdir "$fake"
+  # ps cannot start, and ps reports an error.
+  printf '#!/bin/sh\nexit 126\n' >"$fake/ps"
+  chmod +x "$fake/ps"
+  PATH="$fake:$PATH" owner_alive "$token" || failed=1
+  PATH="$fake:$PATH" remove_if_stale "$1/the.lock"
+  [ -d "$1/the.lock" ] || failed=1
+  # ps fails on its own error with status 1 and no stdout, as on a failed
+  # memory allocation.
+  printf '#!/bin/sh\necho "ps: malloc failed" >&2\nexit 1\n' >"$fake/ps"
+  PATH="$fake:$PATH" owner_alive "$token" || failed=1
+  PATH="$fake:$PATH" remove_if_stale "$1/the.lock"
+  [ -d "$1/the.lock" ] || failed=1
+  # A warning of ps on stderr changes nothing. With MallocStackLogging set,
+  # macOS ps writes one.
+  printf '#!/bin/sh\necho "ps: a warning" >&2\nexec /bin/ps "$@"\n' >"$fake/ps"
+  PATH="$fake:$PATH" owner_alive "$token" || failed=1
+  MallocStackLogging=1 owner_alive "$token" || failed=1
+  MallocStackLogging=1 remove_if_stale "$1/the.lock"
+  [ -d "$1/the.lock" ] || failed=1
+  # With a working ps: the live owner stays, and the gone owner is gone.
+  owner_alive "$token" || failed=1
+  kill "$x"
+  wait "$x" 2>/dev/null || true
+  ! owner_alive "$token" || failed=1
+  ! PATH="$fake:$PATH" owner_alive "$token" || failed=1
+  ! MallocStackLogging=1 owner_alive "$token" || failed=1
+  printf '#!/bin/sh\necho "ps: malloc failed" >&2\nexit 1\n' >"$fake/ps"
+  ! PATH="$fake:$PATH" owner_alive "$token" || failed=1
+  dir_stale "$1/the.lock" || failed=1
+  return $failed
+}
+
 if [ "${1:-}" = worker ]; then
   shift
   worker "$@"
@@ -124,6 +171,10 @@ if [ "${1:-}" = worker ]; then
 fi
 if [ "${1:-}" = owner-change ]; then
   owner_change "$2"
+  exit $?
+fi
+if [ "${1:-}" = ps-failure ]; then
+  ps_failure "$2"
   exit $?
 fi
 
@@ -167,6 +218,13 @@ if "$0" owner-change "$base/owner-change"; then
   echo "db-lock-test: owner change during the check: ok"
 else
   echo "db-lock-test: owner change during the check: the check removed a live lock" >&2
+  failed=1
+fi
+mkdir -p "$base/ps-failure"
+if "$0" ps-failure "$base/ps-failure"; then
+  echo "db-lock-test: an error of ps keeps a live owner: ok"
+else
+  echo "db-lock-test: an error of ps made a live owner look gone" >&2
   failed=1
 fi
 exit $failed
