@@ -150,11 +150,12 @@ owner_of() { # $1 = pid
 }
 
 # An owner is gone only when ps finds no process with the PID (exit status 1
-# and no output on stdout), or finds a process with another start time (a
-# reused PID). Any other result of ps counts as alive, for example when ps
-# cannot start: the removal of a live lock lets two processes hold it, and
+# and no output on stdout) and kill confirms it ("No such process"), or when
+# ps finds a process with another start time (a reused PID). Any other result
+# counts as alive, for example when ps cannot start or fails with status 1 on
+# its own error: the removal of a live lock lets two processes hold it, and
 # the removal of a live test server stops its run. A kept stale lock only
-# makes the next command wait. The decision ignores stderr: macOS tools write
+# makes the next command wait. The ps check ignores stderr: macOS tools write
 # warnings there, for example when MallocStackLogging is set.
 owner_alive() { # $1 = owner token
   local pid="${1%%@*}" out status=0
@@ -164,7 +165,11 @@ owner_alive() { # $1 = owner token
     [ "$pid@$(printf '%s\n' "$out" | tr -s ' ' '_' | sed 's/_$//')" = "$1" ]
     return
   fi
-  ! { [ "$status" -eq 1 ] && [ -z "$out" ]; }
+  [ "$status" -eq 1 ] && [ -z "$out" ] || return 0
+  case "$(LC_ALL=C kill -0 "$pid" 2>&1)" in
+    *"No such process"*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # A lock or slot directory is stale when its owner is gone, or when it has no
