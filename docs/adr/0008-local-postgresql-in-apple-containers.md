@@ -28,10 +28,14 @@ away without a manual step.
    database names, the port range, TLS, and the project commands.
 3. Each worktree has one dev server with a volume named by the major
    version. The commands that need it start it; the last one stops it at
-   exit. `db:start` keeps it running until `db:stop`.
+   exit. `db:start` keeps it running until `db:stop`. A stop removes the
+   container and keeps the volume: a stopped container keeps a copy of the
+   image (about 750 MB). Added on 2026-11-15 after the owner saw the disk
+   use of stopped containers.
 4. Each independent test run gets a new test server on tmpfs with fsync
    off. `verify` shares one server over its steps.
-5. Every command that starts a server first removes the test servers of
+5. Every command that starts a server first removes the stopped dev
+   containers that no command is creating, the test servers of
    ended runs and the dev server and dev volume of removed worktrees. A
    worktree counts as removed only when git no longer lists it, its
    directory is gone, and its parent directory exists.

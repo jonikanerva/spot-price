@@ -9,14 +9,17 @@
 #
 # - Dev server: one per worktree. It keeps its data in a named volume and uses
 #   the durable PostgreSQL defaults. A command that needs it (`dev`, `db:psql`,
-#   ...) starts it, and the last such command stops it at exit. `db:start`
-#   keeps it running until `db:stop`.
+#   ...) creates its container, and the last such command removes the
+#   container at exit; the volume stays. `db:start` keeps it running until
+#   `db:stop`. A stopped container would keep a copy of the image (about
+#   750 MB), so no dev container stays stopped.
 # - Test server: one per independent run of a test task. Its data is in
 #   memory (tmpfs) with fsync off. The run removes it at the end.
 #
 # Every command that starts a server first cleans up: it removes the test
-# servers of runs that ended, and the dev server and dev volume of a worktree
-# that git no longer knows and whose directory is gone.
+# servers of runs that ended, the stopped dev containers that no command
+# is creating (their volumes stay), and the dev server and dev volume of a worktree that git no longer
+# knows and whose directory is gone.
 #
 # The worktree id is a hash of the physical checkout path, so two worktrees
 # never share a container, even on the same branch. A test server name adds a
@@ -394,16 +397,70 @@ worktree_gone() { # $1 = path
   ! git -C "$ROOT" worktree list --porcelain 2>/dev/null | grep -qxF "worktree $path"
 }
 
+# The path of each worktree id, for dev volumes of earlier script versions
+# that have no path label. Shared by all worktrees of this repository.
+remember_path() { # $1 = worktree id, $2 = path
+  mkdir -p "$COMMON/dev-paths"
+  printf '%s\n' "$2" >"$COMMON/dev-paths/$1"
+}
+
+remembered_path() { # $1 = worktree id
+  cat "$COMMON/dev-paths/$1" 2>/dev/null || true
+}
+
+# Record the path of every worktree that git lists now, so the clean-up
+# still finds its dev volume after the worktree is removed, also when the
+# volume has no path label and no container.
+remember_worktrees() {
+  local path id
+  while IFS= read -r path; do
+    [ -d "$path" ] || continue
+    path="$(cd "$path" && pwd -P)"
+    id="$(worktree_id "$path")"
+    [ -s "$COMMON/dev-paths/$id" ] || remember_path "$id" "$path"
+  done < <(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+}
+
+# Remove a stopped dev container of a worktree that still exists, under the
+# dev lock of that worktree. A new container shows the state stopped for a
+# few seconds while `container run` creates it; the command that creates it
+# holds the lock, so a held lock means: leave the container alone.
+remove_stopped_dev() { # $1 = name, $2 = path of its worktree
+  local dir="$2/.tmp/db/dev.lock" line
+  # A worktree without .tmp/db has never run this script; its own first
+  # command removes the container. No file goes into another worktree.
+  [ -d "$2/.tmp/db" ] || return 0
+  if ! mkdir "$dir" 2>/dev/null; then
+    dir_stale "$dir" || return 0
+    remove_if_stale "$dir"
+    mkdir "$dir" 2>/dev/null || return 0
+  fi
+  owner_of $$ >"$dir/owner"
+  line="$(server_line "$1")"
+  if [ -n "$line" ] && [ "$(field "$line" 2)" = stopped ]; then
+    say "removing the stopped dev container $1 (its volume stays)"
+    remove_server "$1"
+  fi
+  unlock "$dir"
+}
+
 # Remove the test servers of runs that ended (a kept server stays), and the
 # dev server and dev volumes of worktrees that are gone.
 clean_up_servers() {
   local name state role worktree owner port run repo path major gone_ids=" "
+  remember_worktrees
   while IFS=$'\t' read -r name state role worktree owner port run repo path major; do
     if [ "$role" = dev ]; then
-      worktree_gone "$path" || continue
-      say "removing the dev server $name (worktree $path is gone)"
-      remove_server "$name"
-      gone_ids="$gone_ids${name#"$DB_PROJECT"-dev-} "
+      [ "$path" = "-" ] || remember_path "${name#"$DB_PROJECT"-dev-}" "$path"
+      if worktree_gone "$path"; then
+        say "removing the dev server $name (worktree $path is gone)"
+        remove_server "$name"
+        gone_ids="$gone_ids${name#"$DB_PROJECT"-dev-} "
+      elif [ "$state" = stopped ] && [ "$path" != "-" ]; then
+        # A stopped container keeps a copy of the image; the data is in the
+        # volume. The next command that needs the server creates it again.
+        remove_stopped_dev "$name" "$path"
+      fi
       continue
     fi
     # A test or other run server: it has an owner process.
@@ -420,6 +477,7 @@ clean_up_servers() {
       # label; its name carries the worktree id.
       worktree="${name#"$DB_PROJECT"-dev-}"
       worktree="${worktree%%-pg*}"
+      [ "$path" != "-" ] || path="$(remembered_path "$worktree")"
       worktree_gone "$path" || case "$gone_ids" in *" $worktree "*) ;; *) continue ;; esac
       say "removing the dev volume $name and its data (worktree ${path#-} is gone)"
       container volume delete "$name" >/dev/null 2>&1 || true
@@ -454,6 +512,7 @@ dev_labels() {
 dev_ensure_locked() {
   local line state port password major
   dev_volume_resolve
+  remember_path "$WORKTREE_ID" "$DB_ROOT"
   dev_password >/dev/null
   password="$(cat "$STATE/dev-password")"
   dev_labels
@@ -479,19 +538,18 @@ dev_ensure_locked() {
     # published port: the port of an older container after a change of the
     # container network (PostgreSQL is ready inside), or a PostgreSQL that
     # is not ready inside for 60 s more. The wait protects a slow first
-    # initialization whose earlier start gave up after its own 60 s. Restart
-    # the container; the data stays in the volume.
-    say "$DEV_NAME runs but does not answer; restarting the container"
-    container stop "$DEV_NAME" >/dev/null 2>&1 || true
+    # initialization whose earlier start gave up after its own 60 s. Create
+    # the container again; the data stays in the volume.
+    say "$DEV_NAME runs but does not answer; creating the container again"
     state=stopped
   fi
   if [ -n "$line" ] && [ "$state" != running ]; then
-    # The published port can be in use now. Then create the container again
-    # on another port; the data stays in the volume.
-    container start "$DEV_NAME" >/dev/null 2>&1 || {
-      remove_server "$DEV_NAME"
-      line=""
-    }
+    # A container that does not run is created again (on a new port); the
+    # data stays in the volume. A stop first lets a running PostgreSQL shut
+    # down cleanly.
+    container stop "$DEV_NAME" >/dev/null 2>&1 || true
+    remove_server "$DEV_NAME"
+    line=""
   fi
   if [ -z "$line" ]; then
     # Durable PostgreSQL defaults: no fsync or commit settings here.
@@ -525,14 +583,21 @@ dev_other_users() {
 dev_release() {
   [ -n "$DEV_USER" ] || return 0
   lock "$STATE/dev.lock" "the dev server lock of this worktree"
-  if [ ! -e "$STATE/dev-pinned" ] && ! dev_other_users &&
-    [ "$(field "$(server_line "$DEV_NAME")" 2)" = running ]; then
-    container stop "$DEV_NAME" >/dev/null 2>&1 || true
-    say "dev server stopped: $DEV_NAME (the data stays in volume $DEV_VOLUME)"
+  if [ ! -e "$STATE/dev-pinned" ] && ! dev_other_users && [ -n "$(server_line "$DEV_NAME")" ]; then
+    dev_remove
   fi
   rm -f "$DEV_USER"
   DEV_USER=""
   unlock "$STATE/dev.lock"
+}
+
+# Stop and remove the dev container; the data stays in the volume. The
+# caller holds the dev lock.
+dev_remove() {
+  dev_volume_resolve
+  container stop "$DEV_NAME" >/dev/null 2>&1 || true
+  remove_server "$DEV_NAME"
+  say "dev server stopped: $DEV_NAME (the data stays in volume $DEV_VOLUME)"
 }
 
 dev_exit() {
@@ -586,8 +651,7 @@ cmd_stop() {
   if dev_other_users; then
     say "the dev server keeps running for another command of this worktree; that command stops it at exit"
   elif [ -n "$(server_line "$DEV_NAME")" ]; then
-    container stop "$DEV_NAME" >/dev/null 2>&1 || true
-    say "dev server stopped: $DEV_NAME (the data stays in volume $DEV_VOLUME)"
+    dev_remove
   else
     say "no dev server for this worktree"
   fi
@@ -682,30 +746,29 @@ cmd_restore() { # $1 = file
 }
 
 cmd_clone() { # $1 = source worktree
-  local source="${1:-}" source_root source_name source_state file started=0
+  local source="${1:-}" source_root source_id file
   [ -d "$source" ] || die "usage: $0 clone WORKTREE (the path of another checkout of this repository)"
   source_root="$(cd "$source" && pwd -P)"
   [ "$source_root" != "$DB_ROOT" ] || die "the source is this worktree"
-  source_name="$DB_PROJECT-dev-$(worktree_id "$source_root")"
-  source_state="$(field "$(server_line "$source_name")" 2)"
-  [ -n "$source_state" ] || die "$source_root has no dev server"
-  dev_acquire
-  if [ "$source_state" != running ]; then
-    container start "$source_name" >/dev/null
-    started=1
-    for _ in $(seq 1 240); do ready_inside "$source_name" && break || sleep 0.25; done
-  fi
+  source_id="$(worktree_id "$source_root")"
+  container volume inspect "$DB_PROJECT-dev-$source_id-pg$MAJOR" >/dev/null 2>&1 ||
+    { [ "$MAJOR" = 18 ] && container volume inspect "$DB_PROJECT-dev-$source_id" >/dev/null 2>&1; } ||
+    die "$source_root has no dev data of PostgreSQL $MAJOR"
   mkdir -p "$STATE"
   file="$STATE/clone-$$.dump"
-  dump_to "$source_name" "$file" || {
-    [ $started -eq 0 ] || container stop "$source_name" >/dev/null 2>&1 || true
-    die "pg_dump of $source_name failed"
+  rm -f "$file"
+  # The dump runs as a command of the source worktree: it takes the dev lock
+  # of that worktree, starts its server when needed, and removes the server
+  # again when no other command there uses it.
+  env "${DB_ENV}_DB_ROOT=$source_root" "$SCRIPTS/db.sh" dump "$file" || {
+    rm -f "$file"
+    die "the dump of the dev database of $source_root failed"
   }
-  [ $started -eq 0 ] || container stop "$source_name" >/dev/null 2>&1 || true
+  dev_acquire
   dev_replace
   restore_stream <"$file"
   rm -f "$file"
-  say "copied $DB_DEV_DATABASE of $source_name into $DEV_NAME; the next dev run migrates it"
+  say "copied the dev database of $source_root into $DEV_NAME; the next dev run migrates it"
 }
 
 cmd_reset() {
