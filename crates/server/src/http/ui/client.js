@@ -571,6 +571,14 @@
         }
         renderVersions(response.data.versions || [])
         setStatus('versionStatus', 'ok', 'Deleted the version from ' + validFrom)
+        // The form can hold the deleted version. A save would create it again.
+        const today = todayInZone(state.timezone)
+        const current = versionOn(state.versions, today)
+        if (current) {
+          fillTerms(current)
+          $('validFrom').value = today
+          setStatus('settingsStatus', 'ok', 'Loaded the terms that apply today.')
+        }
         await loadTotalChart()
       }
 
@@ -678,6 +686,12 @@
       })
 
       $('saveBtn').onclick = () => withLoading('saveBtn', async () => {
+        // Without a date, the server saves the terms for today.
+        if (!$('validFrom').value) {
+          setStatus('settingsStatus', 'err', 'Valid from date required')
+          return
+        }
+
         const payload = {
           marginCentsKwh: Number($('margin').value),
           transferDayCentsKwh: Number($('dayTransfer').value),
@@ -688,10 +702,7 @@
           nightEndHour: Number($('nightEnd').value),
           area: $('area').value,
           timezone: $('timezone').value,
-        }
-        // Without a date, the server uses today in the saved time zone.
-        if ($('validFrom').value) {
-          payload.validFrom = $('validFrom').value
+          validFrom: $('validFrom').value,
         }
 
         const response = await json('/api/v1/me/settings', {
