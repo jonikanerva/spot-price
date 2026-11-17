@@ -3,9 +3,10 @@
 use std::str::FromStr;
 use std::time::Duration;
 
-use sqlx::PgPool;
+use log::LevelFilter;
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{ConnectOptions as _, PgPool};
 
 use crate::config::Secret;
 
@@ -24,7 +25,13 @@ pub struct PoolSettings {
     pub acquire_timeout: Duration,
     /// PostgreSQL `statement_timeout` of each connection.
     pub statement_timeout: Duration,
+    /// A statement that takes at least this long gets a warning in the log.
+    pub slow_statement_threshold: Duration,
 }
+
+/// Above the usual latency of a database that the service reaches over the
+/// public internet, and below `statement_timeout`.
+pub const SLOW_STATEMENT_THRESHOLD: Duration = Duration::from_secs(5);
 
 impl Default for PoolSettings {
     fn default() -> Self {
@@ -33,6 +40,7 @@ impl Default for PoolSettings {
             min_connections: 0,
             acquire_timeout: Duration::from_secs(10),
             statement_timeout: Duration::from_secs(30),
+            slow_statement_threshold: SLOW_STATEMENT_THRESHOLD,
         }
     }
 }
@@ -81,7 +89,8 @@ pub fn connect_lazy(database_url: &Secret, settings: PoolSettings) -> Result<PgP
     let statement_timeout = format!("{}ms", settings.statement_timeout.as_millis());
     let options = PgConnectOptions::from_str(database_url.expose())
         .map_err(|_| StoreError::InvalidUrl)?
-        .options([("statement_timeout", statement_timeout.as_str())]);
+        .options([("statement_timeout", statement_timeout.as_str())])
+        .log_slow_statements(LevelFilter::Warn, settings.slow_statement_threshold);
     Ok(PgPoolOptions::new()
         .max_connections(settings.max_connections)
         .min_connections(settings.min_connections)
@@ -291,6 +300,13 @@ mod tests {
         assert!(settings.min_connections <= settings.max_connections);
     }
 
+    #[test]
+    fn the_default_slow_statement_threshold_is_below_the_statement_timeout() {
+        let settings = PoolSettings::default();
+        assert_eq!(settings.slow_statement_threshold, Duration::from_secs(5));
+        assert!(settings.slow_statement_threshold < settings.statement_timeout);
+    }
+
     #[tokio::test]
     async fn the_lazy_pool_uses_the_pool_settings() {
         let url = Secret::new("postgres://user@localhost:5432/spot".to_owned());
@@ -299,12 +315,23 @@ mod tests {
             min_connections: 2,
             acquire_timeout: Duration::from_secs(4),
             statement_timeout: Duration::from_secs(30),
+            slow_statement_threshold: Duration::from_secs(7),
         };
         let pool = connect_lazy(&url, settings).unwrap();
         let options = pool.options();
         assert_eq!(options.get_min_connections(), 2);
         assert_eq!(options.get_max_connections(), 7);
         assert_eq!(options.get_acquire_timeout(), Duration::from_secs(4));
+        // The connect options have no getter for the log settings.
+        let connect_options = format!("{:?}", pool.connect_options());
+        assert!(
+            connect_options.contains("slow_statements_level: Warn"),
+            "{connect_options}"
+        );
+        assert!(
+            connect_options.contains("slow_statements_duration: 7s"),
+            "{connect_options}"
+        );
         assert_eq!(pool.size(), 0, "a lazy pool opens no connection at start");
         pool.close().await;
     }

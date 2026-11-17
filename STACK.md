@@ -173,8 +173,9 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   settings body before the other body checks, when the value is a
   `YYYY-MM-DD` date and the recorded body has no such field. The settings
   routes answer the terms of one contract terms version and its date (§5).
-  The replay gives each seeded `user_settings` row its first terms version,
-  like migration 4.
+  The seed has the TypeScript schema. The replay loads it through
+  temporary tables and gives each seeded `user_settings` row its first
+  terms version, like migration 4.
 - `GET /api/v1/me/settings/versions` and
   `DELETE /api/v1/me/settings/versions/{validFrom}` have no TypeScript
   recording. `contract_terms.rs` tests them.
@@ -221,7 +222,13 @@ connect timeout 10 s, a 30 s deadline per attempt that covers the body, and a
   datasets 245, 75, 165, 124 for the served forecast. The second request
   gets datasets 166 (consumption forecast, 72 h) and 248 (solar forecast,
   72 h) for `[issued_at − 6 h, now + 73 h)`. A failure of one request does
-  not affect the other request.
+  not affect the other request. Fingrid answers 401 to a missing or
+  invalid key (checked 2026-11-17). The adapter logs a 401 with the code
+  `fingrid_key_rejected` and a 403 with the code `fingrid_request_blocked`:
+  a 403 is a blocked request, not a rejected key. The 403 line has the
+  field `www_authenticate`: true when the response had a
+  `WWW-Authenticate` header, which the Fingrid API management sends. Both
+  are a degraded fetch without a retry.
 - **OpenWeatherMap:** One Call 3.0 for two fixed FI points; the key is in the
   query, so errors never include the URL.
 
@@ -434,7 +441,8 @@ connection.
   2026-11-16 the database was the Railway service `Postgres spot-price`.
   The owner removed that service and its volume on 2026-11-17 (§15). The
   schema is the schema of the TypeScript migrations
-  `001`–`007` plus `app_sessions` and `contract_terms`. The schema `public`
+  `001`–`007` plus `app_sessions` and `contract_terms`, without the objects
+  that migrations 3 and 5 drop. The schema `public`
   also holds the extension `pg_stat_statements`; the copy brought it from
   the Railway database.
 - **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
@@ -444,10 +452,15 @@ connection.
   indexes, with a `lock_timeout` of 5 s. `0004_contract_terms.sql` adds
   `contract_terms` and copies each `user_settings` row as the terms version
   of `1970-01-01`, with a `lock_timeout` of 5 s. It fails when a
-  `user_settings` row has a night hour outside 0–23 (§15). After
-  migration 4, the production catalog differs from
-  `fixtures/schema-snapshot.txt` by the three dropped indexes and by the
-  objects of `app_sessions`, of `contract_terms`, and of the extension
+  `user_settings` row has a night hour outside 0–23 (§15).
+  `0005_drop_unused_columns_and_tables.sql` drops the Better Auth tables
+  `"session"` and `"verification"` and the seven term columns of
+  `user_settings`, with a `lock_timeout` of 5 s. It deletes their data and
+  cannot be undone (owner approval 2026-11-17). After migration 5, the
+  production catalog differs from `fixtures/schema-snapshot.txt` by the
+  three dropped indexes, by the objects of `"session"` and
+  `"verification"`, by the seven term columns of `user_settings`, and by
+  the objects of `app_sessions`, of `contract_terms`, and of the extension
   `pg_stat_statements`. The migration runs as a separate step before the
   server starts (§15).
   `serve` refuses to start on an unmigrated database. New migrations MUST
@@ -460,8 +473,11 @@ connection.
   `-pooler`): the pooler runs PgBouncer in transaction mode, the SQLx
   migrator holds a session advisory lock, and the pool sends
   `statement_timeout` as a startup parameter. Pool of 10 connections,
-  acquire timeout 10 s, `statement_timeout` 30 s, `min_connections` 0. The
-  other pool options are the SQLx defaults: `idle_timeout` 10 min,
+  acquire timeout 10 s, `statement_timeout` 30 s, `min_connections` 0.
+  SQLx logs a warning for a statement that takes 5 s or longer
+  (`SLOW_STATEMENT_THRESHOLD`; the SQLx default is 1 s). The value is
+  provisional: above the usual latency to Neon, below `statement_timeout`.
+  The other pool options are the SQLx defaults: `idle_timeout` 10 min,
   `max_lifetime` 30 min, and a ping before each acquire. An unused
   connection closes 10–20 min after its last use.
 - **Compute time:** an idle connection does not keep the Neon compute
@@ -539,9 +555,8 @@ connection.
   is not a kill checkpoint, and the date alone closes nothing. If the work
   is closed later, the daily table is dropped in the same PR.
 - **Accounts:** `"user"`, `"account"`, `usernames`, `user_settings`,
-  `contract_terms`, `api_keys` (plaintext keys, `VISION.md`). The service
-  does not use the Better Auth `"session"` and `"verification"` tables;
-  their removal is a follow-up.
+  `contract_terms`, `api_keys` (plaintext keys, `VISION.md`), and
+  `app_sessions`.
 - **`user_settings`, `contract_terms`:** `user_settings` holds the time
   zone and the area of a user, one current value each. `contract_terms`
   holds the versions of the contract terms: margin, day and night transfer,
@@ -553,12 +568,8 @@ connection.
   first session read create the settings row and the version of
   `1970-01-01` in one statement. A user has 1 to 100 versions. A save or a
   delete locks the settings row first. A save writes the time zone, the
-  area, and the version in one transaction. `user_settings` keeps the term
-  columns of the TypeScript schema, because the release before migration 4
-  reads them during a deploy. The service does not read or write them; a
-  new row gets the column defaults. Their removal is a follow-up. A sign-up
-  or a settings save through the previous release, after migration 4 and
-  before the switch, does not reach `contract_terms` (docs/adr/0010).
+  area, and the version in one transaction. Migration 5 dropped the term
+  columns that `user_settings` had in the TypeScript schema.
 - **Recovery:** the Neon history window of 6 hours gives a point-in-time
   restore of the branch in the Neon Console. Older data has no restore
   path. The owner accepts the data-loss risk (2026-10-19). After a loss,
@@ -585,6 +596,7 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | jiff / jiff-sqlx             | 0.2.46 / 0.2.2     | Time values with the bundled tzdb, and their SQLx encoding                                                   |
 | croner                       | 4.0.3              | Cron schedules with Jiff types                                                                               |
 | sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)                             |
+| log                          | 0.4.35             | The level type of the SQLx statement log settings; already in the graph                                      |
 | reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                                              |
 | futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                                                |
 | tracing / tracing-subscriber | 0.1.44 / 0.3.23    | Structured logs; the formatter is first-party (§8)                                                           |
@@ -609,7 +621,8 @@ The profile list applies. In addition:
 - A change of a v1 response, status, header, or error text without a matching
   golden change, an `INTENTIONAL` entry in `golden_http.rs`, and an owner
   decision. A breaking change needs `/api/v2`.
-- A password hash, user row, or account row that Better Auth cannot read
+- A change of the password hash format or of the `"user"` and `"account"`
+  row shapes that stops an existing account from signing in
   (docs/adr/0002).
 - `DISTINCT ON` in the live latest-vintage read (§5).
 - A log field outside `ALLOWED_FIELDS`, added only to see a value.
@@ -644,9 +657,14 @@ change makes it wrong.
   status, and time. The raw path, the query string, headers, bodies, keys,
   and IP addresses are never logged.
 - A user id is logged only for the `invalid_settings` diagnosis (§2.2).
+- `www_authenticate` is a boolean of a refused Fingrid response (§2.3). The
+  value of a response header is never logged.
+- The SQLx slow statement warning keeps only `elapsed_secs`, the duration
+  in seconds. Its fields with statement text (`summary`, `db.statement`)
+  are never allowed.
 - The panic hook logs only the source location.
-- `Config` debug output redacts `DATABASE_URL`, `BETTER_AUTH_SECRET`, and the
-  upstream keys. A configuration error names the setting, never the value.
+- `Config` debug output redacts `DATABASE_URL` and the upstream keys. A
+  configuration error names the setting, never the value.
 - No crash reporter, analytics, or telemetry exporter.
 
 ---
@@ -764,11 +782,11 @@ versions with edit and delete. It must be usable without a pointer.
 
 ## 13. Scoped exceptions
 
-| Rule / scope                                                                                                                                                                                          | Reason and consequences                                                                                                                                                                                                                                                                                                                             | Compensating evidence                                                                                                          | Lead / reviewer / approval                                                             | Expiry or reassessment                                                                      |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Profile §15 build isolation: Railpack gives every Railway service variable, including `DATABASE_URL`, `BETTER_AUTH_SECRET`, and the upstream keys, to every build command and dependency build script | `railpack.json` sets `"secrets": []` for the install and build steps. The Railpack documentation says that this limits the secrets of a step, but the owner's other services found that it limits only cache invalidation. This file assumes that every build step can see every variable. The same applies to the owner's other Railpack services. | Committed `Cargo.lock` with `--locked`; cargo-deny (sources, bans, advisories); a small dependency set with a reason each (§6) | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When a dependency with a build script or proc macro is added, or on a supply-chain advisory |
-| Profile §15 dependency-aware readiness: `/health` checks only `SELECT 1`                                                                                                                              | The TypeScript contract of `/health` stays. The start command runs `migrate` first, so a broken database stops the deploy before traffic moves.                                                                                                                                                                                                     | Migration and health tests; §15 healthcheck                                                                                    | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the service gets another dependency that a deploy must check                           |
-| Forecast parity: values before rounding differ from V8 by a few ULPs                                                                                                                                  | Rust uses the platform maths library for `asinh`, `sinh`, `exp`, `sin`, `cos`. A residual exactly on a band edge can flip the observed band coverage of the offline regeneration.                                                                                                                                                                   | Golden tests: relative tolerance 1e-9 before rounding, exact after rounding; the band-edge count is asserted                   | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the bands are calibrated and shipped                                                   |
+| Rule / scope                                                                                                                                                                   | Reason and consequences                                                                                                                                                                                                                                                                                                                             | Compensating evidence                                                                                                          | Lead / reviewer / approval                                                             | Expiry or reassessment                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Profile §15 build isolation: Railpack gives every Railway service variable, including `DATABASE_URL` and the upstream keys, to every build command and dependency build script | `railpack.json` sets `"secrets": []` for the install and build steps. The Railpack documentation says that this limits the secrets of a step, but the owner's other services found that it limits only cache invalidation. This file assumes that every build step can see every variable. The same applies to the owner's other Railpack services. | Committed `Cargo.lock` with `--locked`; cargo-deny (sources, bans, advisories); a small dependency set with a reason each (§6) | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When a dependency with a build script or proc macro is added, or on a supply-chain advisory |
+| Profile §15 dependency-aware readiness: `/health` checks only `SELECT 1`                                                                                                       | The TypeScript contract of `/health` stays. The start command runs `migrate` first, so a broken database stops the deploy before traffic moves.                                                                                                                                                                                                     | Migration and health tests; §15 healthcheck                                                                                    | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the service gets another dependency that a deploy must check                           |
+| Forecast parity: values before rounding differ from V8 by a few ULPs                                                                                                           | Rust uses the platform maths library for `asinh`, `sinh`, `exp`, `sin`, `cos`. A residual exactly on a band edge can flip the observed band coverage of the offline regeneration.                                                                                                                                                                   | Golden tests: relative tolerance 1e-9 before rounding, exact after rounding; the band-edge count is asserted                   | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the bands are calibrated and shipped                                                   |
 
 ---
 
@@ -858,11 +876,12 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
   `railway variables --set` from the shell, so the value never appears in
   a log or a chat), `BETTER_AUTH_URL` (the public
   origin; it sets the cookie security and the `Origin` check),
-  `BETTER_AUTH_SECRET` (unused by the Rust service; its removal is a
-  follow-up), `NODE_ENV=production`.
+  `NODE_ENV=production`.
 - Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY` (a missing key
   disables its job and logs a warning), `LOG_FORMAT`.
 - Platform: `PORT`.
+- The service does not read `BETTER_AUTH_SECRET`, the secret of the
+  TypeScript service. A set value has no effect.
 - An invalid value stops the start with exit code 2. The message names the
   setting, never its value.
 
@@ -888,19 +907,23 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 
    - The snapshot differs only by the Rust migrations that production
      already has, and by the objects of the extension `pg_stat_statements`.
-     Through migration 4, the migrations add `app_sessions` and
-     `contract_terms` and drop three indexes (§5). The precheck prints
+     Through migration 5, the migrations add `app_sessions` and
+     `contract_terms`, and drop three indexes, the tables `"session"` and
+     `"verification"`, and seven columns of `user_settings` (§5). The
+     snapshot numbers the columns of a table from 1, so the diff also shows
+     `timezone`, `area`, and `updated_at` of `user_settings` with the
+     numbers 002 to 004 in place of 009 to 011. Before migration 5, the
+     diff does not show the two tables and the `user_settings` columns.
+     The precheck prints
      `typescript_migrations|1,2,3,4,5,6,7`, the server version, `0` for
      each `user_settings_invalid_*` count,
      `contract_terms_invalid_night_hours|0`, and
-     `user_settings_without_contract_terms|0`. Before migration 4, the last
-     two lines end with `not migrated` in place of the count. A non-zero
-     count is a user for whom the Rust service answers 500. It blocks the
-     merge until the owner decides how to correct the row. After a release,
-     a non-zero `user_settings_without_contract_terms` is a user that the
-     previous release created during the deploy (§5). A non-zero
-     `user_settings_invalid_night_hours` also makes migration 4 fail: the
-     deploy stops at `migrate`, and the active deployment stays in service.
+     `user_settings_without_contract_terms|0`. After migration 5, the line
+     `user_settings_invalid_night_hours` ends with `dropped` in place of
+     the count. Before migration 4, the last two lines end with
+     `not migrated` in place of the count. A non-zero count is a user for
+     whom the Rust service answers 500. It blocks the merge until the owner
+     decides how to correct the row.
    - `DATABASE_URL` of the service uses the direct Neon endpoint (no
      `-pooler` in the host name) with `sslmode=verify-full` (§5).
    - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
@@ -930,11 +953,12 @@ and an API key.
 - **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. A
   revert keeps the migration files of the reverted change. The revert path
   to the TypeScript service ended on 2026-11-17 (docs/adr/0010).
-- **Data:** a revert of the contract terms versions keeps `contract_terms`.
-  The reverted service reads the term columns of `user_settings`. They hold
-  the terms at the time of migration 4: a terms version that a user saved
-  later is not in them. The owner then enters the current terms again in
-  the setup UI. A revert to a 180-day vintage retention deletes every
+- **Data:** migration 5 dropped the term columns of `user_settings`. A
+  revert PR of the contract terms versions therefore needs a data step
+  first: a new migration that adds the term columns again and fills them
+  from `contract_terms`. A return to the TypeScript service is not
+  possible: its tables `"session"` and `"verification"` and its term
+  columns are gone. A revert to a 180-day vintage retention deletes every
   Fingrid forecast vintage older than 180 days at its first Fingrid run.
   That deletion cannot be undone.
 - **Database:** no rollback database exists. The owner removed the Railway

@@ -12,8 +12,6 @@ use reqwest::Url;
 
 const DEFAULT_PORT: u16 = 3000;
 const DEFAULT_LOCAL_AUTH_URL: &str = "http://localhost:3000";
-/// Used only outside production; production requires `BETTER_AUTH_SECRET`.
-const DEV_FALLBACK_SECRET: &str = "dev-only-better-auth-secret-must-be-32+";
 
 /// A secret value. `Debug` never shows it.
 #[derive(Clone)]
@@ -62,8 +60,6 @@ pub struct Config {
     pub database_url: Secret,
     /// `BETTER_AUTH_URL`, or the local default outside production.
     pub auth_base_url: Url,
-    /// `BETTER_AUTH_SECRET`, or the development fallback outside production.
-    pub auth_secret: Secret,
     /// The Fingrid job runs only when this key is set.
     pub fingrid_api_key: Option<Secret>,
     /// The weather job runs only when this key is set.
@@ -132,12 +128,6 @@ impl Config {
             Some(text) if production && text.trim().is_empty() => None,
             Some(text) => Url::parse(&text).ok(),
         });
-        let auth_secret = reader.read("BETTER_AUTH_SECRET", |v| match v {
-            None if production => None,
-            None => Some(Secret::new(DEV_FALLBACK_SECRET.to_owned())),
-            Some(text) if production && text.trim().is_empty() => None,
-            Some(text) => non_empty(text).map(Secret::new),
-        });
         let fingrid_api_key = reader.read("FINGRID_API_KEY", optional_secret);
         let openweathermap_api_key = reader.read("OPENWEATHERMAP_API_KEY", optional_secret);
         let log_format = reader.read("LOG_FORMAT", |v| match v.as_deref() {
@@ -151,7 +141,6 @@ impl Config {
             Some(port),
             Some(database_url),
             Some(auth_base_url),
-            Some(auth_secret),
             Some(fingrid_api_key),
             Some(openweathermap_api_key),
             Some(log_format),
@@ -160,7 +149,6 @@ impl Config {
             port,
             database_url,
             auth_base_url,
-            auth_secret,
             fingrid_api_key,
             openweathermap_api_key,
             log_format,
@@ -176,7 +164,6 @@ impl Config {
             bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)),
             database_url,
             auth_base_url,
-            auth_secret,
             fingrid_api_key,
             openweathermap_api_key,
             log_format,
@@ -262,7 +249,6 @@ mod tests {
         vars.extend([
             ("NODE_ENV", "production"),
             ("BETTER_AUTH_URL", "https://spot.example"),
-            ("BETTER_AUTH_SECRET", "secret-auth-value"),
         ]);
         vars
     }
@@ -277,7 +263,6 @@ mod tests {
         assert_eq!(config.mode, RunMode::Development);
         assert_eq!(config.bind, "0.0.0.0:3000".parse().unwrap());
         assert_eq!(config.auth_base_url.as_str(), "http://localhost:3000/");
-        assert_eq!(config.auth_secret.expose(), DEV_FALLBACK_SECRET);
         assert!(config.fingrid_api_key.is_none());
         assert!(config.openweathermap_api_key.is_none());
         assert_eq!(config.log_format, LogFormat::Json);
@@ -296,7 +281,6 @@ mod tests {
         assert_eq!(config.mode, RunMode::Production);
         assert_eq!(config.bind.port(), 8080);
         assert_eq!(config.auth_base_url.as_str(), "https://spot.example/");
-        assert_eq!(config.auth_secret.expose(), "secret-auth-value");
         assert_eq!(
             config.fingrid_api_key.as_ref().map(Secret::expose),
             Some("fingrid-key")
@@ -309,17 +293,38 @@ mod tests {
     }
 
     #[test]
-    fn production_requires_the_auth_settings() {
+    fn production_requires_the_auth_url() {
         let mut vars = valid();
         vars.insert("NODE_ENV", "production");
-        assert_eq!(
-            load(&vars).unwrap_err().invalid,
-            ["BETTER_AUTH_URL", "BETTER_AUTH_SECRET"]
-        );
+        assert_eq!(load(&vars).unwrap_err().invalid, ["BETTER_AUTH_URL"]);
 
         let mut vars = production();
-        vars.insert("BETTER_AUTH_SECRET", "   ");
-        assert_eq!(load(&vars).unwrap_err().invalid, ["BETTER_AUTH_SECRET"]);
+        vars.insert("BETTER_AUTH_URL", "   ");
+        assert_eq!(load(&vars).unwrap_err().invalid, ["BETTER_AUTH_URL"]);
+    }
+
+    #[test]
+    fn a_set_better_auth_secret_is_ignored() {
+        // The variable of the TypeScript service can still be set.
+        for value in [None, Some("secret-auth-value"), Some(""), Some("   ")] {
+            let mut vars = production();
+            if let Some(value) = value {
+                vars.insert("BETTER_AUTH_SECRET", value);
+            }
+            let config = load(&vars).unwrap();
+            assert_eq!(config.mode, RunMode::Production, "{value:?}");
+            assert!(!format!("{config:?}").contains("secret-auth-value"));
+        }
+        // A value that is not valid Unicode is not read.
+        let vars = production();
+        let config = Config::from_lookup(|name| {
+            if name == "BETTER_AUTH_SECRET" {
+                Some(Err(()))
+            } else {
+                vars.get(name).map(|v| Ok((*v).to_owned()))
+            }
+        });
+        assert!(config.is_ok());
     }
 
     #[test]
@@ -339,7 +344,6 @@ mod tests {
             ("PORT", "0"),
             ("DATABASE_URL", ""),
             ("BETTER_AUTH_URL", "not a url"),
-            ("BETTER_AUTH_SECRET", ""),
             ("FINGRID_API_KEY", ""),
             ("OPENWEATHERMAP_API_KEY", ""),
             ("LOG_FORMAT", "xml"),
@@ -351,7 +355,6 @@ mod tests {
                 "PORT",
                 "DATABASE_URL",
                 "BETTER_AUTH_URL",
-                "BETTER_AUTH_SECRET",
                 "FINGRID_API_KEY",
                 "OPENWEATHERMAP_API_KEY",
                 "LOG_FORMAT"
@@ -390,12 +393,7 @@ mod tests {
             ("OPENWEATHERMAP_API_KEY", "owm-key"),
         ]);
         let debug = format!("{:?}", load(&vars).unwrap());
-        for secret in [
-            "secret-password",
-            "secret-auth-value",
-            "fingrid-key",
-            "owm-key",
-        ] {
+        for secret in ["secret-password", "fingrid-key", "owm-key"] {
             assert!(!debug.contains(secret), "{secret}");
         }
 

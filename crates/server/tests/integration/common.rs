@@ -15,6 +15,7 @@ use spot_price_server::upstream::fingrid::FingridClient;
 use spot_price_server::upstream::nordpool::{NordPoolClient, RetrySettings};
 use spot_price_server::upstream::weather::WeatherClient;
 use spot_price_server::upstream::{HttpClient, HttpSettings};
+use sqlx::PgPool;
 
 /// One request that the fake server received.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,14 +163,76 @@ pub fn days(instant: Timestamp, days: i64) -> Timestamp {
     hours(instant, days * 24)
 }
 
-/// Gives each `user_settings` row without a terms version its first version
-/// from the term columns of the row, like migration 4. For seeds that write
-/// only `user_settings`.
-pub const COPY_SETTINGS_TO_TERMS: &str = "
+/// Gives each `user_settings` row without a terms version the default
+/// terms of a new account as its first version.
+pub const ADD_DEFAULT_TERMS: &str = "
+    INSERT INTO contract_terms
+      (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
+       tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
+    SELECT user_id, DATE '1970-01-01', 0.49, 2.92, 1.37, 2.82752, 25.5, 22, 7
+    FROM user_settings s
+    WHERE NOT EXISTS (SELECT 1 FROM contract_terms t WHERE t.user_id = s.user_id)";
+
+/// The `user_settings` and `"session"` tables of the TypeScript schema, as
+/// temporary tables. On their connection they hide the tables of the same
+/// names, so the unchanged golden seed loads into them.
+const TYPESCRIPT_SEED_TABLES: &str = r#"
+    CREATE TEMP TABLE user_settings (
+      user_id TEXT PRIMARY KEY,
+      margin_cents_kwh DOUBLE PRECISION NOT NULL DEFAULT 0.49,
+      transfer_day_cents_kwh DOUBLE PRECISION NOT NULL DEFAULT 2.92,
+      transfer_night_cents_kwh DOUBLE PRECISION NOT NULL DEFAULT 1.37,
+      tax_cents_kwh DOUBLE PRECISION NOT NULL DEFAULT 2.82752,
+      vat_percent DOUBLE PRECISION NOT NULL DEFAULT 25.5,
+      night_start_hour INTEGER NOT NULL DEFAULT 22,
+      night_end_hour INTEGER NOT NULL DEFAULT 7,
+      timezone TEXT NOT NULL DEFAULT 'Europe/Helsinki',
+      area TEXT NOT NULL DEFAULT 'FI',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TEMP TABLE "session" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "expiresAt" TIMESTAMPTZ NOT NULL,
+      "token" TEXT NOT NULL UNIQUE,
+      "createdAt" TIMESTAMPTZ NOT NULL,
+      "updatedAt" TIMESTAMPTZ NOT NULL,
+      "ipAddress" TEXT,
+      "userAgent" TEXT,
+      "userId" TEXT NOT NULL
+    )"#;
+
+/// Moves the rows of the temporary tables to the schema of the service:
+/// each settings row with its terms as the first version, like migration 4,
+/// and each session with a 32-byte token as an app session of that token.
+const MOVE_TYPESCRIPT_SEED: &str = r#"
+    INSERT INTO public.user_settings (user_id, timezone, area, updated_at)
+    SELECT user_id, timezone, area, updated_at FROM pg_temp.user_settings;
     INSERT INTO contract_terms
       (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
        tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
     SELECT user_id, DATE '1970-01-01', margin_cents_kwh, transfer_day_cents_kwh,
            transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour, night_end_hour
-    FROM user_settings s
-    WHERE NOT EXISTS (SELECT 1 FROM contract_terms t WHERE t.user_id = s.user_id)";
+    FROM pg_temp.user_settings;
+    INSERT INTO app_sessions (token_hash, user_id, created_at, expires_at)
+    SELECT sha256(convert_to(token, 'UTF8')), "userId", "createdAt", "expiresAt"
+    FROM pg_temp."session" WHERE octet_length(token) = 32;
+    DROP TABLE pg_temp.user_settings, pg_temp."session""#;
+
+/// Loads the seed of the HTTP golden cases, then `setup`. The seed has the
+/// TypeScript schema: it writes the term columns of `user_settings` and the
+/// table `"session"`, which the schema of the service does not have.
+pub async fn load_golden_seed(pool: &PgPool, seed: &str, setup: Option<&str>) {
+    // The temporary tables exist on one connection only.
+    let mut connection = pool.acquire().await.unwrap();
+    for sql in [Some(TYPESCRIPT_SEED_TABLES), Some(seed), setup] {
+        let Some(sql) = sql else { continue };
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_owned()))
+            .execute(&mut *connection)
+            .await
+            .unwrap();
+    }
+    sqlx::raw_sql(MOVE_TYPESCRIPT_SEED)
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+}

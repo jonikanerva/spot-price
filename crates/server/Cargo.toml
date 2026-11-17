@@ -21,6 +21,7 @@ futures-util.workspace = true
 getrandom.workspace = true
 jiff.workspace = true
 jiff-sqlx.workspace = true
+log.workspace = true
 subtle.workspace = true
 reqwest.workspace = true
 scrypt.workspace = true

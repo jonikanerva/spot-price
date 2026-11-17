@@ -5,6 +5,15 @@ import { readChart } from "./chart.js";
 const TEST_USER = `e2e_${Date.now()}`;
 const TEST_PASS = "testpass1234";
 
+// YYYY-MM-DD of today in timeZone. A new account has Europe/Helsinki.
+const todayIn = (timeZone: string): string =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
 test.describe("Landing page", () => {
   test("loads with title and login form", async ({ page }) => {
     await page.goto("/");
@@ -131,6 +140,22 @@ test.describe("Contract terms versions", () => {
     await expect(page.locator("#validFrom")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
     await expect(page.locator("#validFrom")).not.toHaveValue("1970-01-01");
 
+    // A save without a date is refused in the page and sends no request.
+    const saves: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "PUT") saves.push(request.url());
+    });
+    await page.fill("#validFrom", "");
+    await page.fill("#margin", "0.66");
+    await page.click("#saveBtn");
+    await expect(page.locator("#settingsStatus")).toHaveText(
+      "Valid from date required",
+    );
+    await expect(page.locator("#saveBtn")).toBeEnabled();
+    expect(saves).toEqual([]);
+    await expect(items).toHaveCount(1);
+    await expect(items.first()).toContainText("Margin 0.49");
+
     // Schedule a change: the date first, because a new date loads its terms.
     await page.fill("#validFrom", "2099-01-01");
     await page.fill("#margin", "0.77");
@@ -181,7 +206,10 @@ test.describe("Contract terms versions", () => {
     await expect(page.locator("#margin")).toHaveValue("0.49");
     await expect(page.locator("#tax")).toHaveValue("2.82752");
 
-    // Delete a version with the keyboard only.
+    // Delete a version with the keyboard only, while the form holds it.
+    await later.getByRole("button", { name: /^Edit/ }).click();
+    await expect(page.locator("#validFrom")).toHaveValue("2099-06-01");
+    await expect(page.locator("#tax")).toHaveValue("3");
     page.once("dialog", (dialog) => void dialog.accept());
     await later.getByRole("button", { name: /^Delete/ }).focus();
     await page.keyboard.press("Enter");
@@ -189,6 +217,16 @@ test.describe("Contract terms versions", () => {
       "Deleted the version from 2099-06-01",
     );
     await expect(items).toHaveCount(2);
+    // The form then holds the terms of today and the date of today in the
+    // settings zone, so a save does not create the deleted version again.
+    await expect(page.locator("#validFrom")).toHaveValue(
+      todayIn("Europe/Helsinki"),
+    );
+    await expect(page.locator("#margin")).toHaveValue("0.49");
+    await expect(page.locator("#tax")).toHaveValue("2.82752");
+    await expect(page.locator("#settingsStatus")).toHaveText(
+      "Loaded the terms that apply today.",
+    );
 
     // Delete the other version; the first version is then the only one again.
     page.once("dialog", (dialog) => void dialog.accept());

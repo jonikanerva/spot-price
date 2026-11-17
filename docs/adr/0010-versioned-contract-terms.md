@@ -75,11 +75,20 @@ service (ADR 0001).
   `BETTER_AUTH_SECRET` have no use after the end of the revert path. Their
   removal is a follow-up.
 
+Update 2026-11-17: migration 5 dropped the old term columns of
+`user_settings` and the tables `"session"` and `"verification"`, and the
+service no longer reads `BETTER_AUTH_SECRET`. The three consequences above
+that name them describe the state before migration 5.
+
 ## Cost of reversal
 
 Medium. A revert PR restores the one-row behaviour without a data step, but
 it loses the terms versions that users saved after migration 4. The table
 `contract_terms` stays and is harmless.
+
+Update 2026-11-17: after migration 5, a revert PR needs a data step first.
+A new migration must add the term columns again and fill them from
+`contract_terms` (`STACK.md` §15).
 
 ## Reassessment
 

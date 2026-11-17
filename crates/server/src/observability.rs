@@ -20,7 +20,7 @@ use crate::config::LogFormat;
 /// The fields whose values may appear in the log. A value of these fields
 /// must never hold an API key, a password, a token, an e-mail address, an IP
 /// address, a request body, or free text from a user.
-pub const ALLOWED_FIELDS: [&str; 35] = [
+pub const ALLOWED_FIELDS: [&str; 37] = [
     "message",
     "request_id",
     "method",
@@ -59,6 +59,12 @@ pub const ALLOWED_FIELDS: [&str; 35] = [
     // Counts of forecast quarters and rows without a grid value.
     "missing_quarters",
     "missing_training_rows",
+    // True when a refused Fingrid response had a `WWW-Authenticate` header.
+    // A boolean; the header value is never logged.
+    "www_authenticate",
+    // The duration of a slow statement in the SQLx warning, in seconds. The
+    // fields of that warning with statement text stay out of this list.
+    "elapsed_secs",
 ];
 
 /// Installs the global subscriber. Events of this service at INFO and above
@@ -247,6 +253,48 @@ mod tests {
         assert_eq!(
             line["dropped_fields"],
             serde_json::json!(["api_key", "url"])
+        );
+    }
+
+    #[test]
+    fn a_slow_statement_warning_keeps_only_its_duration() {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(Capture(lines.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            // The fields of the SQLx 0.9 slow statement event.
+            let elapsed = std::time::Duration::from_millis(6500);
+            let slow_threshold = std::time::Duration::from_secs(5);
+            tracing::warn!(
+                target: "sqlx::query",
+                summary = "SELECT key_plaintext FROM api_keys …",
+                db.statement = "\n\nSELECT key_plaintext FROM api_keys WHERE user_id = $1\n",
+                rows_affected = 0_u64,
+                rows_returned = 1_u64,
+                ?elapsed,
+                elapsed_secs = elapsed.as_secs_f64(),
+                ?slow_threshold,
+                "slow statement: execution time exceeded alert threshold"
+            );
+        });
+        let lines = lines.lock().unwrap();
+        let line: Value = serde_json::from_str(&lines[0]).unwrap();
+        assert!(!lines[0].contains("api_keys"));
+        assert_eq!(
+            line["message"],
+            "slow statement: execution time exceeded alert threshold"
+        );
+        assert_eq!(line["target"], "sqlx::query");
+        assert_eq!(line["elapsed_secs"], 6.5);
+        assert_eq!(
+            line["dropped_fields"],
+            serde_json::json!([
+                "summary",
+                "db.statement",
+                "rows_affected",
+                "rows_returned",
+                "elapsed",
+                "slow_threshold"
+            ])
         );
     }
 }

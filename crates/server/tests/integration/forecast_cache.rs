@@ -80,11 +80,7 @@ impl<S: Subscriber> Layer<S> for Events {
 
 /// Loads the seed with a fixed `fetched_at` for every price.
 async fn seed(pool: &PgPool) {
-    sqlx::raw_sql(SEED).execute(pool).await.unwrap();
-    sqlx::raw_sql(crate::common::COPY_SETTINGS_TO_TERMS)
-        .execute(pool)
-        .await
-        .unwrap();
+    crate::common::load_golden_seed(pool, SEED, None).await;
     sqlx::query("UPDATE prices SET fetched_at = '2026-10-23T11:02:00Z'")
         .execute(pool)
         .await

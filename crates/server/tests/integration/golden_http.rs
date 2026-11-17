@@ -1175,37 +1175,14 @@ fn tomorrow_available_narrows_only_from_true_to_false() {
 /// Clears every application table and loads the seed and the case setup.
 async fn reset(pool: &PgPool, seed: &str, setup: Option<&str>) {
     sqlx::raw_sql(
-        r#"TRUNCATE app_sessions, api_keys, user_settings, usernames, "session", account,
-           verification, "user", prices, fingrid_actuals, fingrid_forecasts,
-           weather_forecasts, weather_daily_forecasts RESTART IDENTITY CASCADE"#,
+        r#"TRUNCATE app_sessions, api_keys, user_settings, usernames, account, "user", prices,
+           fingrid_actuals, fingrid_forecasts, weather_forecasts, weather_daily_forecasts
+           RESTART IDENTITY CASCADE"#,
     )
     .execute(pool)
     .await
     .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(seed.to_owned()))
-        .execute(pool)
-        .await
-        .unwrap();
-    if let Some(setup) = setup {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(setup.to_owned()))
-            .execute(pool)
-            .await
-            .unwrap();
-    }
-    // The seed and the case setup write only `user_settings`.
-    sqlx::raw_sql(crate::common::COPY_SETTINGS_TO_TERMS)
-        .execute(pool)
-        .await
-        .unwrap();
-    // Each seeded Better Auth session gets an app session of the same token.
-    sqlx::raw_sql(
-        r#"INSERT INTO app_sessions (token_hash, user_id, created_at, expires_at)
-           SELECT sha256(convert_to(token, 'UTF8')), "userId", "createdAt", "expiresAt"
-           FROM "session" WHERE octet_length(token) = 32"#,
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    crate::common::load_golden_seed(pool, seed, setup).await;
 }
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]

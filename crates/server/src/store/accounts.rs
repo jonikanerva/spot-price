@@ -1,10 +1,10 @@
 //! User accounts in the Better Auth tables `"user"` and `"account"`, and the
 //! `usernames` table.
 //!
-//! The rows have the Better Auth format, so the TypeScript service can sign
-//! these users in after a revert: the e-mail is `<username>@local.spot`, the
-//! credential account has `providerId = 'credential'` and
-//! `accountId = userId`, and the password is a Better Auth scrypt hash.
+//! The rows have the Better Auth format of the existing accounts: the e-mail
+//! is `<username>@local.spot`, the credential account has
+//! `providerId = 'credential'` and `accountId = userId`, and the password is
+//! a Better Auth scrypt hash.
 
 use jiff::Timestamp;
 use jiff_sqlx::ToSqlx as _;

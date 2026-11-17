@@ -13,18 +13,20 @@
 --   user_settings_without_contract_terms|0
 --
 -- Before migration 4 creates the table `contract_terms`, the last two lines
--- end with `not migrated` in place of the count.
+-- end with `not migrated` in place of the count. After migration 5 drops the
+-- night hours of `user_settings`, that line ends with `dropped`.
 --
 -- The statement fails when the table `_migrations` does not exist.
 
 -- A count is the number of rows that the Rust service rejects; each such
 -- user gets 500 from the price routes. A `user_settings` row with an invalid
--- night hour also makes migration 4 fail. A `user_settings` row without a
+-- night hour makes migration 4 fail. A `user_settings` row without a
 -- `contract_terms` row is a user without a terms version. Print counts only,
 -- never a user id or a stored value.
 
--- `query_to_xml` runs a count on `contract_terms` only when the table
--- exists: a direct reference fails the whole statement before migration 4.
+-- `query_to_xml` runs a count only when its table and columns exist: a
+-- direct reference fails the whole statement before migration 4 or after
+-- migration 5.
 
 -- The lists must equal the time zones and area codes of
 -- crates/domain/src/areas.rs.
@@ -57,10 +59,23 @@ lines(position, line) AS (
   FROM user_settings
   WHERE area NOT IN (SELECT code FROM supported_areas)
   UNION ALL
-  SELECT 5, 'user_settings_invalid_night_hours|' || count(*)
-  FROM user_settings
-  WHERE night_start_hour NOT BETWEEN 0 AND 23
-     OR night_end_hour NOT BETWEEN 0 AND 23
+  SELECT 5, 'user_settings_invalid_night_hours|' || CASE
+    WHEN NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'user_settings'
+        AND column_name = 'night_start_hour'
+    ) THEN 'dropped'
+    ELSE coalesce(substring(
+      query_to_xml(
+        'SELECT count(*) AS n FROM user_settings
+         WHERE night_start_hour NOT BETWEEN 0 AND 23
+            OR night_end_hour NOT BETWEEN 0 AND 23',
+        false, true, ''
+      )::text
+      FROM '<n>([0-9]+)</n>'
+    ), 'unreadable')
+  END
   UNION ALL
   SELECT 6, 'contract_terms_invalid_night_hours|' || CASE
     WHEN to_regclass('contract_terms') IS NULL THEN 'not migrated'
