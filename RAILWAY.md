@@ -46,11 +46,13 @@ pgc "$NEON" -X -q -A -t -f - <scripts/release-precheck.sql
 
 - The snapshot differs only by the Rust migrations that production already
   has, and by the objects of the extension `pg_stat_statements`. Through
-  migration 4, the migrations add `app_sessions` and `contract_terms` and
-  drop three indexes (`STACK.md` §5).
+  migration 5, the migrations add `app_sessions` and `contract_terms`, and
+  drop three indexes, the tables `"session"` and `"verification"`, and
+  seven columns of `user_settings` (`STACK.md` §5).
 - The precheck prints `typescript_migrations|1,2,3,4,5,6,7`, `0` for each
-  `user_settings_invalid_*` count, and two `contract_terms` lines
-  (`STACK.md` §15).
+  `user_settings_invalid_*` count, and two `contract_terms` lines. After
+  migration 5, the line `user_settings_invalid_night_hours` ends with
+  `dropped` (`STACK.md` §15).
 - `DATABASE_URL` uses the direct Neon endpoint (no `-pooler` in the host
   name) with `sslmode=verify-full`.
 - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`, with no trailing

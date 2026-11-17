@@ -173,8 +173,9 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   settings body before the other body checks, when the value is a
   `YYYY-MM-DD` date and the recorded body has no such field. The settings
   routes answer the terms of one contract terms version and its date (§5).
-  The replay gives each seeded `user_settings` row its first terms version,
-  like migration 4.
+  The seed has the TypeScript schema. The replay loads it through
+  temporary tables and gives each seeded `user_settings` row its first
+  terms version, like migration 4.
 - `GET /api/v1/me/settings/versions` and
   `DELETE /api/v1/me/settings/versions/{validFrom}` have no TypeScript
   recording. `contract_terms.rs` tests them.
@@ -434,7 +435,8 @@ connection.
   2026-11-16 the database was the Railway service `Postgres spot-price`.
   The owner removed that service and its volume on 2026-11-17 (§15). The
   schema is the schema of the TypeScript migrations
-  `001`–`007` plus `app_sessions` and `contract_terms`. The schema `public`
+  `001`–`007` plus `app_sessions` and `contract_terms`, without the objects
+  that migrations 3 and 5 drop. The schema `public`
   also holds the extension `pg_stat_statements`; the copy brought it from
   the Railway database.
 - **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
@@ -444,10 +446,15 @@ connection.
   indexes, with a `lock_timeout` of 5 s. `0004_contract_terms.sql` adds
   `contract_terms` and copies each `user_settings` row as the terms version
   of `1970-01-01`, with a `lock_timeout` of 5 s. It fails when a
-  `user_settings` row has a night hour outside 0–23 (§15). After
-  migration 4, the production catalog differs from
-  `fixtures/schema-snapshot.txt` by the three dropped indexes and by the
-  objects of `app_sessions`, of `contract_terms`, and of the extension
+  `user_settings` row has a night hour outside 0–23 (§15).
+  `0005_drop_unused_columns_and_tables.sql` drops the Better Auth tables
+  `"session"` and `"verification"` and the seven term columns of
+  `user_settings`, with a `lock_timeout` of 5 s. It deletes their data and
+  cannot be undone (owner approval 2026-11-17). After migration 5, the
+  production catalog differs from `fixtures/schema-snapshot.txt` by the
+  three dropped indexes, by the objects of `"session"` and
+  `"verification"`, by the seven term columns of `user_settings`, and by
+  the objects of `app_sessions`, of `contract_terms`, and of the extension
   `pg_stat_statements`. The migration runs as a separate step before the
   server starts (§15).
   `serve` refuses to start on an unmigrated database. New migrations MUST
@@ -539,9 +546,8 @@ connection.
   is not a kill checkpoint, and the date alone closes nothing. If the work
   is closed later, the daily table is dropped in the same PR.
 - **Accounts:** `"user"`, `"account"`, `usernames`, `user_settings`,
-  `contract_terms`, `api_keys` (plaintext keys, `VISION.md`). The service
-  does not use the Better Auth `"session"` and `"verification"` tables;
-  their removal is a follow-up.
+  `contract_terms`, `api_keys` (plaintext keys, `VISION.md`), and
+  `app_sessions`.
 - **`user_settings`, `contract_terms`:** `user_settings` holds the time
   zone and the area of a user, one current value each. `contract_terms`
   holds the versions of the contract terms: margin, day and night transfer,
@@ -553,12 +559,8 @@ connection.
   first session read create the settings row and the version of
   `1970-01-01` in one statement. A user has 1 to 100 versions. A save or a
   delete locks the settings row first. A save writes the time zone, the
-  area, and the version in one transaction. `user_settings` keeps the term
-  columns of the TypeScript schema, because the release before migration 4
-  reads them during a deploy. The service does not read or write them; a
-  new row gets the column defaults. Their removal is a follow-up. A sign-up
-  or a settings save through the previous release, after migration 4 and
-  before the switch, does not reach `contract_terms` (docs/adr/0010).
+  area, and the version in one transaction. Migration 5 dropped the term
+  columns that `user_settings` had in the TypeScript schema.
 - **Recovery:** the Neon history window of 6 hours gives a point-in-time
   restore of the branch in the Neon Console. Older data has no restore
   path. The owner accepts the data-loss risk (2026-10-19). After a loss,
@@ -888,19 +890,23 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 
    - The snapshot differs only by the Rust migrations that production
      already has, and by the objects of the extension `pg_stat_statements`.
-     Through migration 4, the migrations add `app_sessions` and
-     `contract_terms` and drop three indexes (§5). The precheck prints
+     Through migration 5, the migrations add `app_sessions` and
+     `contract_terms`, and drop three indexes, the tables `"session"` and
+     `"verification"`, and seven columns of `user_settings` (§5). The
+     snapshot numbers the columns of a table from 1, so the diff also shows
+     `timezone`, `area`, and `updated_at` of `user_settings` with the
+     numbers 002 to 004 in place of 009 to 011. Before migration 5, the
+     diff does not show the two tables and the `user_settings` columns.
+     The precheck prints
      `typescript_migrations|1,2,3,4,5,6,7`, the server version, `0` for
      each `user_settings_invalid_*` count,
      `contract_terms_invalid_night_hours|0`, and
-     `user_settings_without_contract_terms|0`. Before migration 4, the last
-     two lines end with `not migrated` in place of the count. A non-zero
-     count is a user for whom the Rust service answers 500. It blocks the
-     merge until the owner decides how to correct the row. After a release,
-     a non-zero `user_settings_without_contract_terms` is a user that the
-     previous release created during the deploy (§5). A non-zero
-     `user_settings_invalid_night_hours` also makes migration 4 fail: the
-     deploy stops at `migrate`, and the active deployment stays in service.
+     `user_settings_without_contract_terms|0`. After migration 5, the line
+     `user_settings_invalid_night_hours` ends with `dropped` in place of
+     the count. Before migration 4, the last two lines end with
+     `not migrated` in place of the count. A non-zero count is a user for
+     whom the Rust service answers 500. It blocks the merge until the owner
+     decides how to correct the row.
    - `DATABASE_URL` of the service uses the direct Neon endpoint (no
      `-pooler` in the host name) with `sslmode=verify-full` (§5).
    - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
@@ -930,11 +936,12 @@ and an API key.
 - **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. A
   revert keeps the migration files of the reverted change. The revert path
   to the TypeScript service ended on 2026-11-17 (docs/adr/0010).
-- **Data:** a revert of the contract terms versions keeps `contract_terms`.
-  The reverted service reads the term columns of `user_settings`. They hold
-  the terms at the time of migration 4: a terms version that a user saved
-  later is not in them. The owner then enters the current terms again in
-  the setup UI. A revert to a 180-day vintage retention deletes every
+- **Data:** migration 5 dropped the term columns of `user_settings`. A
+  revert PR of the contract terms versions therefore needs a data step
+  first: a new migration that adds the term columns again and fills them
+  from `contract_terms`. A return to the TypeScript service is not
+  possible: its tables `"session"` and `"verification"` and its term
+  columns are gone. A revert to a 180-day vintage retention deletes every
   Fingrid forecast vintage older than 180 days at its first Fingrid run.
   That deletion cannot be undone.
 - **Database:** no rollback database exists. The owner removed the Railway

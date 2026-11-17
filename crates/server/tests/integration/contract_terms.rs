@@ -17,7 +17,7 @@ use spot_price_server::http::{AppState, router};
 use sqlx::PgPool;
 use tower::ServiceExt as _;
 
-use crate::common::{COPY_SETTINGS_TO_TERMS, ts};
+use crate::common::{load_golden_seed, ts};
 
 /// 14:00 in Helsinki on 2026-11-30, the day before the terms change.
 const EVE: &str = "2026-11-30T12:00:00Z";
@@ -840,14 +840,7 @@ async fn the_forecast_uses_the_terms_of_the_local_date_of_each_quarter(pool: PgP
         "/tests/golden/http/seed.sql"
     ))
     .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(seed))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::raw_sql(COPY_SETTINGS_TO_TERMS)
-        .execute(&pool)
-        .await
-        .unwrap();
+    load_golden_seed(&pool, &seed, None).await;
     // New terms from 2026-10-27: every term differs from the first version.
     sqlx::raw_sql(
         "INSERT INTO contract_terms
@@ -915,14 +908,7 @@ async fn the_forecast_band_totals_use_the_terms_of_each_quarter(pool: PgPool) {
         "/tests/golden/http/seed.sql"
     ))
     .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(seed))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::raw_sql(COPY_SETTINGS_TO_TERMS)
-        .execute(&pool)
-        .await
-        .unwrap();
+    load_golden_seed(&pool, &seed, None).await;
     sqlx::raw_sql(
         "INSERT INTO contract_terms
            (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh,

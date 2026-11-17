@@ -58,7 +58,7 @@ const EXPECTED_SNAPSHOT: &str = include_str!("../fixtures/schema-snapshot.txt");
 /// The version of the baseline migration.
 const BASELINE: i64 = 1;
 
-/// Every application table, for the row comparison.
+/// Every table of the TypeScript schema, for the row comparison.
 const TABLES: [&str; 13] = [
     "\"user\"",
     "\"session\"",
@@ -86,10 +86,15 @@ async fn snapshot(pool: &PgPool) -> String {
     text
 }
 
-/// Every row of every table, as JSON text in a fixed order.
+/// Every row of every table of the TypeScript schema.
 async fn rows(pool: &PgPool) -> Vec<String> {
+    rows_of(pool, &TABLES).await
+}
+
+/// Every row of `tables`, as JSON text in a fixed order.
+async fn rows_of(pool: &PgPool, tables: &[&str]) -> Vec<String> {
     let mut all = Vec::new();
-    for table in TABLES {
+    for table in tables {
         let sql = format!(
             "SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]')::text FROM {table} t"
         );
@@ -497,7 +502,7 @@ async fn the_release_precheck_counts_the_settings_that_the_service_rejects(pool:
 async fn the_release_precheck_counts_the_invalid_terms_after_migration_4(pool: PgPool) {
     apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
     insert_representative_rows(&pool).await;
-    db::migrate(&pool).await.unwrap();
+    MIGRATOR.run_to(4, &pool).await.unwrap();
     let last_two = |lines: Vec<String>| lines[lines.len() - 2..].to_vec();
     assert_eq!(
         last_two(precheck(&pool).await),
@@ -538,6 +543,36 @@ async fn the_release_precheck_counts_the_invalid_terms_after_migration_4(pool: P
     );
 }
 
+#[sqlx::test(migrations = false)]
+async fn the_release_precheck_runs_after_migration_5(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    insert_representative_rows(&pool).await;
+    db::migrate(&pool).await.unwrap();
+    sqlx::raw_sql("INSERT INTO user_settings (user_id, timezone) VALUES ('late-1', 'UTC')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let version: String = sqlx::query_scalar("SELECT current_setting('server_version')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let lines = precheck(&pool).await;
+
+    assert_eq!(
+        lines,
+        [
+            "typescript_migrations|1,2,3,4,5,6,7".to_owned(),
+            format!("server_version|{version}"),
+            "user_settings_invalid_timezone|1".to_owned(),
+            "user_settings_invalid_area|0".to_owned(),
+            "user_settings_invalid_night_hours|dropped".to_owned(),
+            "contract_terms_invalid_night_hours|0".to_owned(),
+            "user_settings_without_contract_terms|1".to_owned(),
+        ]
+    );
+}
+
 /// `(user_id, valid_from, margin, day, night, tax, vat, start, end)` of each
 /// `contract_terms` row.
 type TermsRow = (String, String, f64, f64, f64, f64, f64, i32, i32);
@@ -569,7 +604,7 @@ async fn migration_4_copies_each_settings_row_as_the_first_version(pool: PgPool)
     .unwrap();
     let rows_before = rows(&pool).await;
 
-    db::migrate(&pool).await.unwrap();
+    MIGRATOR.run_to(4, &pool).await.unwrap();
 
     assert_eq!(
         contract_terms(&pool).await,
@@ -709,7 +744,7 @@ async fn the_redundant_indexes_are_dropped_on_a_typescript_database(pool: PgPool
     }
     let rows_before = rows(&pool).await;
 
-    db::migrate(&pool).await.unwrap();
+    MIGRATOR.run_to(3, &pool).await.unwrap();
 
     for name in DROPPED_INDEXES {
         assert!(!index_exists(&pool, name).await, "{name} after");
@@ -737,20 +772,7 @@ async fn the_redundant_indexes_are_dropped_on_an_empty_database(pool: PgPool) {
 #[sqlx::test(migrations = false)]
 async fn a_held_table_lock_fails_migration_3_and_keeps_the_indexes(pool: PgPool) {
     apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
-    db::migrate(&pool).await.unwrap();
-    // Back to the state before migration 3: the ledger without version 3
-    // and the later versions, and the three indexes of the baseline.
-    sqlx::raw_sql(
-        "DELETE FROM _sqlx_migrations WHERE version >= 3;
-         DROP TABLE contract_terms;
-         CREATE INDEX idx_fingrid_actuals_dataset_start
-           ON fingrid_actuals (dataset_id, start_time);
-         CREATE INDEX idx_fingrid_forecasts_issued ON fingrid_forecasts (issued_at);
-         CREATE INDEX idx_api_keys_user_id ON api_keys(user_id);",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    MIGRATOR.run_to(2, &pool).await.unwrap();
 
     // An open write transaction of the running release, like the Fingrid job.
     let mut writer = pool.begin().await.unwrap();
@@ -788,4 +810,217 @@ async fn a_held_table_lock_fails_migration_3_and_keeps_the_indexes(pool: PgPool)
     for name in DROPPED_INDEXES {
         assert!(!index_exists(&pool, name).await, "{name} after the retry");
     }
+}
+
+/// The term columns of `user_settings` that migration 5 drops.
+const DROPPED_TERM_COLUMNS: [&str; 7] = [
+    "margin_cents_kwh",
+    "transfer_day_cents_kwh",
+    "transfer_night_cents_kwh",
+    "tax_cents_kwh",
+    "vat_percent",
+    "night_start_hour",
+    "night_end_hour",
+];
+
+/// The tables whose rows migration 5 must not change.
+const TABLES_KEPT_BY_MIGRATION_5: [&str; 12] = [
+    "\"user\"",
+    "\"account\"",
+    "usernames",
+    "api_keys",
+    "contract_terms",
+    "app_sessions",
+    "prices",
+    "fingrid_actuals",
+    "fingrid_forecasts",
+    "weather_forecasts",
+    "weather_daily_forecasts",
+    "_migrations",
+];
+
+/// True for a snapshot line of an object that migration 5 drops.
+fn dropped_by_migration_5(line: &str) -> bool {
+    let fields: Vec<&str> = line.split('|').collect();
+    let dropped_table = |name: &str| name == "session" || name == "verification";
+    match fields[0] {
+        "column" => {
+            dropped_table(fields[1])
+                || (fields[1] == "user_settings" && DROPPED_TERM_COLUMNS.contains(&fields[3]))
+        }
+        "constraint" | "index" => dropped_table(fields[1]),
+        "relation" => {
+            dropped_table(fields[3])
+                || fields[3].starts_with("session_")
+                || fields[3].starts_with("verification_")
+        }
+        _ => false,
+    }
+}
+
+async fn user_settings_columns(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'user_settings'
+         ORDER BY ordinal_position",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+async fn table_exists(pool: &PgPool, name: &str) -> bool {
+    sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = false)]
+async fn migration_5_drops_only_the_unused_objects_on_a_typescript_database(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    insert_representative_rows(&pool).await;
+    MIGRATOR.run_to(4, &pool).await.unwrap();
+    // A second version, which the term columns of `user_settings` never had.
+    sqlx::raw_sql(
+        "INSERT INTO contract_terms
+           (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh,
+            transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
+         VALUES ('u1', '2026-12-01', 0.59, 2.92, 1.37, 2.82752, 25.5, 22, 7);
+         INSERT INTO app_sessions (token_hash, user_id, created_at, expires_at)
+         VALUES (sha256('token'::bytea), 'u1', '2026-01-01T00:00:00Z', '2026-01-08T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let schema_before = snapshot(&pool).await;
+    let rows_before = rows_of(&pool, &TABLES_KEPT_BY_MIGRATION_5).await;
+    let settings_before: Vec<(String, String, String, String)> = settings_rows(&pool).await;
+
+    db::migrate(&pool).await.unwrap();
+    db::ensure_migrated(&pool).await.unwrap();
+
+    // The snapshot loses the lines of the dropped objects. The snapshot
+    // numbers the columns of a table from 1, so the three last columns of
+    // `user_settings` get new numbers. Nothing else changes.
+    let schema_after = snapshot(&pool).await;
+    let removed: Vec<&str> = schema_before
+        .lines()
+        .filter(|line| !schema_after.lines().any(|after| after == *line))
+        .collect();
+    let added: Vec<&str> = schema_after
+        .lines()
+        .filter(|line| !schema_before.lines().any(|before| before == *line))
+        .collect();
+    let renumbered_before = [
+        "column|user_settings|009|timezone|text|not null|'Europe/Helsinki'::text|||",
+        "column|user_settings|010|area|text|not null|'FI'::text|||",
+        "column|user_settings|011|updated_at|timestamp with time zone|not null|now()|||",
+    ];
+    assert_eq!(
+        added,
+        [
+            "column|user_settings|002|timezone|text|not null|'Europe/Helsinki'::text|||",
+            "column|user_settings|003|area|text|not null|'FI'::text|||",
+            "column|user_settings|004|updated_at|timestamp with time zone|not null|now()|||",
+        ]
+    );
+    let dropped: Vec<&str> = removed
+        .iter()
+        .copied()
+        .filter(|line| !renumbered_before.contains(line))
+        .collect();
+    assert_eq!(removed.len(), dropped.len() + renumbered_before.len());
+    for line in &dropped {
+        assert!(dropped_by_migration_5(line), "{line}");
+    }
+    // 8 + 6 + 7 columns, 3 + 1 constraints, 3 + 2 indexes, 4 + 3 relations.
+    assert_eq!(dropped.len(), 37);
+    assert!(!table_exists(&pool, "\"session\"").await);
+    assert!(!table_exists(&pool, "verification").await);
+    assert_eq!(
+        user_settings_columns(&pool).await,
+        ["user_id", "timezone", "area", "updated_at"]
+    );
+    assert_eq!(
+        rows_of(&pool, &TABLES_KEPT_BY_MIGRATION_5).await,
+        rows_before
+    );
+    assert_eq!(settings_rows(&pool).await, settings_before);
+    assert_eq!(settings_before.len(), 1);
+}
+
+/// `(user_id, timezone, area, updated_at)` of each `user_settings` row.
+async fn settings_rows(pool: &PgPool) -> Vec<(String, String, String, String)> {
+    sqlx::query_as(
+        "SELECT user_id, timezone, area, updated_at::text FROM user_settings ORDER BY user_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = false)]
+async fn migration_5_applies_on_an_empty_database(pool: PgPool) {
+    db::migrate(&pool).await.unwrap();
+    assert!(!table_exists(&pool, "\"session\"").await);
+    assert!(!table_exists(&pool, "verification").await);
+    assert_eq!(
+        user_settings_columns(&pool).await,
+        ["user_id", "timezone", "area", "updated_at"]
+    );
+    // The kept columns keep their defaults.
+    sqlx::query("INSERT INTO user_settings (user_id) VALUES ('u1')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rows = settings_rows(&pool).await;
+    assert_eq!(
+        (rows[0].1.as_str(), rows[0].2.as_str()),
+        ("Europe/Helsinki", "FI")
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_held_table_lock_fails_migration_5_and_drops_nothing(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    insert_representative_rows(&pool).await;
+    MIGRATOR.run_to(4, &pool).await.unwrap();
+    let schema_before = snapshot(&pool).await;
+    let rows_before = rows(&pool).await;
+
+    // An open read transaction of the running release, like a price request.
+    let mut reader = pool.begin().await.unwrap();
+    sqlx::raw_sql("LOCK TABLE user_settings IN ACCESS SHARE MODE")
+        .execute(&mut *reader)
+        .await
+        .unwrap();
+
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(20), db::migrate(&pool))
+        .await
+        .expect("lock_timeout ends the wait");
+    assert_eq!(
+        result,
+        Err(MigrationFailure {
+            kind: MigrationFailureKind::Execute,
+            sqlstate: Some("55P03".to_owned()),
+            reason: None,
+            variant: None,
+            version: None,
+        })
+    );
+    assert!(started.elapsed() >= Duration::from_secs(4));
+    assert_eq!(snapshot(&pool).await, schema_before);
+    assert_eq!(rows(&pool).await, rows_before);
+    let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY 1")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, [1, 2, 3, 4]);
+
+    reader.rollback().await.unwrap();
+    db::migrate(&pool).await.unwrap();
+    assert!(!table_exists(&pool, "\"session\"").await);
 }

@@ -247,7 +247,7 @@ async fn invalid_stored_settings_answer_the_generic_500(pool: PgPool) {
     .await
     .unwrap();
     // The row has a terms version, so only the time zone is invalid.
-    sqlx::raw_sql(crate::common::COPY_SETTINGS_TO_TERMS)
+    sqlx::raw_sql(crate::common::ADD_DEFAULT_TERMS)
         .execute(&pool)
         .await
         .unwrap();

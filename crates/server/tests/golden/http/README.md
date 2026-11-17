@@ -45,7 +45,7 @@ Recorded environment of the committed files:
 
 | File                | Content                                                                                                                       |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `seed.sql`          | The shared seed. Load it into an empty, migrated database.                                                                    |
+| `seed.sql`          | The shared seed, in the TypeScript schema. The Rust harness loads it through temporary tables (see "Seed users").             |
 | `cases.json`        | The request and response cases.                                                                                               |
 | `bodies/*.body`     | Response bodies longer than 2048 characters, byte for byte.                                                                   |
 | `openapi.ts.json`   | The OpenAPI document of the TypeScript service, pretty-printed. The exact bytes are in `bodies/openapi-and-docs.0.json.body`. |
@@ -214,8 +214,12 @@ does.
 Every user has a `"user"`, an `"account"` (real Better Auth hash), a
 `usernames`, and an `api_keys` row. `usernames.user_id` is the only foreign key
 to `"user"`. `api_keys` and `user_settings` have no foreign key. The seed
-has no `contract_terms` rows: the Rust harness gives each `user_settings`
-row its first terms version after the seed and the case setup.
+has the TypeScript schema: it writes the term columns of `user_settings`
+and the table `"session"`, which the Rust schema does not have. The Rust
+harness loads the unchanged seed and the case setup through temporary
+tables of those two shapes. It then stores each `user_settings` row with
+its terms as the first `contract_terms` version, and each `"session"` row
+as an `app_sessions` row of the same token.
 
 | User  | API key           | Area | Time zone        | Night  | VAT  | Other terms            |
 | ----- | ----------------- | ---- | ---------------- | ------ | ---- | ---------------------- |
