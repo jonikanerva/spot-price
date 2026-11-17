@@ -1,7 +1,7 @@
 
       const $ = (id) => document.getElementById(id)
 
-      const state = { session: null, apiKey: '' }
+      const state = { session: null, apiKey: '', timezone: '', versions: [] }
       const areaTimezoneMap = {{AREA_TIMEZONE_MAP}}
 
       const setStatus = (id, type, msg) => {
@@ -451,6 +451,28 @@
         return true
       }
 
+      // YYYY-MM-DD of today in timeZone, not in the time zone of the browser.
+      const todayInZone = (timeZone) => {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).formatToParts(new Date())
+        const part = (type) => (parts.find((item) => item.type === type) || { value: '' }).value
+        return part('year') + '-' + part('month') + '-' + part('day')
+      }
+
+      const fillTerms = (terms) => {
+        $('margin').value = terms.marginCentsKwh
+        $('dayTransfer').value = terms.transferDayCentsKwh
+        $('nightTransfer').value = terms.transferNightCentsKwh
+        $('tax').value = terms.taxCentsKwh
+        $('vat').value = terms.vatPercent
+        $('nightStart').value = terms.nightStartHour
+        $('nightEnd').value = terms.nightEndHour
+      }
+
       const loadSettings = async () => {
         const response = await json('/api/v1/me/settings')
         if (!response.ok) {
@@ -459,16 +481,97 @@
         }
 
         const settings = response.data
-        $('margin').value = settings.marginCentsKwh
-        $('dayTransfer').value = settings.transferDayCentsKwh
-        $('nightTransfer').value = settings.transferNightCentsKwh
-        $('tax').value = settings.taxCentsKwh
-        $('vat').value = settings.vatPercent
-        $('nightStart').value = settings.nightStartHour
-        $('nightEnd').value = settings.nightEndHour
+        fillTerms(settings)
         $('area').value = settings.area
         $('timezone').value = settings.timezone
+        state.timezone = settings.timezone
+        $('validFrom').value = todayInZone(settings.timezone)
         setStatus('settingsStatus', 'ok', 'Settings loaded')
+      }
+
+      const versionButton = (label, className, version) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'btn btn-small ' + className
+        button.textContent = label
+        button.setAttribute('aria-label', label + ' the version from ' + version.validFrom)
+        return button
+      }
+
+      // The version that applies on date (YYYY-MM-DD): the latest that has
+      // started, else the first. The server uses the same rule.
+      const versionOn = (versions, date) => {
+        const started = versions.filter((version) => version.validFrom <= date)
+        return started.length > 0 ? started[started.length - 1] : versions[0]
+      }
+
+      const renderVersions = (versions) => {
+        state.versions = versions
+        const list = $('versionList')
+        const current = versionOn(versions, todayInZone(state.timezone))
+        list.replaceChildren(...versions.map((version) => {
+          const item = document.createElement('li')
+          item.className = 'version-item'
+          item.setAttribute('data-valid-from', version.validFrom)
+
+          const head = document.createElement('div')
+          head.className = 'version-head'
+          const date = document.createElement('span')
+          date.className = 'version-date'
+          date.textContent = 'From ' + version.validFrom + (version === current ? ' (applies today)' : '')
+          const actions = document.createElement('span')
+          actions.className = 'version-actions'
+          const edit = versionButton('Edit', 'btn-secondary', version)
+          edit.onclick = () => {
+            fillTerms(version)
+            $('validFrom').value = version.validFrom
+            setStatus('settingsStatus', 'ok', 'Editing the version from ' + version.validFrom + '. Save to replace it.')
+            $('margin').focus()
+          }
+          const remove = versionButton('Delete', 'btn-danger', version)
+          remove.disabled = versions.length < 2
+          if (remove.disabled) {
+            remove.title = 'The only version cannot be deleted'
+          }
+          remove.onclick = () => deleteVersion(version.validFrom)
+          actions.append(edit, remove)
+          head.append(date, actions)
+
+          const terms = document.createElement('div')
+          terms.className = 'version-terms'
+          terms.textContent =
+            'Margin ' + version.marginCentsKwh +
+            ' · Transfer day ' + version.transferDayCentsKwh +
+            ' / night ' + version.transferNightCentsKwh +
+            ' · Tax ' + version.taxCentsKwh +
+            ' · VAT ' + version.vatPercent + ' %' +
+            ' · Night ' + version.nightStartHour + '-' + version.nightEndHour
+          item.append(head, terms)
+          return item
+        }))
+      }
+
+      const loadVersions = async () => {
+        const response = await json('/api/v1/me/settings/versions')
+        if (!response.ok) {
+          setStatus('versionStatus', 'err', response.data.error || 'Failed')
+          return
+        }
+        renderVersions(response.data.versions || [])
+      }
+
+      const deleteVersion = async (validFrom) => {
+        if (!window.confirm('Delete the contract terms version from ' + validFrom + '?')) return
+        const response = await json('/api/v1/me/settings/versions/' + encodeURIComponent(validFrom), {
+          method: 'DELETE',
+        })
+        if (!response.ok) {
+          setStatus('versionStatus', 'err', response.data.error || 'Delete failed')
+          return
+        }
+        renderVersions(response.data.versions || [])
+        setStatus('versionStatus', 'ok', 'Deleted the version from ' + validFrom)
+        await loadTotalChart()
       }
 
       const loadTotalChart = async () => {
@@ -514,6 +617,18 @@
         $('dashboard').style.display = 'block'
         switchView('dash')
         await Promise.all([loadSettings(), loadTotalChart()])
+        await loadVersions()
+      }
+
+      // A save sends every term of the form. A new date therefore replaces
+      // the terms of the form with the terms that apply on that date, so a
+      // save never carries the terms of another date.
+      $('validFrom').onchange = () => {
+        const date = $('validFrom').value
+        const version = date ? versionOn(state.versions, date) : null
+        if (!version) return
+        fillTerms(version)
+        setStatus('settingsStatus', 'ok', 'Loaded the terms that apply on ' + date + '. Change them and save.')
       }
 
       $('area').onchange = () => {
@@ -574,6 +689,10 @@
           area: $('area').value,
           timezone: $('timezone').value,
         }
+        // Without a date, the server uses today in the saved time zone.
+        if ($('validFrom').value) {
+          payload.validFrom = $('validFrom').value
+        }
 
         const response = await json('/api/v1/me/settings', {
           method: 'PUT',
@@ -586,8 +705,10 @@
           return
         }
 
-        setStatus('settingsStatus', 'ok', 'Settings saved')
-        await loadTotalChart()
+        state.timezone = response.data.timezone
+        setStatus('settingsStatus', 'ok', 'Settings saved. These terms apply from ' + response.data.validFrom + '.')
+        setStatus('versionStatus', '', '')
+        await Promise.all([loadVersions(), loadTotalChart()])
       })
 
       $('navDash').onclick = () => switchView('dash')

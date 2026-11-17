@@ -96,8 +96,8 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
     (
         "openapi-and-docs",
         0,
-        "generated-at-description",
-        "the document is deep-equal to the TypeScript one after the removal of the generatedAt description of the forecast response; serde_json writes object keys in sorted order; owner decision: https://github.com/jonikanerva/spot-price/issues/136#issuecomment-6261547559",
+        "contract-document",
+        "the document differs from the TypeScript one by exactly the list INTENTIONAL of contract.rs: the generatedAt description of the forecast response (owner decision: https://github.com/jonikanerva/spot-price/issues/136#issuecomment-6261547559) and the versioned contract terms (owner decision of 2026-11-17, docs/adr/0010); serde_json writes object keys in sorted order",
     ),
     (
         "session-signup-full-flow",
@@ -255,8 +255,158 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
         "cookie",
         "a session older than 1 day since its last renewal gets the expiry now + 7 days and the cookie again; the TypeScript service never renewed",
     ),
-    ("root-html", 0, "body", ROOT_HTML_CHART),
-    ("root-html", 1, "body", ROOT_HTML_CHART),
+    (
+        "session-signup-full-flow",
+        8,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "session-signup-full-flow",
+        9,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "session-signup-full-flow",
+        10,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "session-login-existing-user",
+        3,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "session-grace-defaults-created",
+        1,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        0,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        1,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        2,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        3,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        4,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        5,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        6,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        7,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        8,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        10,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        11,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-valid",
+        12,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-validation-errors",
+        19,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-body-errors",
+        6,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-body-errors",
+        7,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-body-errors",
+        8,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-body-errors",
+        9,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-body-errors",
+        10,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-body-errors",
+        11,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    (
+        "settings-put-body-errors",
+        13,
+        "settings-valid-from",
+        SETTINGS_VALID_FROM,
+    ),
+    ("root-html", 0, "body", ROOT_HTML),
+    ("root-html", 1, "body", ROOT_HTML),
     (
         "public-spot",
         2,
@@ -373,7 +523,10 @@ const TOMORROW_ROUTE_COMPLETE_DAY: &str = "/api/v1/price/tomorrow is available o
 /// The body of `/api/v1/price/tomorrow` before the next day is complete.
 const UNPUBLISHED_TOMORROW: &str = r#"{"start":"","end":"","startLocal":"","endLocal":"","minTotalCentsKwh":0,"maxTotalCentsKwh":0,"averageTotalCentsKwh":0,"prices":[],"available":false,"expectedAt":"12:00 UTC"}"#;
 
-const ROOT_HTML_CHART: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels";
+const ROOT_HTML: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels. The owner's versioned contract terms (2026-11-17, docs/adr/0010): the settings form has a valid-from date and a list of the terms versions with edit and delete";
+
+/// The reason of each `settings-valid-from` entry.
+const SETTINGS_VALID_FROM: &str = "the settings body ends with validFrom, the date of the contract terms version that holds the returned terms; the TypeScript service had one set of terms without a date; owner decision of 2026-11-17, docs/adr/0010";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -579,23 +732,20 @@ fn mask_forecast_values(body: &str) -> Option<String> {
     }
 }
 
-/// The JSON pointer of the one description that the Rust contract document
-/// adds to the TypeScript document.
-const GENERATED_AT_DESCRIPTION: &str =
-    "/components/schemas/ForecastResponse/properties/generatedAt/description";
-
-/// `document` without the [`GENERATED_AT_DESCRIPTION`] value. `None` when
-/// the value is not a string.
-fn without_generated_at_description(document: &Value) -> Option<Value> {
-    let (parent, key) = GENERATED_AT_DESCRIPTION.rsplit_once('/')?;
-    let mut document = document.clone();
-    let removed = document.pointer_mut(parent)?.as_object_mut()?.remove(key)?;
-    removed.is_string().then_some(document)
+/// Whether `got` and `want` are `OpenAPI` documents that differ by exactly
+/// the list `INTENTIONAL` of `contract.rs`.
+fn is_contract_document(got: &Value, want: &Value) -> bool {
+    if got.get("openapi").is_none() || want.get("openapi").is_none() {
+        return false;
+    }
+    let mut found = Vec::new();
+    crate::contract::differences(want, got, "", &mut found);
+    found == crate::contract::INTENTIONAL
 }
 
 /// The kind of a body difference: `key-order` for equal JSON values,
-/// `generated-at-description` for a contract document that equals the
-/// recorded one without [`GENERATED_AT_DESCRIPTION`], `forecast-values` for
+/// `contract-document` for a contract document that differs from the
+/// recorded one by exactly the list of `contract.rs`, `forecast-values` for
 /// two forecast bodies that are byte for byte equal after
 /// [`mask_forecast_values`], `tomorrow-unavailable` for exactly
 /// [`UNPUBLISHED_TOMORROW`] where the recording is an available price list
@@ -607,10 +757,9 @@ fn body_difference(got: &str, want: &str) -> &'static str {
         return "key-order";
     }
     if let (Some(mine), Some(theirs)) = (&mine, &theirs)
-        && theirs.pointer(GENERATED_AT_DESCRIPTION).is_none()
-        && without_generated_at_description(mine).as_ref() == Some(theirs)
+        && is_contract_document(mine, theirs)
     {
-        return "generated-at-description";
+        return "contract-document";
     }
     let is_forecast = |value: &Option<Value>| {
         value.as_ref().and_then(|v| v.get("forecast")) == Some(&Value::Bool(true))
@@ -883,6 +1032,10 @@ impl Replay<'_> {
             );
             self.mismatch(index, "generated-at", format!("want {theirs} got {mine}"));
         }
+        if let Some(without) = without_valid_from(&body, &want_body) {
+            body = without;
+            self.mismatch(index, "settings-valid-from", "extra validFrom".to_owned());
+        }
         if let Some(narrowed) = tomorrow_available_narrowed(&body, &want_body) {
             body = narrowed;
             self.mismatch(
@@ -935,6 +1088,54 @@ fn generated_at_pair(got: &str, want: &str) -> Option<(String, String)> {
     };
     let (mine, theirs) = (value(got)?, value(want)?);
     (mine != theirs).then_some((mine, theirs))
+}
+
+/// A settings body `got` without its last field `validFrom`, when `want` is
+/// a settings body without that field and the value is a `YYYY-MM-DD` date.
+/// The Rust service adds the date of the terms version; the rest of the
+/// body must still match byte for byte.
+fn without_valid_from(got: &str, want: &str) -> Option<String> {
+    const KEY: &str = r#","validFrom":""#;
+    const USER: &str = r#"{"userId":""#;
+    if !got.starts_with(USER) || !want.starts_with(USER) || want.contains("validFrom") {
+        return None;
+    }
+    let (rest, value) = got.rsplit_once(KEY)?;
+    let date = value.strip_suffix("\"}")?;
+    (date.len() == 10 && date.parse::<jiff::civil::Date>().is_ok()).then(|| format!("{rest}}}"))
+}
+
+#[test]
+fn settings_valid_from_accepts_only_a_trailing_date() {
+    let want = r#"{"userId":"u","marginCentsKwh":0.49,"area":"FI"}"#;
+    let with = |tail: &str| want.replacen('}', tail, 1);
+    assert_eq!(
+        without_valid_from(&with(r#","validFrom":"1970-01-01"}"#), want).as_deref(),
+        Some(want)
+    );
+    // The value is not a date, the field is not last, or it is another field.
+    for tail in [
+        r#","validFrom":"1970-1-1"}"#,
+        r#","validFrom":"2026-02-30"}"#,
+        r#","validFrom":null}"#,
+        r#","validFrom":"1970-01-01","extra":1}"#,
+        r#","validfrom":"1970-01-01"}"#,
+    ] {
+        assert_eq!(without_valid_from(&with(tail), want), None, "{tail}");
+    }
+    // Another difference stays a difference after the removal.
+    let other = with(r#","validFrom":"1970-01-01"}"#).replace("0.49", "0.5");
+    assert_ne!(without_valid_from(&other, want).as_deref(), Some(want));
+    // A recording with the field, or a body that is not a settings body.
+    let recorded = with(r#","validFrom":"1970-01-01"}"#);
+    assert_eq!(without_valid_from(&recorded, &recorded), None);
+    assert_eq!(
+        without_valid_from(
+            r#"{"error":"x","validFrom":"1970-01-01"}"#,
+            r#"{"error":"x"}"#
+        ),
+        None
+    );
 }
 
 /// `got` with its one `"tomorrowAvailable":false` set to `true` when `want`
@@ -991,6 +1192,11 @@ async fn reset(pool: &PgPool, seed: &str, setup: Option<&str>) {
             .await
             .unwrap();
     }
+    // The seed and the case setup write only `user_settings`.
+    sqlx::raw_sql(crate::common::COPY_SETTINGS_TO_TERMS)
+        .execute(pool)
+        .await
+        .unwrap();
     // Each seeded Better Auth session gets an app session of the same token.
     sqlx::raw_sql(
         r#"INSERT INTO app_sessions (token_hash, user_id, created_at, expires_at)
@@ -1186,40 +1392,32 @@ fn forecast_values_masks_no_other_number_of_a_recorded_forecast_body() {
 }
 
 #[test]
-fn generated_at_description_accepts_only_that_description() {
-    let document = |description: Option<&str>, unit: &str| {
-        let mut property =
-            serde_json::json!({"example": "2026-02-28T13:00:00.000Z", "type": "string"});
-        if let Some(text) = description {
-            property["description"] = Value::from(text);
-        }
-        serde_json::json!({"components": {"schemas": {"ForecastResponse": {"properties": {
-            "generatedAt": property,
-            "unit": {"example": unit, "type": "string"},
-        }}}}})
-        .to_string()
-    };
-    let want = document(None, "c/kWh");
+fn contract_document_accepts_only_the_listed_differences() {
+    let want: Value = serde_json::from_str(&read("openapi.ts.json")).unwrap();
+    let got = spot_price_server::http::openapi::document().unwrap();
+    let kind = |got: &Value| body_difference(&got.to_string(), &want.to_string());
+    assert_eq!(kind(&got), "contract-document");
+
+    // Another change together with the listed differences.
+    let mut changed = got.clone();
+    changed["info"]["title"] = Value::from("Other");
+    assert_eq!(kind(&changed), "body");
+    let mut added = got.clone();
+    added["paths"]["/api/v1/other"] = serde_json::json!({});
+    assert_eq!(kind(&added), "body");
+    // A listed difference that has another value, or that is missing.
+    let mut reworded = got.clone();
+    reworded["paths"]["/api/v1/price/history"]["get"]["description"] = Value::from("Other");
+    assert_eq!(kind(&reworded), "body");
+    let mut without = got.clone();
+    without["paths"]
+        .as_object_mut()
+        .unwrap()
+        .remove("/api/v1/me/settings/versions");
+    assert_eq!(kind(&without), "body");
+    // A document that is not an OpenAPI document.
     assert_eq!(
-        body_difference(&document(Some("The data freshness."), "c/kWh"), &want),
-        "generated-at-description"
-    );
-    // Another change together with the description.
-    assert_eq!(
-        body_difference(&document(Some("The data freshness."), "EUR"), &want),
-        "body"
-    );
-    // A description that is not text, or a description in the recording.
-    let not_text = want.replacen(
-        r#""type":"string"}"#,
-        r#""type":"string","description":1}"#,
-        1,
-    );
-    assert_ne!(not_text, want);
-    assert_eq!(body_difference(&not_text, &want), "body");
-    let recorded = document(Some("Old."), "c/kWh");
-    assert_eq!(
-        body_difference(&document(Some("New."), "c/kWh"), &recorded),
+        body_difference(r#"{"a":1,"validFrom":"x"}"#, r#"{"a":1}"#),
         "body"
     );
 }

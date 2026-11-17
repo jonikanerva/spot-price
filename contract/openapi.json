@@ -38,6 +38,69 @@
         ],
         "type": "object"
       },
+      "ContractTermsVersion": {
+        "properties": {
+          "marginCentsKwh": {
+            "example": 0.5,
+            "type": "number"
+          },
+          "nightEndHour": {
+            "example": 7,
+            "type": "integer"
+          },
+          "nightStartHour": {
+            "example": 22,
+            "type": "integer"
+          },
+          "taxCentsKwh": {
+            "example": 2.79372,
+            "type": "number"
+          },
+          "transferDayCentsKwh": {
+            "example": 2.5,
+            "type": "number"
+          },
+          "transferNightCentsKwh": {
+            "example": 1.2,
+            "type": "number"
+          },
+          "validFrom": {
+            "description": "The local date (YYYY-MM-DD, in the user's timezone) from which this version applies.",
+            "example": "2026-12-01",
+            "type": "string"
+          },
+          "vatPercent": {
+            "example": 25.5,
+            "type": "number"
+          }
+        },
+        "required": [
+          "validFrom",
+          "marginCentsKwh",
+          "transferDayCentsKwh",
+          "transferNightCentsKwh",
+          "taxCentsKwh",
+          "vatPercent",
+          "nightStartHour",
+          "nightEndHour"
+        ],
+        "type": "object"
+      },
+      "ContractTermsVersions": {
+        "properties": {
+          "versions": {
+            "description": "Every contract terms version of the user, ascending by validFrom.",
+            "items": {
+              "$ref": "#/components/schemas/ContractTermsVersion"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "versions"
+        ],
+        "type": "object"
+      },
       "Error": {
         "properties": {
           "error": {
@@ -467,6 +530,11 @@
             "example": "abc123",
             "type": "string"
           },
+          "validFrom": {
+            "description": "The local date (YYYY-MM-DD, in the user's timezone) from which the returned contract terms apply.",
+            "example": "1970-01-01",
+            "type": "string"
+          },
           "vatPercent": {
             "example": 25.5,
             "type": "number"
@@ -482,7 +550,8 @@
           "nightStartHour",
           "nightEndHour",
           "timezone",
-          "area"
+          "area",
+          "validFrom"
         ],
         "type": "object"
       }
@@ -583,7 +652,7 @@
     },
     "/api/v1/me/settings": {
       "get": {
-        "description": "Returns the authenticated user's electricity contract settings.",
+        "description": "Returns the authenticated user's electricity contract settings: the timezone, the area, and the contract terms that apply today. validFrom is the date of the terms version that holds those terms.",
         "responses": {
           "200": {
             "content": {
@@ -602,7 +671,7 @@
         ]
       },
       "put": {
-        "description": "Update one or more electricity contract settings. Only provided fields are changed.",
+        "description": "Update one or more electricity contract settings. Only provided fields are changed. The timezone and the area have one current value. The contract terms are versioned: the request saves the terms version that applies from validFrom (default: today in the user's timezone). A term that the request does not give keeps the value that applies on validFrom. A version with the same validFrom is replaced. No version is created when the terms equal the terms that already apply on validFrom. The response has the terms that apply on validFrom and the validFrom of their version. A user can hold at most 100 versions.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -688,6 +757,12 @@
                     "minimum": 0,
                     "type": "number"
                   },
+                  "validFrom": {
+                    "description": "The local date (YYYY-MM-DD, 1970-01-01 or later) from which the contract terms of this request apply. Default: today in the user's timezone.",
+                    "example": "2026-12-01",
+                    "format": "date",
+                    "type": "string"
+                  },
                   "vatPercent": {
                     "description": "VAT percentage (0-100)",
                     "example": 25.5,
@@ -720,10 +795,86 @@
                 }
               }
             },
-            "description": "Validation error"
+            "description": "Validation error, or the version limit is reached"
           }
         },
         "summary": "Update user settings",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v1/me/settings/versions": {
+      "get": {
+        "description": "Returns every contract terms version of the authenticated user, ascending by validFrom. An interval uses the latest version with a validFrom on or before the local date of the interval start; an interval before the first version uses the first version.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractTermsVersions"
+                }
+              }
+            },
+            "description": "The contract terms versions"
+          }
+        },
+        "summary": "List contract terms versions",
+        "tags": [
+          "User"
+        ]
+      }
+    },
+    "/api/v1/me/settings/versions/{validFrom}": {
+      "delete": {
+        "description": "Deletes the contract terms version with this validFrom. The intervals of that version then use the version before it, or the next version when the deleted version was the first. The only remaining version cannot be deleted.",
+        "parameters": [
+          {
+            "description": "The validFrom of the version, YYYY-MM-DD.",
+            "in": "path",
+            "name": "validFrom",
+            "required": true,
+            "schema": {
+              "description": "The validFrom of the version, YYYY-MM-DD.",
+              "example": "2026-12-01",
+              "format": "date",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractTermsVersions"
+                }
+              }
+            },
+            "description": "The remaining contract terms versions"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Invalid date, or the version is the only version"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "No version has this validFrom"
+          }
+        },
+        "summary": "Delete a contract terms version",
         "tags": [
           "User"
         ]
@@ -935,7 +1086,7 @@
     },
     "/api/v1/price/history": {
       "get": {
-        "description": "Returns all stored total prices for the inclusive local date range [from, to]. Totals apply the user's CURRENT contract settings to the historical public spot prices — there is no historical settings versioning. Dates are YYYY-MM-DD interpreted in the user's timezone; the maximum span is 31 days (inclusive). Check the 'available' field: it is false with an empty 'prices' array when no data is stored for the range.",
+        "description": "Returns all stored total prices for the inclusive local date range [from, to]. Each interval uses the contract terms that applied at that interval: the terms version of the local date of the interval start. Dates are YYYY-MM-DD interpreted in the user's timezone; the maximum span is 31 days (inclusive). Check the 'available' field: it is false with an empty 'prices' array when no data is stored for the range.",
         "parameters": [
           {
             "description": "Inclusive range start, YYYY-MM-DD, interpreted in the user's timezone.",

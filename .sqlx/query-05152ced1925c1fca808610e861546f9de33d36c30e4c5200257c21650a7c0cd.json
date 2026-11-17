@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO contract_terms\n              (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh,\n               transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour,\n               night_end_hour)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            ON CONFLICT (user_id, valid_from)\n            DO UPDATE SET margin_cents_kwh = EXCLUDED.margin_cents_kwh,\n                          transfer_day_cents_kwh = EXCLUDED.transfer_day_cents_kwh,\n                          transfer_night_cents_kwh = EXCLUDED.transfer_night_cents_kwh,\n                          tax_cents_kwh = EXCLUDED.tax_cents_kwh,\n                          vat_percent = EXCLUDED.vat_percent,\n                          night_start_hour = EXCLUDED.night_start_hour,\n                          night_end_hour = EXCLUDED.night_end_hour\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "05152ced1925c1fca808610e861546f9de33d36c30e4c5200257c21650a7c0cd"
+}

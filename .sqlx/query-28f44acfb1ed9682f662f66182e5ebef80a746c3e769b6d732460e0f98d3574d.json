@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM contract_terms WHERE user_id = $1 AND valid_from = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "28f44acfb1ed9682f662f66182e5ebef80a746c3e769b6d732460e0f98d3574d"
+}

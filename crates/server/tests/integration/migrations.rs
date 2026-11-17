@@ -482,6 +482,8 @@ async fn the_release_precheck_counts_the_settings_that_the_service_rejects(pool:
             "user_settings_invalid_timezone|1".to_owned(),
             "user_settings_invalid_area|1".to_owned(),
             "user_settings_invalid_night_hours|2".to_owned(),
+            "contract_terms_invalid_night_hours|not migrated".to_owned(),
+            "user_settings_without_contract_terms|not migrated".to_owned(),
         ]
     );
     let rendered = lines.join("\n");
@@ -489,6 +491,198 @@ async fn the_release_precheck_counts_the_settings_that_the_service_rejects(pool:
         !rendered.contains("bad-"),
         "the output must hold no user id"
     );
+}
+
+#[sqlx::test(migrations = false)]
+async fn the_release_precheck_counts_the_invalid_terms_after_migration_4(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    insert_representative_rows(&pool).await;
+    db::migrate(&pool).await.unwrap();
+    let last_two = |lines: Vec<String>| lines[lines.len() - 2..].to_vec();
+    assert_eq!(
+        last_two(precheck(&pool).await),
+        [
+            "contract_terms_invalid_night_hours|0",
+            "user_settings_without_contract_terms|0"
+        ]
+    );
+
+    // The CHECK constraints keep such rows out; without them, the count
+    // finds each invalid row once.
+    sqlx::raw_sql(
+        "ALTER TABLE contract_terms
+           DROP CONSTRAINT contract_terms_night_start_hour_check,
+           DROP CONSTRAINT contract_terms_night_end_hour_check;
+         INSERT INTO contract_terms
+           (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh,
+            transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
+         VALUES ('u1', '2026-01-01', 0, 0, 0, 0, 0, 24, 7),
+                ('u1', '2026-02-01', 0, 0, 0, 0, 0, 22, -1),
+                ('u1', '2026-03-01', 0, 0, 0, 0, 0, 23, 0);
+         -- Two users without a version, like a sign-up through the release
+         -- before migration 4 during the deploy.
+         INSERT INTO user_settings (user_id) VALUES ('late-1'), ('late-2')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let lines = precheck(&pool).await;
+    assert_eq!(lines.len(), 7);
+    assert!(!lines.join("\n").contains("late-"), "no user id");
+    assert_eq!(
+        last_two(lines),
+        [
+            "contract_terms_invalid_night_hours|2",
+            "user_settings_without_contract_terms|2"
+        ]
+    );
+}
+
+/// `(user_id, valid_from, margin, day, night, tax, vat, start, end)` of each
+/// `contract_terms` row.
+type TermsRow = (String, String, f64, f64, f64, f64, f64, i32, i32);
+
+async fn contract_terms(pool: &PgPool) -> Vec<TermsRow> {
+    sqlx::query_as(
+        "SELECT user_id, valid_from::text, margin_cents_kwh, transfer_day_cents_kwh,
+                transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour,
+                night_end_hour
+         FROM contract_terms ORDER BY user_id, valid_from",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = false)]
+async fn migration_4_copies_each_settings_row_as_the_first_version(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    insert_representative_rows(&pool).await;
+    sqlx::raw_sql(
+        "INSERT INTO user_settings
+           (user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
+            tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area)
+         VALUES ('u2', 0.59, 3.5, 1.9, 2.79372, 24, 0, 23, 'Europe/Stockholm', 'SE3')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows_before = rows(&pool).await;
+
+    db::migrate(&pool).await.unwrap();
+
+    assert_eq!(
+        contract_terms(&pool).await,
+        [
+            (
+                "u1".to_owned(),
+                "1970-01-01".to_owned(),
+                0.49,
+                2.92,
+                1.37,
+                2.82752,
+                25.5,
+                22,
+                7
+            ),
+            (
+                "u2".to_owned(),
+                "1970-01-01".to_owned(),
+                0.59,
+                3.5,
+                1.9,
+                2.79372,
+                24.0,
+                0,
+                23
+            ),
+        ]
+    );
+    // The migration is additive: every other table keeps its rows, and
+    // `user_settings` keeps its term columns.
+    assert_eq!(rows(&pool).await, rows_before);
+    // A version goes with its settings row.
+    sqlx::query("DELETE FROM user_settings WHERE user_id = 'u2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(contract_terms(&pool).await.len(), 1);
+}
+
+#[sqlx::test(migrations = false)]
+async fn migration_4_on_an_empty_database_creates_an_empty_table(pool: PgPool) {
+    db::migrate(&pool).await.unwrap();
+    assert_eq!(contract_terms(&pool).await, []);
+    // A version needs a settings row and night hours in 0..=23.
+    for (user, start, end, sqlstate) in [
+        ("nobody", 22, 7, "23503"),
+        ("u1", 24, 7, "23514"),
+        ("u1", 22, -1, "23514"),
+    ] {
+        sqlx::query("INSERT INTO user_settings (user_id) VALUES ('u1') ON CONFLICT DO NOTHING")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let error = sqlx::query(
+            "INSERT INTO contract_terms
+               (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh,
+                transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour,
+                night_end_hour)
+             VALUES ($1, '2026-01-01', 0, 0, 0, 0, 0, $2, $3)",
+        )
+        .bind(user)
+        .bind(start)
+        .bind(end)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+        let code = error
+            .as_database_error()
+            .unwrap()
+            .code()
+            .unwrap()
+            .into_owned();
+        assert_eq!(code, sqlstate, "{user} {start} {end}");
+    }
+}
+
+#[sqlx::test(migrations = false)]
+async fn an_invalid_night_hour_fails_migration_4_and_changes_nothing(pool: PgPool) {
+    apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
+    sqlx::raw_sql(
+        "INSERT INTO user_settings (user_id, night_start_hour) VALUES ('good', 22), ('bad', 24)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        db::migrate(&pool).await,
+        Err(MigrationFailure {
+            kind: MigrationFailureKind::Execute,
+            sqlstate: Some("23514".to_owned()),
+            reason: None,
+            variant: None,
+            version: None,
+        })
+    );
+    let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY 1")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(applied, [1, 2, 3]);
+    let table: Option<String> = sqlx::query_scalar("SELECT to_regclass('contract_terms')::text")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(table, None);
+
+    // The owner corrects the row; the next run applies migration 4.
+    sqlx::query("UPDATE user_settings SET night_start_hour = 23 WHERE user_id = 'bad'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    db::migrate(&pool).await.unwrap();
+    assert_eq!(contract_terms(&pool).await.len(), 2);
 }
 
 /// The indexes that migration 3 drops. Each duplicates another index.
@@ -545,9 +739,10 @@ async fn a_held_table_lock_fails_migration_3_and_keeps_the_indexes(pool: PgPool)
     apply_ts_migrations(&pool, TS_MIGRATIONS.len()).await;
     db::migrate(&pool).await.unwrap();
     // Back to the state before migration 3: the ledger without version 3
-    // and the three indexes of the baseline.
+    // and the later versions, and the three indexes of the baseline.
     sqlx::raw_sql(
-        "DELETE FROM _sqlx_migrations WHERE version = 3;
+        "DELETE FROM _sqlx_migrations WHERE version >= 3;
+         DROP TABLE contract_terms;
          CREATE INDEX idx_fingrid_actuals_dataset_start
            ON fingrid_actuals (dataset_id, start_time);
          CREATE INDEX idx_fingrid_forecasts_issued ON fingrid_forecasts (issued_at);

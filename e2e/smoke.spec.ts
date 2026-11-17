@@ -100,6 +100,114 @@ test.describe("Dashboard", () => {
   });
 });
 
+test.describe("Contract terms versions", () => {
+  // The login limiter allows 10 sign-ins for each client address in 15
+  // minutes. The other journeys use them all, so this one is another client.
+  test.use({ extraHTTPHeaders: { "X-Real-IP": "192.0.2.10" } });
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/");
+    await page.fill("#username", `e2e_terms_${Date.now()}`);
+    await page.fill("#password", TEST_PASS);
+    await page.click("#loginBtn");
+    await expect(page.locator("#dashboard")).toBeVisible({ timeout: 10_000 });
+  });
+
+  test("schedule, edit, and delete a future change", async ({ page }) => {
+    const items = page.locator("#versionList .version-item");
+    const future = page.locator(
+      '#versionList .version-item[data-valid-from="2099-01-01"]',
+    );
+
+    // A new account has one version. It applies today and cannot be deleted.
+    await expect(items).toHaveCount(1);
+    await expect(items.first()).toContainText(
+      "From 1970-01-01 (applies today)",
+    );
+    await expect(
+      items.first().getByRole("button", { name: /^Delete/ }),
+    ).toBeDisabled();
+    // The date field starts at today in the settings zone.
+    await expect(page.locator("#validFrom")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+    await expect(page.locator("#validFrom")).not.toHaveValue("1970-01-01");
+
+    // Schedule a change: the date first, because a new date loads its terms.
+    await page.fill("#validFrom", "2099-01-01");
+    await page.fill("#margin", "0.77");
+    await page.click("#saveBtn");
+    await expect(page.locator("#settingsStatus")).toContainText(
+      "These terms apply from 2099-01-01",
+    );
+    await expect(items).toHaveCount(2);
+    await expect(future).toContainText("Margin 0.77");
+    await expect(future).not.toContainText("applies today");
+    await expect(items.first()).toContainText("Margin 0.49");
+
+    // Edit the version with the keyboard only; the save replaces it.
+    await page.fill("#margin", "0.1");
+    await page.fill("#validFrom", "2000-01-01");
+    await future.getByRole("button", { name: /^Edit/ }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#validFrom")).toHaveValue("2099-01-01");
+    await expect(page.locator("#margin")).toHaveValue("0.77");
+    await expect(page.locator("#margin")).toBeFocused();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type("0.88");
+    await page.locator("#saveBtn").focus();
+    await page.keyboard.press("Enter");
+    await expect(future).toContainText("Margin 0.88");
+    await expect(items).toHaveCount(2);
+
+    // A new date loads the terms that apply on it. The form holds the terms
+    // of today after a reload, so a save without that load would carry them.
+    await page.reload();
+    await expect(items).toHaveCount(2);
+    await expect(page.locator("#margin")).toHaveValue("0.49");
+    await page.fill("#validFrom", "2099-06-01");
+    await expect(page.locator("#margin")).toHaveValue("0.88");
+    await expect(page.locator("#settingsStatus")).toContainText(
+      "Loaded the terms that apply on 2099-06-01",
+    );
+    await page.fill("#tax", "3");
+    await page.click("#saveBtn");
+    const later = page.locator(
+      '#versionList .version-item[data-valid-from="2099-06-01"]',
+    );
+    await expect(later).toContainText("Margin 0.88");
+    await expect(later).toContainText("Tax 3 ");
+    await expect(items).toHaveCount(3);
+    // A date before every later version loads the first version again.
+    await page.fill("#validFrom", "2050-01-01");
+    await expect(page.locator("#margin")).toHaveValue("0.49");
+    await expect(page.locator("#tax")).toHaveValue("2.82752");
+
+    // Delete a version with the keyboard only.
+    page.once("dialog", (dialog) => void dialog.accept());
+    await later.getByRole("button", { name: /^Delete/ }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator("#versionStatus")).toContainText(
+      "Deleted the version from 2099-06-01",
+    );
+    await expect(items).toHaveCount(2);
+
+    // Delete the other version; the first version is then the only one again.
+    page.once("dialog", (dialog) => void dialog.accept());
+    await future.getByRole("button", { name: /^Delete/ }).click();
+    await expect(page.locator("#versionStatus")).toContainText(
+      "Deleted the version from 2099-01-01",
+    );
+    await expect(items).toHaveCount(1);
+    await expect(
+      items.first().getByRole("button", { name: /^Delete/ }),
+    ).toBeDisabled();
+
+    // The versions come from the server: they survive a reload.
+    await page.reload();
+    await expect(items).toHaveCount(1);
+    await expect(items.first()).toContainText("From 1970-01-01");
+  });
+});
+
 test.describe("API panel", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");

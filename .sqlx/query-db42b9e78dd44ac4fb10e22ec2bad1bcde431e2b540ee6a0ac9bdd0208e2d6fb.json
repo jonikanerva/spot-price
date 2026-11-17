@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.timezone, s.area,\n               t.valid_from AS \"valid_from?: jiff_sqlx::Date\",\n               t.margin_cents_kwh AS \"margin_cents_kwh?\",\n               t.transfer_day_cents_kwh AS \"transfer_day_cents_kwh?\",\n               t.transfer_night_cents_kwh AS \"transfer_night_cents_kwh?\",\n               t.tax_cents_kwh AS \"tax_cents_kwh?\",\n               t.vat_percent AS \"vat_percent?\",\n               t.night_start_hour AS \"night_start_hour?\",\n               t.night_end_hour AS \"night_end_hour?\"\n        FROM user_settings s\n        LEFT JOIN contract_terms t ON t.user_id = s.user_id\n        WHERE s.user_id = $1\n        ORDER BY t.valid_from\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "timezone",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "timezone"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "area",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_settings",
+            "name": "area"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "valid_from?: jiff_sqlx::Date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "valid_from"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "margin_cents_kwh?",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "margin_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "transfer_day_cents_kwh?",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "transfer_day_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "transfer_night_cents_kwh?",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "transfer_night_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "tax_cents_kwh?",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "tax_cents_kwh"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "vat_percent?",
+        "type_info": "Float8",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "vat_percent"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "night_start_hour?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "night_start_hour"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "night_end_hour?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "contract_terms",
+            "name": "night_end_hour"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "db42b9e78dd44ac4fb10e22ec2bad1bcde431e2b540ee6a0ac9bdd0208e2d6fb"
+}

@@ -10,12 +10,12 @@ use jiff::Timestamp;
 use spot_price_domain::areas::Area;
 use spot_price_domain::endpoints::{
     NO_CURRENT_PRICE, PRICE_UNIT, PriceList, RESOLUTION_MINUTES, SETTINGS_NOT_FOUND,
-    cheapest_window, current_price,
+    cheapest_scheduled_window, current_price,
 };
 use spot_price_domain::price::{
-    DeliveryPeriod, PriceInterval, calculate_total_price, calculate_total_prices,
+    DeliveryPeriod, PriceInterval, calculate_scheduled_total_prices, calculate_total_price,
 };
-use spot_price_domain::settings::{Hour, UserId, UserSettings};
+use spot_price_domain::settings::{ContractSchedule, ContractTerms, Hour, TermsVersion, UserId};
 use spot_price_domain::time::{
     CurrentAndNextDate, UserTimeZone, UtcRange, covers_range, current_and_next_date, local_date,
     utc_range_for_local_date, utc_range_for_local_date_span,
@@ -41,34 +41,80 @@ impl From<Internal> for Response {
     }
 }
 
-/// The domain settings of a stored row, or `None` when a stored value is
-/// outside the domain rules.
-#[must_use]
-pub fn domain_settings(row: UserSettingsRow) -> Option<UserSettings> {
-    Some(UserSettings {
-        night_start_hour: Hour::try_from(row.night_start_hour).ok()?,
-        night_end_hour: Hour::try_from(row.night_end_hour).ok()?,
-        timezone: UserTimeZone::parse(&row.timezone).ok()?,
-        area: row.area.parse().ok()?,
-        user_id: UserId::new(row.user_id),
-        margin_cents_kwh: row.margin_cents_kwh,
-        transfer_day_cents_kwh: row.transfer_day_cents_kwh,
-        transfer_night_cents_kwh: row.transfer_night_cents_kwh,
-        tax_cents_kwh: row.tax_cents_kwh,
-        vat_percent: row.vat_percent,
-    })
+/// Why stored settings give no contract schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsFailure {
+    /// A stored value is outside the domain rules.
+    Invalid,
+    /// The user has no contract terms version.
+    NoVersion,
 }
 
-/// The settings of a user: `Ok(None)` when no row is stored.
+impl SettingsFailure {
+    /// Logs the failure. The user id is the only personal value.
+    pub fn log(self, user_id: &str) {
+        match self {
+            Self::Invalid => tracing::error!(
+                code = "invalid_settings",
+                user_id,
+                "stored user settings are invalid"
+            ),
+            Self::NoVersion => tracing::error!(
+                code = "contract_terms_missing",
+                "a user has no contract terms version"
+            ),
+        }
+    }
+}
+
+/// The contract schedule of a stored row.
 ///
 /// # Errors
 ///
-/// Returns [`Internal`] when the query fails or the stored row breaks the
-/// domain rules.
-pub async fn load_settings(
+/// Returns [`SettingsFailure`] when a stored value is outside the domain
+/// rules or the row has no terms version.
+pub fn schedule_of(row: &UserSettingsRow) -> Result<ContractSchedule, SettingsFailure> {
+    fn invalid<E>(_: E) -> SettingsFailure {
+        SettingsFailure::Invalid
+    }
+    let timezone = UserTimeZone::parse(&row.timezone).map_err(invalid)?;
+    let area = row.area.parse().map_err(invalid)?;
+    let versions = row
+        .versions
+        .iter()
+        .map(|version| {
+            Ok(TermsVersion {
+                valid_from: version.valid_from,
+                terms: ContractTerms {
+                    margin_cents_kwh: version.margin_cents_kwh,
+                    transfer_day_cents_kwh: version.transfer_day_cents_kwh,
+                    transfer_night_cents_kwh: version.transfer_night_cents_kwh,
+                    tax_cents_kwh: version.tax_cents_kwh,
+                    vat_percent: version.vat_percent,
+                    night_start_hour: Hour::try_from(version.night_start_hour).map_err(invalid)?,
+                    night_end_hour: Hour::try_from(version.night_end_hour).map_err(invalid)?,
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, SettingsFailure>>()?;
+    if versions.is_empty() {
+        return Err(SettingsFailure::NoVersion);
+    }
+    ContractSchedule::new(&UserId::new(row.user_id.clone()), &timezone, area, versions)
+        .map_err(|_| SettingsFailure::Invalid)
+}
+
+/// The contract schedule of a user: `Ok(None)` when no settings row is
+/// stored.
+///
+/// # Errors
+///
+/// Returns [`Internal`] when the query fails, the stored row breaks the
+/// domain rules, or the user has no terms version.
+pub async fn load_schedule(
     state: &AppState,
     user_id: &str,
-) -> Result<Option<UserSettings>, Internal> {
+) -> Result<Option<ContractSchedule>, Internal> {
     let row = user_settings::get_user_settings(&state.pool, user_id)
         .await
         .map_err(|error| {
@@ -78,12 +124,8 @@ pub async fn load_settings(
     let Some(row) = row else {
         return Ok(None);
     };
-    domain_settings(row).map(Some).ok_or_else(|| {
-        tracing::error!(
-            code = "invalid_settings",
-            user_id,
-            "stored user settings are invalid"
-        );
+    schedule_of(&row).map(Some).map_err(|failure| {
+        failure.log(user_id);
         Internal
     })
 }
@@ -251,17 +293,20 @@ pub async fn now(State(state): State<AppState>, Extension(user): Extension<ApiUs
 }
 
 async fn now_answer(state: &AppState, user_id: &str) -> Answer {
-    let Some(settings) = load_settings(state, user_id).await? else {
+    let Some(schedule) = load_schedule(state, user_id).await? else {
         return Ok(settings_not_found());
     };
     let now = state.now();
-    let range = today_and_tomorrow(now, &settings.timezone)?;
-    let rows = load_prices(state, range, settings.area).await?;
+    let range = today_and_tomorrow(now, schedule.timezone())?;
+    let rows = load_prices(state, range, schedule.area()).await?;
     let intervals = intervals(&rows)?;
     Ok(match current_price(&intervals, now) {
         Some(price) => wire::json(
             StatusCode::OK,
-            &TotalPriceDto::from(&calculate_total_price(price, &settings)),
+            &TotalPriceDto::from(&calculate_total_price(
+                price,
+                schedule.settings_at(price.period.start()),
+            )),
         ),
         None => wire::error(StatusCode::NOT_FOUND, NO_CURRENT_PRICE),
     })
@@ -331,27 +376,27 @@ enum ListKind {
 }
 
 async fn list_answer(state: &AppState, user_id: &str, kind: ListKind) -> Answer {
-    let Some(settings) = load_settings(state, user_id).await? else {
+    let Some(schedule) = load_schedule(state, user_id).await? else {
         return Ok(settings_not_found());
     };
     let now = state.now();
-    let zone = settings.timezone.time_zone();
+    let zone = schedule.timezone().time_zone();
     let range = match kind {
         ListKind::Today => {
             utc_range_for_local_date(local_date(now, zone), zone).map_err(out_of_range)?
         }
         ListKind::Tomorrow => {
-            utc_range_for_local_date(dates(now, &settings.timezone)?.tomorrow, zone)
+            utc_range_for_local_date(dates(now, schedule.timezone())?.tomorrow, zone)
                 .map_err(out_of_range)?
         }
         ListKind::All => {
-            let dates = dates(now, &settings.timezone)?;
+            let dates = dates(now, schedule.timezone())?;
             utc_range_for_local_date_span(dates.today, dates.tomorrow, zone)
                 .map_err(out_of_range)?
         }
     };
-    let rows = load_prices(state, range, settings.area).await?;
-    let totals = calculate_total_prices(&intervals(&rows)?, &settings);
+    let rows = load_prices(state, range, schedule.area()).await?;
+    let totals = calculate_scheduled_total_prices(&intervals(&rows)?, &schedule);
     Ok(price_list(&match kind {
         ListKind::Tomorrow => {
             let complete = tomorrow_available(&rows, range);
@@ -400,14 +445,14 @@ async fn cheapest_answer(
     user_id: &str,
     query: &spot_price_domain::query::CheapestQuery,
 ) -> Answer {
-    let Some(settings) = load_settings(state, user_id).await? else {
+    let Some(schedule) = load_schedule(state, user_id).await? else {
         return Ok(settings_not_found());
     };
     let now = state.now();
-    let range = today_and_tomorrow(now, &settings.timezone)?;
-    let rows = load_prices(state, range, settings.area).await?;
+    let range = today_and_tomorrow(now, schedule.timezone())?;
+    let rows = load_prices(state, range, schedule.area()).await?;
     Ok(
-        match cheapest_window(&intervals(&rows)?, &settings, query, now) {
+        match cheapest_scheduled_window(&intervals(&rows)?, &schedule, query, now) {
             Ok(window) => wire::json(StatusCode::OK, &PriceWindowDto::from(&window)),
             Err(error) => wire::error(StatusCode::NOT_FOUND, &error.to_string()),
         },
@@ -422,7 +467,7 @@ async fn cheapest_answer(
     path = "/api/v1/price/history",
     tag = "Price",
     summary = "Historical total prices for a local date range",
-    description = "Returns all stored total prices for the inclusive local date range [from, to]. Totals apply the user's CURRENT contract settings to the historical public spot prices — there is no historical settings versioning. Dates are YYYY-MM-DD interpreted in the user's timezone; the maximum span is 31 days (inclusive). Check the 'available' field: it is false with an empty 'prices' array when no data is stored for the range.",
+    description = "Returns all stored total prices for the inclusive local date range [from, to]. Each interval uses the contract terms that applied at that interval: the terms version of the local date of the interval start. Dates are YYYY-MM-DD interpreted in the user's timezone; the maximum span is 31 days (inclusive). Check the 'available' field: it is false with an empty 'prices' array when no data is stored for the range.",
     security(("BearerAuth" = [])),
     params(
         ("from" = String, Query, description = "Inclusive range start, YYYY-MM-DD, interpreted in the user's timezone."),
@@ -451,12 +496,13 @@ async fn history_answer(
     user_id: &str,
     query: spot_price_domain::query::HistoryQuery,
 ) -> Answer {
-    let Some(settings) = load_settings(state, user_id).await? else {
+    let Some(schedule) = load_schedule(state, user_id).await? else {
         return Ok(settings_not_found());
     };
-    let range = utc_range_for_local_date_span(query.from, query.to, settings.timezone.time_zone())
-        .map_err(out_of_range)?;
-    let rows = load_prices(state, range, settings.area).await?;
-    let totals = calculate_total_prices(&intervals(&rows)?, &settings);
+    let range =
+        utc_range_for_local_date_span(query.from, query.to, schedule.timezone().time_zone())
+            .map_err(out_of_range)?;
+    let rows = load_prices(state, range, schedule.area()).await?;
+    let totals = calculate_scheduled_total_prices(&intervals(&rows)?, &schedule);
     Ok(price_list(&PriceList::from_totals(totals)))
 }

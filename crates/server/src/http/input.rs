@@ -4,10 +4,12 @@
 
 use std::cmp::Ordering;
 
+use jiff::civil::Date;
 use spot_price_domain::areas::Area;
 use spot_price_domain::query::{
     CheapestQuery, CheapestQueryInput, Field, HistoryQuery, Issue, IssueKind, SettingsUpdateInput,
-    ValidationError, parse_cheapest_query, parse_history_query, validate_settings_update,
+    ValidationError, parse_cheapest_query, parse_history_query, parse_valid_from,
+    validate_settings_update,
 };
 use spot_price_domain::settings::SettingsUpdate;
 
@@ -323,10 +325,19 @@ fn js_number(value: &serde_json::Value) -> Option<f64> {
     }
 }
 
+/// A checked body of `PUT /api/v1/me/settings`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SettingsRequest {
+    pub update: SettingsUpdate,
+    /// The date of the terms version to save. `None` is today in the time
+    /// zone of the user after the update.
+    pub valid_from: Option<Date>,
+}
+
 /// The outcome of reading the body of `PUT /api/v1/me/settings`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsBody {
-    Valid(SettingsUpdate),
+    Valid(SettingsRequest),
     /// The zod issue text, answered as `{"error": text}` with 400.
     Invalid(String),
     /// The body is not JSON although the content type says so.
@@ -399,10 +410,10 @@ fn hono_parameters(mut rest: &str) -> bool {
 #[must_use]
 pub fn settings_body(content_type: Option<&str>, bytes: &[u8]) -> SettingsBody {
     let Some(content_type) = content_type else {
-        return SettingsBody::Valid(SettingsUpdate::default());
+        return SettingsBody::Valid(SettingsRequest::default());
     };
     if !openapi_json_type(content_type) || !hono_json_type(content_type) {
-        return SettingsBody::Valid(SettingsUpdate::default());
+        return SettingsBody::Valid(SettingsRequest::default());
     }
     // `Request.json()` decodes UTF-8 with replacement characters and drops a
     // byte order mark.
@@ -410,7 +421,7 @@ pub fn settings_body(content_type: Option<&str>, bytes: &[u8]) -> SettingsBody {
     let text = String::from_utf8_lossy(bytes);
     match parse_json(&text) {
         Some(value) => match settings_update(&value) {
-            Ok(update) => SettingsBody::Valid(update),
+            Ok(request) => SettingsBody::Valid(request),
             Err(text) => SettingsBody::Invalid(text),
         },
         None => SettingsBody::Malformed,
@@ -432,14 +443,14 @@ fn type_name(value: &serde_json::Value) -> &'static str {
     }
 }
 
-/// Validates a parsed settings body like `UserSettingsUpdateSchema`.
-/// Unknown keys are ignored.
+/// Validates a parsed settings body like `UserSettingsUpdateSchema`, plus
+/// the `validFrom` date. Unknown keys are ignored.
 ///
 /// # Errors
 ///
 /// Returns the joined zod issue text of every problem.
-pub fn settings_update(value: &serde_json::Value) -> Result<SettingsUpdate, String> {
-    const ORDER: [Field; 9] = [
+pub fn settings_update(value: &serde_json::Value) -> Result<SettingsRequest, String> {
+    const ORDER: [Field; 10] = [
         Field::MarginCentsKwh,
         Field::TransferDayCentsKwh,
         Field::TransferNightCentsKwh,
@@ -449,6 +460,7 @@ pub fn settings_update(value: &serde_json::Value) -> Result<SettingsUpdate, Stri
         Field::NightEndHour,
         Field::Timezone,
         Field::Area,
+        Field::ValidFrom,
     ];
     let serde_json::Value::Object(object) = value else {
         return Err(format!(
@@ -486,6 +498,23 @@ pub fn settings_update(value: &serde_json::Value) -> Result<SettingsUpdate, Stri
     };
     let timezone = option(Field::Timezone, IssueKind::UnknownTimezone);
     let area = option(Field::Area, IssueKind::UnknownArea);
+    let valid_from = match object.get(Field::ValidFrom.name()) {
+        None => None,
+        Some(serde_json::Value::String(text)) => match parse_valid_from(text) {
+            Ok(date) => Some(date),
+            Err(found) => {
+                domain.push(found);
+                None
+            }
+        },
+        Some(other) => {
+            extra.push(Extra::new(
+                Field::ValidFrom,
+                &format!("string, received {}", type_name(other)),
+            ));
+            None
+        }
+    };
     let input = SettingsUpdateInput {
         margin_cents_kwh,
         transfer_day_cents_kwh,
@@ -498,7 +527,9 @@ pub fn settings_update(value: &serde_json::Value) -> Result<SettingsUpdate, Stri
         area,
     };
     match validate_settings_update(input) {
-        Ok(update) if extra.is_empty() && domain.is_empty() => Ok(update),
+        Ok(update) if extra.is_empty() && domain.is_empty() => {
+            Ok(SettingsRequest { update, valid_from })
+        }
         Ok(_) => Err(join_issues(&ORDER, &domain, &extra)),
         Err(ValidationError { issues }) => {
             domain.extend(issues);
@@ -564,7 +595,7 @@ mod tests {
 
     #[test]
     fn settings_body_follows_the_content_type_rules() {
-        let empty = SettingsBody::Valid(SettingsUpdate::default());
+        let empty = SettingsBody::Valid(SettingsRequest::default());
         assert_eq!(settings_body(None, b"{bad"), empty);
         assert_eq!(settings_body(Some("text/plain"), b"{bad"), empty);
         assert_eq!(settings_body(Some("Application/JSON"), b"{bad"), empty);
@@ -583,9 +614,12 @@ mod tests {
         );
         assert_eq!(
             settings_body(Some("application/vnd.api+json"), b"{\"vatPercent\":10}"),
-            SettingsBody::Valid(SettingsUpdate {
-                vat_percent: Some(10.0),
-                ..SettingsUpdate::default()
+            SettingsBody::Valid(SettingsRequest {
+                update: SettingsUpdate {
+                    vat_percent: Some(10.0),
+                    ..SettingsUpdate::default()
+                },
+                valid_from: None,
             })
         );
         assert_eq!(settings_body(Some("application/json;"), b"{bad"), empty);
@@ -609,6 +643,37 @@ mod tests {
             "a\"1e400"
         );
         assert!(parse_json("{bad").is_none());
+    }
+
+    #[test]
+    fn settings_body_reads_valid_from() {
+        let read = |body: &str| settings_update(&serde_json::from_str(body).unwrap());
+        assert_eq!(
+            read(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.6}"#),
+            Ok(SettingsRequest {
+                update: SettingsUpdate {
+                    margin_cents_kwh: Some(0.6),
+                    ..SettingsUpdate::default()
+                },
+                valid_from: Some(jiff::civil::date(2026, 12, 1)),
+            })
+        );
+        assert_eq!(
+            read(r#"{"validFrom":"1.12.2026"}"#).unwrap_err(),
+            "validFrom: Invalid ISO date"
+        );
+        assert_eq!(
+            read(r#"{"validFrom":"1969-12-31"}"#).unwrap_err(),
+            "validFrom: Too small: expected date to be >=1970-01-01"
+        );
+        assert_eq!(
+            read(r#"{"validFrom":20261201}"#).unwrap_err(),
+            "validFrom: Invalid input: expected string, received number"
+        );
+        assert_eq!(
+            read(r#"{"validFrom":null,"vatPercent":-1}"#).unwrap_err(),
+            "vatPercent: Too small: expected number to be >=0; validFrom: Invalid input: expected string, received null"
+        );
     }
 
     #[test]

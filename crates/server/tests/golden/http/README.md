@@ -213,7 +213,9 @@ does.
 
 Every user has a `"user"`, an `"account"` (real Better Auth hash), a
 `usernames`, and an `api_keys` row. `usernames.user_id` is the only foreign key
-to `"user"`. `api_keys` and `user_settings` have no foreign key.
+to `"user"`. `api_keys` and `user_settings` have no foreign key. The seed
+has no `contract_terms` rows: the Rust harness gives each `user_settings`
+row its first terms version after the seed and the case setup.
 
 | User  | API key           | Area | Time zone        | Night  | VAT  | Other terms            |
 | ----- | ----------------- | ---- | ---------------- | ------ | ---- | ---------------------- |
