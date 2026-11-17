@@ -48,15 +48,15 @@ Posture`). Price and grid data are public and can be fetched again. Most
 
 ### Not applicable (with reasons)
 
-| Profile part                                                                     | Reason                                                                                                                                                            |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Frontend SPA: TypeScript 7, React, Vite, TanStack, Oxlint, Vitest (§1, §2, §2.4) | The UI is a setup page only (`VISION.md`). `crates/server/src/http/ui/` holds the TypeScript page; the chart drawing and the terms versions differ from it.       |
-| Hey API client and Zod validators (§2.1 steps 3–5)                               | No first-party client consumes the API. Home Assistant and scripts are the clients. `contract/openapi.json` is committed and drift-checked.                       |
-| RFC 9457 Problem Details (§2.2)                                                  | The v1 contract keeps `{"error": "..."}` (docs/adr/0003). A change needs `/api/v2`.                                                                               |
-| OIDC (§2.5)                                                                      | The product uses local username and password accounts (docs/adr/0002).                                                                                            |
-| Exact decimals (§7)                                                              | Prices are `DOUBLE PRECISION` and binary floats with JavaScript rounding (docs/adr/0003).                                                                         |
-| axe accessibility checks (§11)                                                   | Not adopted in the port. The chart drawing and the terms versions differ from the TypeScript page. The §11 keyboard and contrast thresholds remain review checks. |
-| proptest, uuid, rust_decimal, Tailwind                                           | No current need. Golden files and seeded sweeps cover the rounding rules.                                                                                         |
+| Profile part                                                                     | Reason                                                                                                                                                                                   |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Frontend SPA: TypeScript 7, React, Vite, TanStack, Oxlint, Vitest (§1, §2, §2.4) | The UI is a setup page only (`VISION.md`). `crates/server/src/http/ui/` holds the TypeScript page; the chart drawing, the terms versions, and the dashboard layout differ from it.       |
+| Hey API client and Zod validators (§2.1 steps 3–5)                               | No first-party client consumes the API. Home Assistant and scripts are the clients. `contract/openapi.json` is committed and drift-checked.                                              |
+| RFC 9457 Problem Details (§2.2)                                                  | The v1 contract keeps `{"error": "..."}` (docs/adr/0003). A change needs `/api/v2`.                                                                                                      |
+| OIDC (§2.5)                                                                      | The product uses local username and password accounts (docs/adr/0002).                                                                                                                   |
+| Exact decimals (§7)                                                              | Prices are `DOUBLE PRECISION` and binary floats with JavaScript rounding (docs/adr/0003).                                                                                                |
+| axe accessibility checks (§11)                                                   | Not adopted in the port. The chart drawing, the terms versions, and the dashboard layout differ from the TypeScript page. The §11 keyboard and contrast thresholds remain review checks. |
+| proptest, uuid, rust_decimal, Tailwind                                           | No current need. Golden files and seeded sweeps cover the rounding rules.                                                                                                                |
 
 ### Repository layout and boundaries
 
@@ -752,9 +752,11 @@ entry here.
 ## 11. Design guidelines & UX thresholds
 
 The web UI is a setup surface only (`VISION.md`). It is the page of the
-TypeScript service, except the chart drawing and the contract terms
-versions: a valid-from date in the settings form, and a list of the
-versions with edit and delete. It must be usable without a pointer.
+TypeScript service, except the chart drawing, the contract terms
+versions, and the dashboard layout. The settings form has a valid-from
+date. The dashboard has three full-width cards in this order: settings,
+chart, and a table of the versions with edit and delete. It must be usable
+without a pointer.
 
 - **Design authority:** WCAG 2.2 AA and native HTML semantics.
 - **Thresholds:** pointer target size ≥ 24×24 CSS px (WCAG 2.5.8); text

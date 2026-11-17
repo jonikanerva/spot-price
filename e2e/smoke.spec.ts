@@ -1,9 +1,13 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 
 import { readChart } from "./chart.js";
 
 const TEST_USER = `e2e_${Date.now()}`;
 const TEST_PASS = "testpass1234";
+
+// One term cell of a row of the contract terms versions table.
+const term = (row: Locator, name: string): Locator =>
+  row.locator(`[data-term="${name}"]`);
 
 // YYYY-MM-DD of today in timeZone. A new account has Europe/Helsinki.
 const todayIn = (timeZone: string): string =>
@@ -122,6 +126,66 @@ test.describe("Contract terms versions", () => {
     await expect(page.locator("#dashboard")).toBeVisible({ timeout: 10_000 });
   });
 
+  test("the settings form has room at desktop width", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const top = async (selector: string): Promise<number> => {
+      const box = await page.locator(selector).boundingBox();
+      if (!box) throw new Error(`${selector} has no box`);
+      return box.y;
+    };
+    await expect(page.locator("#versionList .version-item")).toHaveCount(1);
+
+    // The eight term fields use two rows of four fields.
+    const rows = new Set<number>();
+    for (const id of [
+      "margin",
+      "dayTransfer",
+      "nightTransfer",
+      "tax",
+      "vat",
+      "nightStart",
+      "nightEnd",
+      "validFrom",
+    ]) {
+      rows.add(Math.round(await top(`#${id}`)));
+    }
+    expect(rows.size).toBe(2);
+    expect(await top("#margin")).toBe(await top("#tax"));
+    expect(await top("#vat")).toBe(await top("#validFrom"));
+    // Valid from is the last field of the last row.
+    const left = async (selector: string): Promise<number> =>
+      (await page.locator(selector).boundingBox())?.x ?? -1;
+    expect(await left("#validFrom")).toBeGreaterThan(await left("#nightEnd"));
+
+    // No label wraps: each label has the height of the first label.
+    const heights = await page
+      .locator("#dashView .settings-grid label")
+      .evaluateAll((labels) =>
+        labels.map((label) => Math.round(label.getBoundingClientRect().height)),
+      );
+    expect(heights).toHaveLength(10);
+    expect(new Set(heights).size).toBe(1);
+
+    // The order is settings, chart, versions. Nothing scrolls sideways.
+    expect(await top("#saveBtn")).toBeLessThan(await top("#totalChart"));
+    expect(await top("#totalChart")).toBeLessThan(await top("#versionList"));
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+
+    // On a phone the versions table scrolls inside its card, not the page.
+    await page.setViewportSize({ width: 375, height: 812 });
+    const narrow = await page.evaluate(() => ({
+      page: document.documentElement.scrollWidth - window.innerWidth,
+      table:
+        (document.querySelector(".version-table-wrap")?.scrollWidth ?? 0) -
+        (document.querySelector(".version-table-wrap")?.clientWidth ?? 0),
+    }));
+    expect(narrow.page).toBeLessThanOrEqual(0);
+    expect(narrow.table).toBeGreaterThan(0);
+  });
+
   test("schedule, edit, and delete a future change", async ({ page }) => {
     const items = page.locator("#versionList .version-item");
     const future = page.locator(
@@ -130,8 +194,8 @@ test.describe("Contract terms versions", () => {
 
     // A new account has one version. It applies today and cannot be deleted.
     await expect(items).toHaveCount(1);
-    await expect(items.first()).toContainText(
-      "From 1970-01-01 (applies today)",
+    await expect(items.first().getByRole("rowheader")).toHaveText(
+      "1970-01-01 (applies today)",
     );
     await expect(
       items.first().getByRole("button", { name: /^Delete/ }),
@@ -154,7 +218,7 @@ test.describe("Contract terms versions", () => {
     await expect(page.locator("#saveBtn")).toBeEnabled();
     expect(saves).toEqual([]);
     await expect(items).toHaveCount(1);
-    await expect(items.first()).toContainText("Margin 0.49");
+    await expect(term(items.first(), "margin")).toHaveText("0.49");
 
     // Schedule a change: the date first, because a new date loads its terms.
     await page.fill("#validFrom", "2099-01-01");
@@ -164,9 +228,9 @@ test.describe("Contract terms versions", () => {
       "These terms apply from 2099-01-01",
     );
     await expect(items).toHaveCount(2);
-    await expect(future).toContainText("Margin 0.77");
+    await expect(term(future, "margin")).toHaveText("0.77");
     await expect(future).not.toContainText("applies today");
-    await expect(items.first()).toContainText("Margin 0.49");
+    await expect(term(items.first(), "margin")).toHaveText("0.49");
 
     // Edit the version with the keyboard only; the save replaces it.
     await page.fill("#margin", "0.1");
@@ -180,7 +244,7 @@ test.describe("Contract terms versions", () => {
     await page.keyboard.type("0.88");
     await page.locator("#saveBtn").focus();
     await page.keyboard.press("Enter");
-    await expect(future).toContainText("Margin 0.88");
+    await expect(term(future, "margin")).toHaveText("0.88");
     await expect(items).toHaveCount(2);
 
     // A new date loads the terms that apply on it. The form holds the terms
@@ -198,8 +262,8 @@ test.describe("Contract terms versions", () => {
     const later = page.locator(
       '#versionList .version-item[data-valid-from="2099-06-01"]',
     );
-    await expect(later).toContainText("Margin 0.88");
-    await expect(later).toContainText("Tax 3 ");
+    await expect(term(later, "margin")).toHaveText("0.88");
+    await expect(term(later, "tax")).toHaveText("3");
     await expect(items).toHaveCount(3);
     // A date before every later version loads the first version again.
     await page.fill("#validFrom", "2050-01-01");
@@ -242,7 +306,9 @@ test.describe("Contract terms versions", () => {
     // The versions come from the server: they survive a reload.
     await page.reload();
     await expect(items).toHaveCount(1);
-    await expect(items.first()).toContainText("From 1970-01-01");
+    await expect(items.first().getByRole("rowheader")).toContainText(
+      "1970-01-01",
+    );
   });
 });
 

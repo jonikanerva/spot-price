@@ -498,6 +498,13 @@
         return button
       }
 
+      const termCell = (term, value) => {
+        const cell = document.createElement('td')
+        cell.setAttribute('data-term', term)
+        cell.textContent = String(value)
+        return cell
+      }
+
       // The version that applies on date (YYYY-MM-DD): the latest that has
       // started, else the first. The server uses the same rule.
       const versionOn = (versions, date) => {
@@ -510,15 +517,19 @@
         const list = $('versionList')
         const current = versionOn(versions, todayInZone(state.timezone))
         list.replaceChildren(...versions.map((version) => {
-          const item = document.createElement('li')
+          const item = document.createElement('tr')
           item.className = 'version-item'
           item.setAttribute('data-valid-from', version.validFrom)
 
-          const head = document.createElement('div')
-          head.className = 'version-head'
-          const date = document.createElement('span')
-          date.className = 'version-date'
-          date.textContent = 'From ' + version.validFrom + (version === current ? ' (applies today)' : '')
+          const date = document.createElement('th')
+          date.scope = 'row'
+          date.textContent = version.validFrom
+          if (version === current) {
+            const mark = document.createElement('span')
+            mark.className = 'version-current'
+            mark.textContent = ' (applies today)'
+            date.append(mark)
+          }
           const actions = document.createElement('span')
           actions.className = 'version-actions'
           const edit = versionButton('Edit', 'btn-secondary', version)
@@ -535,18 +546,19 @@
           }
           remove.onclick = () => deleteVersion(version.validFrom)
           actions.append(edit, remove)
-          head.append(date, actions)
+          const actionsCell = document.createElement('td')
+          actionsCell.append(actions)
 
-          const terms = document.createElement('div')
-          terms.className = 'version-terms'
-          terms.textContent =
-            'Margin ' + version.marginCentsKwh +
-            ' · Transfer day ' + version.transferDayCentsKwh +
-            ' / night ' + version.transferNightCentsKwh +
-            ' · Tax ' + version.taxCentsKwh +
-            ' · VAT ' + version.vatPercent + ' %' +
-            ' · Night ' + version.nightStartHour + '-' + version.nightEndHour
-          item.append(head, terms)
+          item.append(
+            date,
+            termCell('margin', version.marginCentsKwh),
+            termCell('transferDay', version.transferDayCentsKwh),
+            termCell('transferNight', version.transferNightCentsKwh),
+            termCell('tax', version.taxCentsKwh),
+            termCell('vat', version.vatPercent + ' %'),
+            termCell('night', version.nightStartHour + '-' + version.nightEndHour),
+            actionsCell,
+          )
           return item
         }))
       }

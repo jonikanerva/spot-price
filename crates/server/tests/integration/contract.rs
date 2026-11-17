@@ -6,9 +6,9 @@
 //!   schemas, responses, tags, security, servers, and info. The JSON key
 //!   order and the entries of [`INTENTIONAL`] differ.
 //! - The setup page is byte-identical to `fixtures/ui-home.html`. The
-//!   fixture is the TypeScript `renderHomePage()` with the chart fix and the
-//!   contract terms versions of the setup page; the HTTP golden replay lists
-//!   that difference.
+//!   fixture is the TypeScript `renderHomePage()` with the chart fix, the
+//!   contract terms versions, and the dashboard layout of the setup page; the
+//!   HTTP golden replay lists that difference.
 
 use serde_json::Value;
 use spot_price_server::http::openapi::{document, document_json};
