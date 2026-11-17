@@ -1,6 +1,7 @@
 # 0001. The Rust port ships in one release with a data-compatible revert path
 
-- Status: accepted
+- Status: accepted; the revert path to the TypeScript service ended on
+  2026-11-17 (ADR 0010)
 - Date: 2026-10-14
 
 ## Context
@@ -83,3 +84,9 @@ Railway rollback is not used after a migration (`STACK.md` §15).
 When a product change needs a schema change that the TypeScript service
 cannot run on. Then the owner decides to end the revert path, and a new ADR
 supersedes this one.
+
+Update 2026-11-17: the owner ended the revert path to the TypeScript
+service. The service is Rust and stays Rust. ADR 0010 records the decision.
+The release and migration decisions of this record (items 2 to 4) still
+apply. New work does not keep the TypeScript service able to run on the
+database.
