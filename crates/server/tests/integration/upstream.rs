@@ -1,6 +1,7 @@
 //! The upstream adapters against a local fake server: requests, status
 //! handling, retries, deadlines, body limits, and redirects.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -9,10 +10,15 @@ use axum::response::Response;
 use serde_json::json;
 use spot_price_domain::areas::{ALL_AREAS, Area};
 use spot_price_server::config::Secret;
+use spot_price_server::observability::ALLOWED_FIELDS;
 use spot_price_server::upstream::fingrid::FingridClient;
 use spot_price_server::upstream::nordpool::{NordPoolClient, NordPoolError, RetrySettings};
 use spot_price_server::upstream::weather::{HELSINKI, WeatherClient};
 use spot_price_server::upstream::{HttpClient, HttpSettings, TransportError};
+use tracing::field::{Field, Visit};
+use tracing::instrument::WithSubscriber as _;
+use tracing::{Event, Subscriber};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 
 use crate::common::{FakeServer, fingrid, json, nordpool, raw, ts, weather};
 
@@ -270,18 +276,121 @@ async fn fingrid_sends_the_key_header_and_the_typescript_query() {
     assert!(!request.query.contains("test-fingrid-key"));
 }
 
+/// Every field of the events of the Fingrid adapter, as `name=value` text.
+#[derive(Clone, Default)]
+struct FingridEvents(Arc<Mutex<Vec<Vec<String>>>>);
+
+#[derive(Default)]
+struct AllFields(Vec<String>);
+
+impl Visit for AllFields {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.0.push(format!("{}={value:?}", field.name()));
+    }
+}
+
+impl<S: Subscriber> Layer<S> for FingridEvents {
+    fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+        if event.metadata().target() != "spot_price_server::upstream::fingrid" {
+            return;
+        }
+        let mut fields = AllFields::default();
+        event.record(&mut fields);
+        self.0.lock().unwrap().push(fields.0);
+    }
+}
+
+#[tokio::test]
+async fn fingrid_tells_a_rejected_key_from_a_blocked_request() {
+    const CHALLENGE: &str = r#"AzureApiManagementKey realm="secret-realm""#;
+    let respond = |status: StatusCode, challenge: bool| {
+        let mut response = Response::builder().status(status);
+        if challenge {
+            response = response.header("www-authenticate", CHALLENGE);
+        }
+        response.body(Body::from("secret-body")).unwrap()
+    };
+    let cases = [
+        (
+            StatusCode::UNAUTHORIZED,
+            true,
+            "Fingrid rejected the API key (HTTP 401)",
+            vec![
+                "message=Fingrid rejected the API key (HTTP 401)",
+                r#"code="fingrid_key_rejected""#,
+            ],
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            true,
+            "Fingrid blocked the request (HTTP 403)",
+            vec![
+                "message=Fingrid blocked the request (HTTP 403)",
+                r#"code="fingrid_request_blocked""#,
+                "www_authenticate=true",
+            ],
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            false,
+            "Fingrid blocked the request (HTTP 403)",
+            vec![
+                "message=Fingrid blocked the request (HTTP 403)",
+                r#"code="fingrid_request_blocked""#,
+                "www_authenticate=false",
+            ],
+        ),
+    ];
+    for (status, challenge, reason, fields) in cases {
+        let server = FakeServer::start(move |_| respond(status, challenge)).await;
+        let events = FingridEvents::default();
+        let degraded = fingrid(&server)
+            .fetch_series(
+                &fingrid_key(),
+                ts("2026-03-01T00:00:00Z"),
+                ts("2026-03-02T00:00:00Z"),
+            )
+            .with_subscriber(tracing_subscriber::registry().with(events.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(degraded.0, reason);
+        // One request and one event: a refusal is not retried.
+        assert_eq!(server.recorded().len(), 1);
+        let logged = events.0.lock().unwrap().clone();
+        assert_eq!(logged.len(), 1, "{status} {challenge}");
+        let mut logged = logged[0].clone();
+        logged.sort();
+        let mut fields: Vec<String> = fields.into_iter().map(str::to_owned).collect();
+        fields.sort();
+        assert_eq!(logged, fields, "{status} {challenge}");
+        let text = logged.join(" ");
+        for secret in [
+            "secret-realm",
+            "AzureApiManagementKey",
+            "secret-body",
+            "test-fingrid-key",
+        ] {
+            assert!(!text.contains(secret), "{secret}");
+        }
+        for field in &logged {
+            let name = field.split('=').next().unwrap();
+            assert!(ALLOWED_FIELDS.contains(&name), "{name}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn fingrid_degrades_on_error_statuses_and_bad_bodies() {
     let cases = [
         (
             StatusCode::UNAUTHORIZED,
             "{}",
-            "Fingrid auth failed (HTTP 401)",
+            "Fingrid rejected the API key (HTTP 401)",
         ),
         (
             StatusCode::FORBIDDEN,
             "{}",
-            "Fingrid auth failed (HTTP 403)",
+            "Fingrid blocked the request (HTTP 403)",
         ),
         (
             StatusCode::UNPROCESSABLE_ENTITY,

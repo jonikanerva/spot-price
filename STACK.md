@@ -222,7 +222,13 @@ connect timeout 10 s, a 30 s deadline per attempt that covers the body, and a
   datasets 245, 75, 165, 124 for the served forecast. The second request
   gets datasets 166 (consumption forecast, 72 h) and 248 (solar forecast,
   72 h) for `[issued_at − 6 h, now + 73 h)`. A failure of one request does
-  not affect the other request.
+  not affect the other request. Fingrid answers 401 to a missing or
+  invalid key (checked 2026-11-17). The adapter logs a 401 with the code
+  `fingrid_key_rejected` and a 403 with the code `fingrid_request_blocked`:
+  a 403 is a blocked request, not a rejected key. The 403 line has the
+  field `www_authenticate`: true when the response had a
+  `WWW-Authenticate` header, which the Fingrid API management sends. Both
+  are a degraded fetch without a retry.
 - **OpenWeatherMap:** One Call 3.0 for two fixed FI points; the key is in the
   query, so errors never include the URL.
 
@@ -647,6 +653,8 @@ change makes it wrong.
   status, and time. The raw path, the query string, headers, bodies, keys,
   and IP addresses are never logged.
 - A user id is logged only for the `invalid_settings` diagnosis (§2.2).
+- `www_authenticate` is a boolean of a refused Fingrid response (§2.3). The
+  value of a response header is never logged.
 - The panic hook logs only the source location.
 - `Config` debug output redacts `DATABASE_URL` and the upstream keys. A
   configuration error names the setting, never the value.

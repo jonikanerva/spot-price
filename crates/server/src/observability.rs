@@ -20,7 +20,7 @@ use crate::config::LogFormat;
 /// The fields whose values may appear in the log. A value of these fields
 /// must never hold an API key, a password, a token, an e-mail address, an IP
 /// address, a request body, or free text from a user.
-pub const ALLOWED_FIELDS: [&str; 35] = [
+pub const ALLOWED_FIELDS: [&str; 36] = [
     "message",
     "request_id",
     "method",
@@ -59,6 +59,9 @@ pub const ALLOWED_FIELDS: [&str; 35] = [
     // Counts of forecast quarters and rows without a grid value.
     "missing_quarters",
     "missing_training_rows",
+    // True when a refused Fingrid response had a `WWW-Authenticate` header.
+    // A boolean; the header value is never logged.
+    "www_authenticate",
 ];
 
 /// Installs the global subscriber. Events of this service at INFO and above

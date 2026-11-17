@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use jiff::Timestamp;
-use reqwest::header::{ACCEPT, HeaderValue};
+use reqwest::header::{ACCEPT, HeaderValue, WWW_AUTHENTICATE};
 use reqwest::{StatusCode, Url};
 use serde_json::Value;
 
@@ -26,6 +26,58 @@ pub const REQUEST_SPACING: Duration = Duration::from_secs(2);
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct Degraded(pub String);
+
+/// Why Fingrid refused a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// HTTP 401: Fingrid answers it for a missing or invalid API key.
+    KeyRejected,
+    /// HTTP 403: something blocked the request. It is not the answer to an
+    /// invalid key. `www_authenticate` is true when the response had a
+    /// `WWW-Authenticate` header, which the Fingrid API management sends.
+    Blocked { www_authenticate: bool },
+}
+
+impl Refusal {
+    /// The refusal of a response with `status`, if the status is one.
+    #[must_use]
+    pub fn of(status: StatusCode, www_authenticate: bool) -> Option<Self> {
+        match status {
+            StatusCode::UNAUTHORIZED => Some(Self::KeyRejected),
+            StatusCode::FORBIDDEN => Some(Self::Blocked { www_authenticate }),
+            _ => None,
+        }
+    }
+
+    /// A fixed code for diagnostics.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::KeyRejected => "fingrid_key_rejected",
+            Self::Blocked { .. } => "fingrid_request_blocked",
+        }
+    }
+
+    /// The fixed reason text of the degraded fetch.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::KeyRejected => "Fingrid rejected the API key (HTTP 401)",
+            Self::Blocked { .. } => "Fingrid blocked the request (HTTP 403)",
+        }
+    }
+
+    /// Logs the code. Only the presence of the header is logged, never its
+    /// value.
+    fn log(self) {
+        match self {
+            Self::KeyRejected => tracing::warn!(code = self.code(), "{}", self.reason()),
+            Self::Blocked { www_authenticate } => {
+                tracing::warn!(code = self.code(), www_authenticate, "{}", self.reason());
+            }
+        }
+    }
+}
 
 /// The Fingrid adapter.
 #[derive(Debug, Clone)]
@@ -80,7 +132,7 @@ impl FingridClient {
     ///
     /// # Errors
     ///
-    /// Returns [`Degraded`] for an auth failure, another HTTP error status, a
+    /// Returns [`Degraded`] for a [`Refusal`], another HTTP error status, a
     /// transport failure, or a body that fails validation.
     pub async fn fetch_datasets(
         &self,
@@ -115,11 +167,10 @@ impl FingridClient {
             .map_err(|error| transport_degraded(TransportError::from_reqwest(&error)))?;
 
         let status = response.status();
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            return Err(Degraded(format!(
-                "Fingrid auth failed (HTTP {})",
-                status.as_u16()
-            )));
+        let www_authenticate = response.headers().contains_key(WWW_AUTHENTICATE);
+        if let Some(refusal) = Refusal::of(status, www_authenticate) {
+            refusal.log();
+            return Err(Degraded(refusal.reason().to_owned()));
         }
         if status == StatusCode::UNPROCESSABLE_ENTITY {
             return Err(Degraded(
@@ -206,6 +257,34 @@ mod tests {
 
     fn parse(body: &Value) -> Result<Vec<FingridRecord>, Degraded> {
         parse_series(body.to_string().as_bytes())
+    }
+
+    #[test]
+    fn a_401_is_a_rejected_key_and_a_403_is_a_blocked_request() {
+        for challenge in [false, true] {
+            let rejected = Refusal::of(StatusCode::UNAUTHORIZED, challenge).unwrap();
+            assert_eq!(rejected, Refusal::KeyRejected);
+            assert_eq!(rejected.code(), "fingrid_key_rejected");
+            assert_eq!(rejected.reason(), "Fingrid rejected the API key (HTTP 401)");
+
+            let blocked = Refusal::of(StatusCode::FORBIDDEN, challenge).unwrap();
+            assert_eq!(
+                blocked,
+                Refusal::Blocked {
+                    www_authenticate: challenge
+                }
+            );
+            assert_eq!(blocked.code(), "fingrid_request_blocked");
+            assert_eq!(blocked.reason(), "Fingrid blocked the request (HTTP 403)");
+        }
+        for status in [
+            StatusCode::OK,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            assert_eq!(Refusal::of(status, true), None, "{status}");
+        }
     }
 
     #[test]

@@ -585,7 +585,7 @@ async fn a_degraded_fingrid_fetch_writes_nothing(pool: PgPool) {
     assert_eq!(
         result,
         ForecastFetchResult::Degraded {
-            reason: "Fingrid auth failed (HTTP 401)".to_owned()
+            reason: "Fingrid rejected the API key (HTTP 401)".to_owned()
         }
     );
 }
