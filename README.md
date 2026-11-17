@@ -71,7 +71,7 @@ The interactive API reference is served at `/api/docs` and the OpenAPI 3.1 docum
 | `from`    | Yes      | Inclusive range start, `YYYY-MM-DD`, interpreted in the user's timezone |
 | `to`      | Yes      | Inclusive range end, `YYYY-MM-DD`, interpreted in the user's timezone   |
 
-Totals apply your **current** contract settings to the stored historical spot prices (there is no historical settings versioning). The server enforces `from <= to` and a maximum inclusive span of 31 days; out-of-range requests return `400`. An empty-but-valid range returns `200` with `available: false` and an empty `prices` array.
+Each interval uses the contract terms that applied at that interval: the terms version of the local date of the interval start. The setup UI saves a terms version with a valid-from date and lists, edits, and deletes the versions. The server enforces `from <= to` and a maximum inclusive span of 31 days; out-of-range requests return `400`. An empty-but-valid range returns `200` with `available: false` and an empty `prices` array.
 
 **`/api/v1/price/forecast`**
 
@@ -190,7 +190,7 @@ There is no CI. Run `mise run verify` before pushing. A material change also get
 | `DATABASE_URL`           | —                       | PostgreSQL connection string (required)                                                                             |
 | `NODE_ENV`               | `development`           | `production` makes `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET` required                                              |
 | `BETTER_AUTH_URL`        | `http://localhost:3000` | Public origin. It sets the cookie security and the allowed `Origin` of session requests                             |
-| `BETTER_AUTH_SECRET`     | —                       | Required in production. The Rust service does not use it; it stays for the revert path                              |
+| `BETTER_AUTH_SECRET`     | —                       | Required in production. The Rust service does not use it; its removal is a follow-up                                |
 | `FINGRID_API_KEY`        | —                       | Fingrid Open Data key. Without it the Fingrid job does not run and the forecast returns `available: false`          |
 | `OPENWEATHERMAP_API_KEY` | —                       | OpenWeatherMap One Call 3.0 key. Without it the weather job does not run                                            |
 | `LOG_FORMAT`             | `json`                  | `text` gives readable logs                                                                                          |

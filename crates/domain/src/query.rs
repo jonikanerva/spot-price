@@ -14,7 +14,7 @@ use jiff::tz::Offset;
 
 use crate::areas::{ALL_AREAS, Area};
 use crate::js::{compare_utf16, date_utc, js_trim, number_of_utf16_slice, string_to_number};
-use crate::settings::{Hour, SettingsUpdate};
+use crate::settings::{EARLIEST_VALID_FROM, Hour, SettingsUpdate};
 use crate::time::UserTimeZone;
 
 /// The longest price-history range, in inclusive calendar days.
@@ -44,6 +44,7 @@ pub enum Field {
     NightEndHour,
     Timezone,
     Area,
+    ValidFrom,
 }
 
 impl Field {
@@ -65,6 +66,7 @@ impl Field {
             Self::NightEndHour => "nightEndHour",
             Self::Timezone => "timezone",
             Self::Area => "area",
+            Self::ValidFrom => "validFrom",
         }
     }
 }
@@ -88,6 +90,7 @@ pub enum IssueKind {
     SpanTooLong,
     UnknownTimezone,
     UnknownArea,
+    DateTooEarly,
 }
 
 /// One problem with one field.
@@ -126,6 +129,9 @@ impl fmt::Display for Issue {
             IssueKind::UnknownArea => {
                 let mut codes = ALL_AREAS.iter().map(|area| area.code());
                 write_options(f, &mut codes)
+            }
+            IssueKind::DateTooEarly => {
+                write!(f, "Too small: expected date to be >={EARLIEST_VALID_FROM}")
             }
         }
     }
@@ -560,10 +566,51 @@ pub fn validate_settings_update(
     })
 }
 
+/// Validates the `validFrom` of a contract terms version: a `YYYY-MM-DD`
+/// date, not before [`EARLIEST_VALID_FROM`].
+///
+/// # Errors
+/// The [`Issue`] of the text.
+pub fn parse_valid_from(text: &str) -> Result<Date, Issue> {
+    let issue = |kind| Issue {
+        field: Field::ValidFrom,
+        kind,
+    };
+    let date = parse_iso_date(text.as_bytes()).ok_or_else(|| issue(IssueKind::InvalidDate))?;
+    if date < EARLIEST_VALID_FROM {
+        return Err(issue(IssueKind::DateTooEarly));
+    }
+    Ok(date)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use jiff::civil::date;
+
+    #[test]
+    fn valid_from_is_an_iso_date_from_1970() {
+        assert_eq!(parse_valid_from("1970-01-01"), Ok(date(1970, 1, 1)));
+        assert_eq!(parse_valid_from("2026-12-01"), Ok(date(2026, 12, 1)));
+        assert_eq!(
+            parse_valid_from("1969-12-31").unwrap_err().to_string(),
+            "validFrom: Too small: expected date to be >=1970-01-01"
+        );
+        for text in [
+            "",
+            "2026-02-30",
+            "2026-12-1",
+            "2026-12-01T00:00:00Z",
+            " 2026-12-01",
+            "01.12.2026",
+        ] {
+            assert_eq!(
+                parse_valid_from(text).unwrap_err().to_string(),
+                "validFrom: Invalid ISO date",
+                "{text:?}"
+            );
+        }
+    }
 
     fn cheapest(duration: &str) -> CheapestQueryInput<'_> {
         CheapestQueryInput {

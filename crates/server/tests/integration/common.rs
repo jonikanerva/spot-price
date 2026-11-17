@@ -161,3 +161,15 @@ pub fn minutes(instant: Timestamp, minutes: i64) -> Timestamp {
 pub fn days(instant: Timestamp, days: i64) -> Timestamp {
     hours(instant, days * 24)
 }
+
+/// Gives each `user_settings` row without a terms version its first version
+/// from the term columns of the row, like migration 4. For seeds that write
+/// only `user_settings`.
+pub const COPY_SETTINGS_TO_TERMS: &str = "
+    INSERT INTO contract_terms
+      (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
+       tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
+    SELECT user_id, DATE '1970-01-01', margin_cents_kwh, transfer_day_cents_kwh,
+           transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour, night_end_hour
+    FROM user_settings s
+    WHERE NOT EXISTS (SELECT 1 FROM contract_terms t WHERE t.user_id = s.user_id)";

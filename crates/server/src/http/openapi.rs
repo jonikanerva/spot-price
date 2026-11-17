@@ -22,8 +22,9 @@ use utoipa_axum::router::{OpenApiRouter, UtoipaMethodRouterExt as _};
 use utoipa_axum::routes;
 
 use super::dto::{
-    ChartDataDto, ErrorDto, ForecastBandsDto, ForecastEntryDto, ForecastResponseDto, PriceListDto,
-    PriceWindowDto, PublicSpotDto, SpotPriceEntryDto, TotalPriceDto, UserSettingsDto,
+    ChartDataDto, ContractTermsVersionDto, ContractTermsVersionsDto, ErrorDto, ForecastBandsDto,
+    ForecastEntryDto, ForecastResponseDto, PriceListDto, PriceWindowDto, PublicSpotDto,
+    SpotPriceEntryDto, TotalPriceDto, UserSettingsDto,
 };
 use super::{AppState, forecast, me, not_found, price, wire};
 
@@ -53,6 +54,8 @@ use super::{AppState, forecast, me, not_found, price, wire};
         ForecastBandsDto,
         ForecastEntryDto,
         UserSettingsDto,
+        ContractTermsVersionDto,
+        ContractTermsVersionsDto,
         ChartDataDto
     )),
     modifiers(&Security)
@@ -101,6 +104,8 @@ pub fn price_routes() -> OpenApiRouter<AppState> {
 pub fn me_routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(me::get_settings, me::put_settings).map(|r| r.fallback(not_found)))
+        .routes(routes!(me::list_versions).map(|r| r.fallback(not_found)))
+        .routes(routes!(me::delete_version).map(|r| r.fallback(not_found)))
         .routes(routes!(me::chart).map(|r| r.fallback(not_found)))
 }
 
@@ -170,6 +175,9 @@ fn parameter_schema(path: &str, name: &str, description: &str) -> Option<Value> 
         (_, "maxPrice") => json!({"type": "string", "minLength": 1, "example": 12}),
         (_, "from") => json!({"type": "string", "format": "date", "example": "2026-04-01"}),
         (_, "to") => json!({"type": "string", "format": "date", "example": "2026-05-01"}),
+        (_, "validFrom") => {
+            json!({"type": "string", "format": "date", "example": "2026-12-01"})
+        }
         _ => return None,
     };
     if let Some(object) = schema.as_object_mut() {

@@ -11,7 +11,7 @@ use jiff_sqlx::ToSqlx as _;
 use sqlx::PgPool;
 
 use crate::db::StoreError;
-use crate::store::user_settings::UserSettingsRow;
+use crate::store::user_settings::insert_default_settings;
 
 /// One `"user"` row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,8 +151,8 @@ pub async fn credential_user_by_email(
     }))
 }
 
-/// Creates the user, the credential account, the username, and the default
-/// settings in one transaction. Nothing is written when a step fails.
+/// Creates the user, the credential account, the username, the default
+/// settings, and their first terms version in one transaction. Nothing is written when a step fails.
 ///
 /// # Errors
 ///
@@ -199,30 +199,7 @@ pub async fn create_account(
     .execute(&mut *transaction)
     .await
     .map_err(|error| conflict_or_query(&error))?;
-    let defaults = UserSettingsRow::defaults(new.user_id.to_owned());
-    sqlx::query!(
-        r#"
-        INSERT INTO user_settings
-          (user_id, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
-           tax_cents_kwh, vat_percent, night_start_hour, night_end_hour, timezone, area, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (user_id) DO NOTHING
-        "#,
-        defaults.user_id,
-        defaults.margin_cents_kwh,
-        defaults.transfer_day_cents_kwh,
-        defaults.transfer_night_cents_kwh,
-        defaults.tax_cents_kwh,
-        defaults.vat_percent,
-        defaults.night_start_hour,
-        defaults.night_end_hour,
-        defaults.timezone,
-        defaults.area,
-        now,
-    )
-    .execute(&mut *transaction)
-    .await
-    .map_err(StoreError::from)?;
+    insert_default_settings(&mut *transaction, new.user_id, new.now).await?;
     transaction.commit().await.map_err(StoreError::from)?;
     Ok(UserRow {
         id: new.user_id.to_owned(),

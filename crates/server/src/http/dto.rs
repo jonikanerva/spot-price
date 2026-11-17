@@ -224,21 +224,86 @@ pub struct UserSettingsDto {
     pub timezone: String,
     #[schema(example = "FI")]
     pub area: String,
+    /// The local date (YYYY-MM-DD, in the user's timezone) from which the returned contract terms apply.
+    #[schema(example = "1970-01-01")]
+    pub valid_from: String,
 }
 
-impl From<crate::store::user_settings::UserSettingsRow> for UserSettingsDto {
-    fn from(row: crate::store::user_settings::UserSettingsRow) -> Self {
+impl UserSettingsDto {
+    /// The settings of a user with the terms of one version.
+    #[must_use]
+    pub fn new(
+        user_id: String,
+        timezone: String,
+        area: String,
+        terms: &crate::store::user_settings::ContractTermsRow,
+    ) -> Self {
         Self {
-            user_id: row.user_id,
-            margin_cents_kwh: row.margin_cents_kwh,
-            transfer_day_cents_kwh: row.transfer_day_cents_kwh,
-            transfer_night_cents_kwh: row.transfer_night_cents_kwh,
-            tax_cents_kwh: row.tax_cents_kwh,
-            vat_percent: row.vat_percent,
-            night_start_hour: row.night_start_hour,
-            night_end_hour: row.night_end_hour,
-            timezone: row.timezone,
-            area: row.area,
+            user_id,
+            margin_cents_kwh: terms.margin_cents_kwh,
+            transfer_day_cents_kwh: terms.transfer_day_cents_kwh,
+            transfer_night_cents_kwh: terms.transfer_night_cents_kwh,
+            tax_cents_kwh: terms.tax_cents_kwh,
+            vat_percent: terms.vat_percent,
+            night_start_hour: terms.night_start_hour,
+            night_end_hour: terms.night_end_hour,
+            timezone,
+            area,
+            valid_from: terms.valid_from.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = ContractTermsVersion)]
+pub struct ContractTermsVersionDto {
+    /// The local date (YYYY-MM-DD, in the user's timezone) from which this version applies.
+    #[schema(example = "2026-12-01")]
+    pub valid_from: String,
+    #[schema(example = 0.5)]
+    pub margin_cents_kwh: f64,
+    #[schema(example = 2.5)]
+    pub transfer_day_cents_kwh: f64,
+    #[schema(example = 1.2)]
+    pub transfer_night_cents_kwh: f64,
+    #[schema(example = 2.79372)]
+    pub tax_cents_kwh: f64,
+    #[schema(example = 25.5)]
+    pub vat_percent: f64,
+    #[schema(example = 22)]
+    pub night_start_hour: i32,
+    #[schema(example = 7)]
+    pub night_end_hour: i32,
+}
+
+impl From<&crate::store::user_settings::ContractTermsRow> for ContractTermsVersionDto {
+    fn from(terms: &crate::store::user_settings::ContractTermsRow) -> Self {
+        Self {
+            valid_from: terms.valid_from.to_string(),
+            margin_cents_kwh: terms.margin_cents_kwh,
+            transfer_day_cents_kwh: terms.transfer_day_cents_kwh,
+            transfer_night_cents_kwh: terms.transfer_night_cents_kwh,
+            tax_cents_kwh: terms.tax_cents_kwh,
+            vat_percent: terms.vat_percent,
+            night_start_hour: terms.night_start_hour,
+            night_end_hour: terms.night_end_hour,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[schema(as = ContractTermsVersions)]
+pub struct ContractTermsVersionsDto {
+    /// Every contract terms version of the user, ascending by validFrom.
+    pub versions: Vec<ContractTermsVersionDto>,
+}
+
+impl ContractTermsVersionsDto {
+    #[must_use]
+    pub fn new(versions: &[crate::store::user_settings::ContractTermsRow]) -> Self {
+        Self {
+            versions: versions.iter().map(ContractTermsVersionDto::from).collect(),
         }
     }
 }

@@ -14,15 +14,15 @@ use spot_price_domain::areas::Area;
 use spot_price_domain::endpoints::PRICE_UNIT;
 use spot_price_domain::forecast::{
     FORECAST_AREA, REASON_FI_ONLY, REASON_NO_GRID_DATA, REASON_SETTINGS_NOT_FOUND, RouteForecast,
-    to_forecast_entries,
+    to_forecast_entries_at,
 };
 use spot_price_domain::price::apply_contract_terms;
-use spot_price_domain::settings::UserSettings;
+use spot_price_domain::settings::ContractSchedule;
 
 use super::api_key::ApiUser;
 use super::dto::{ForecastBandsDto, ForecastEntryDto, ForecastResponseDto};
 use super::input::{self, Query};
-use super::price::{Internal, load_settings, resolution};
+use super::price::{Internal, load_schedule, resolution};
 use super::{AppState, wire};
 use crate::forecast_cache::{self, ForecastCache, Snapshot};
 
@@ -73,7 +73,7 @@ fn unavailable(area: Area, reason: &'static str, generated_at: Timestamp) -> For
 
 async fn answer(state: &AppState, user_id: &str, area: Area) -> Result<Response, Internal> {
     let now = state.now();
-    let Some(settings) = load_settings(state, user_id).await? else {
+    let Some(schedule) = load_schedule(state, user_id).await? else {
         return Ok(wire::json(
             StatusCode::NOT_FOUND,
             &unavailable(area, REASON_SETTINGS_NOT_FOUND, now),
@@ -86,7 +86,7 @@ async fn answer(state: &AppState, user_id: &str, area: Area) -> Result<Response,
         ));
     }
     let snapshot = snapshot(state, now).await?;
-    let body = respond(&snapshot, &settings, area)?;
+    let body = respond(&snapshot, &schedule, area)?;
     Ok(wire::json(StatusCode::OK, &body))
 }
 
@@ -112,15 +112,16 @@ fn cached(cache: &ForecastCache) -> Option<std::sync::Arc<Snapshot>> {
         .filter(|snapshot| !snapshot.window_from_clock)
 }
 
-/// The response body of a forecast result for one user. Pure: no I/O and no
-/// clock.
+/// The response body of a forecast result for one user. Each quarter uses
+/// the contract terms that `schedule` gives for its start. Pure: no I/O and
+/// no clock.
 ///
 /// # Errors
 ///
 /// Returns [`Internal`] when a quarter leaves the supported time range.
 pub fn respond(
     snapshot: &Snapshot,
-    settings: &UserSettings,
+    schedule: &ContractSchedule,
     area: Area,
 ) -> Result<ForecastResponseDto, Internal> {
     let generated_at = snapshot.generated_at;
@@ -130,10 +131,10 @@ pub fn respond(
         }
         RouteForecast::Ready { result, assessment } => (result, assessment),
     };
-    let zone = settings.timezone.time_zone();
-    let entries = to_forecast_entries(result, zone, |spot, hour| {
+    let zone = schedule.timezone().time_zone();
+    let entries = to_forecast_entries_at(result, zone, |start, spot, hour| {
         let hour = u8::try_from(hour).unwrap_or(0);
-        apply_contract_terms(spot, settings, hour).total_cents_kwh
+        apply_contract_terms(spot, schedule.settings_at(start), hour).total_cents_kwh
     })
     .map_err(|_| {
         tracing::error!(code = "time_range", "a forecast quarter is out of range");

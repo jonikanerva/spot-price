@@ -108,6 +108,14 @@ async fn signup_writes_better_auth_rows_and_a_hashed_session(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(settings, 1);
+    let versions: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT valid_from::text, margin_cents_kwh FROM contract_terms WHERE user_id = $1",
+    )
+    .bind(&user_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(versions, [("1970-01-01".to_owned(), 0.49)]);
 
     // The table holds the SHA-256 of the token bytes, never the token.
     let raw = spot_price_server::auth::random::from_hex::<32>(token).unwrap();
@@ -238,6 +246,11 @@ async fn invalid_stored_settings_answer_the_generic_500(pool: PgPool) {
     .execute(&pool)
     .await
     .unwrap();
+    // The row has a terms version, so only the time zone is invalid.
+    sqlx::raw_sql(crate::common::COPY_SETTINGS_TO_TERMS)
+        .execute(&pool)
+        .await
+        .unwrap();
     let app = app(pool, NOW);
     for path in [
         "/api/v1/price/now",

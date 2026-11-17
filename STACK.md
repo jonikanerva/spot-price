@@ -50,12 +50,12 @@ Posture`). Price and grid data are public and can be fetched again. Most
 
 | Profile part                                                                     | Reason                                                                                                                                                            |
 | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Frontend SPA: TypeScript 7, React, Vite, TanStack, Oxlint, Vitest (§1, §2, §2.4) | The UI is a setup page only (`VISION.md`). `crates/server/src/http/ui/` holds the HTML and the inline script of the TypeScript service, except the chart drawing. |
+| Frontend SPA: TypeScript 7, React, Vite, TanStack, Oxlint, Vitest (§1, §2, §2.4) | The UI is a setup page only (`VISION.md`). `crates/server/src/http/ui/` holds the TypeScript page; the chart drawing and the terms versions differ from it.       |
 | Hey API client and Zod validators (§2.1 steps 3–5)                               | No first-party client consumes the API. Home Assistant and scripts are the clients. `contract/openapi.json` is committed and drift-checked.                       |
 | RFC 9457 Problem Details (§2.2)                                                  | The v1 contract keeps `{"error": "..."}` (docs/adr/0003). A change needs `/api/v2`.                                                                               |
 | OIDC (§2.5)                                                                      | The product uses local username and password accounts (docs/adr/0002).                                                                                            |
 | Exact decimals (§7)                                                              | Prices are `DOUBLE PRECISION` and binary floats with JavaScript rounding (docs/adr/0003).                                                                         |
-| axe accessibility checks (§11)                                                   | Not adopted in the port. Only the chart drawing differs from the TypeScript page. The keyboard and contrast thresholds of §11 stay review checks.                 |
+| axe accessibility checks (§11)                                                   | Not adopted in the port. The chart drawing and the terms versions differ from the TypeScript page. The §11 keyboard and contrast thresholds remain review checks. |
 | proptest, uuid, rust_decimal, Tailwind                                           | No current need. Golden files and seeded sweeps cover the rounding rules.                                                                                         |
 
 ### Repository layout and boundaries
@@ -169,12 +169,23 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   that is exactly the unpublished list where the recorded body is an
   available list with prices. The Rust route is available only for a
   complete next local day.
+  The `settings-valid-from` kind removes the last field `validFrom` of a
+  settings body before the other body checks, when the value is a
+  `YYYY-MM-DD` date and the recorded body has no such field. The settings
+  routes answer the terms of one contract terms version and its date (§5).
+  The replay gives each seeded `user_settings` row its first terms version,
+  like migration 4.
+- `GET /api/v1/me/settings/versions` and
+  `DELETE /api/v1/me/settings/versions/{validFrom}` have no TypeScript
+  recording. `contract_terms.rs` tests them.
 - `contract/openapi.json` is the export of `spot-price export-openapi`. The
   `contract:check` task fails on drift. `contract.rs` compares it with the
-  TypeScript document field by field. The one intentional difference is the
-  `description` of `generatedAt` in the forecast response schema. The golden
-  kind `generated-at-description` accepts only that difference in the
-  recorded OpenAPI body.
+  TypeScript document field by field. Its list `INTENTIONAL` holds the
+  intentional differences: the `description` of `generatedAt` in the
+  forecast response schema, and the contract terms versions (`validFrom`,
+  the two version routes, and the descriptions of the changed routes). The
+  golden kind `contract-document` accepts exactly that list in the recorded
+  OpenAPI body.
 - `/api/docs` serves the Scalar reference page of the TypeScript service. It
   loads Scalar from the jsDelivr CDN in the browser.
 - A breaking change needs `/api/v2` (`VISION.md`).
@@ -188,7 +199,8 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   the same answer.
 - A stored settings row that breaks the domain rules (an unsupported time
   zone, an hour outside 0–23) gives 500 and logs `invalid_settings` with the
-  user id only.
+  user id only. A settings row without a contract terms version gives 500
+  and logs `contract_terms_missing`.
 - Adapters map every failure to a fixed kind. Transport error text never
   leaves the adapter, because it can contain a URL with a key.
 - Upstream data: an invalid Nord Pool entry is left out; an invalid Fingrid
@@ -422,20 +434,24 @@ connection.
   2026-11-16 the database was the Railway service `Postgres spot-price`.
   The owner removed that service and its volume on 2026-11-17 (§15). The
   schema is the schema of the TypeScript migrations
-  `001`–`007` plus `app_sessions`. The schema `public` also holds the
-  extension `pg_stat_statements`; the copy brought it from the Railway
-  database.
+  `001`–`007` plus `app_sessions` and `contract_terms`. The schema `public`
+  also holds the extension `pg_stat_statements`; the copy brought it from
+  the Railway database.
 - **Migrations:** numbered SQLx files in `migrations/`. `0001_baseline.sql`
   is idempotent and changes nothing on the production schema; the old ledger
   `_migrations` stays. `0002_app_sessions.sql` adds the session table.
   `0003_drop_redundant_indexes.sql` drops three indexes that duplicate other
-  indexes, with a `lock_timeout` of 5 s; after it, the production catalog
-  differs from `fixtures/schema-snapshot.txt` by exactly these three
-  indexes. The migration runs as a separate step before the server starts
-  (§15).
+  indexes, with a `lock_timeout` of 5 s. `0004_contract_terms.sql` adds
+  `contract_terms` and copies each `user_settings` row as the terms version
+  of `1970-01-01`, with a `lock_timeout` of 5 s. It fails when a
+  `user_settings` row has a night hour outside 0–23 (§15). After
+  migration 4, the production catalog differs from
+  `fixtures/schema-snapshot.txt` by the three dropped indexes and by the
+  objects of `app_sessions`, of `contract_terms`, and of the extension
+  `pg_stat_statements`. The migration runs as a separate step before the
+  server starts (§15).
   `serve` refuses to start on an unmigrated database. New migrations MUST
-  stay compatible with the running release and MUST NOT break the
-  TypeScript revert path until the owner ends it (docs/adr/0001).
+  stay compatible with the running release.
 - **Queries:** SQLx `query!` macros with committed `.sqlx` metadata. The
   offline tools use runtime queries with bound parameters.
 - **Connection:** `DATABASE_URL` uses the direct Neon endpoint with
@@ -523,8 +539,26 @@ connection.
   is not a kill checkpoint, and the date alone closes nothing. If the work
   is closed later, the daily table is dropped in the same PR.
 - **Accounts:** `"user"`, `"account"`, `usernames`, `user_settings`,
-  `api_keys` (plaintext keys, `VISION.md`). The Better Auth `"session"` and
-  `"verification"` tables stay untouched for the revert path.
+  `contract_terms`, `api_keys` (plaintext keys, `VISION.md`). The service
+  does not use the Better Auth `"session"` and `"verification"` tables;
+  their removal is a follow-up.
+- **`user_settings`, `contract_terms`:** `user_settings` holds the time
+  zone and the area of a user, one current value each. `contract_terms`
+  holds the versions of the contract terms: margin, day and night transfer,
+  tax, VAT, and the night hours. The primary key is `(user_id, valid_from)`.
+  `valid_from` is a local calendar date (`DATE`) in the time zone of the
+  user, not an instant. An interval uses the latest version with a
+  `valid_from` on or before the local date of the interval start. An
+  interval before the first version uses the first version. Sign-up and the
+  first session read create the settings row and the version of
+  `1970-01-01` in one statement. A user has 1 to 100 versions. A save or a
+  delete locks the settings row first. A save writes the time zone, the
+  area, and the version in one transaction. `user_settings` keeps the term
+  columns of the TypeScript schema, because the release before migration 4
+  reads them during a deploy. The service does not read or write them; a
+  new row gets the column defaults. Their removal is a follow-up. A sign-up
+  or a settings save through the previous release, after migration 4 and
+  before the switch, does not reach `contract_terms` (docs/adr/0010).
 - **Recovery:** the Neon history window of 6 hours gives a point-in-time
   restore of the branch in the Neon Console. Older data has no restore
   path. The owner accepts the data-loss risk (2026-10-19). After a loss,
@@ -575,8 +609,6 @@ The profile list applies. In addition:
 - A change of a v1 response, status, header, or error text without a matching
   golden change, an `INTENTIONAL` entry in `golden_http.rs`, and an owner
   decision. A breaking change needs `/api/v2`.
-- A migration that the TypeScript revert path cannot run on, while the
-  revert path holds (docs/adr/0001).
 - A password hash, user row, or account row that Better Auth cannot read
   (docs/adr/0002).
 - `DISTINCT ON` in the live latest-vintage read (§5).
@@ -702,7 +734,9 @@ entry here.
 ## 11. Design guidelines & UX thresholds
 
 The web UI is a setup surface only (`VISION.md`). It is the page of the
-TypeScript service, except the chart drawing. It must be usable without a pointer.
+TypeScript service, except the chart drawing and the contract terms
+versions: a valid-from date in the settings form, and a list of the
+versions with edit and delete. It must be usable without a pointer.
 
 - **Design authority:** WCAG 2.2 AA and native HTML semantics.
 - **Thresholds:** pointer target size ≥ 24×24 CSS px (WCAG 2.5.8); text
@@ -824,8 +858,8 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
   `railway variables --set` from the shell, so the value never appears in
   a log or a chat), `BETTER_AUTH_URL` (the public
   origin; it sets the cookie security and the `Origin` check),
-  `BETTER_AUTH_SECRET` (unused by the Rust service; kept for the revert
-  path), `NODE_ENV=production`.
+  `BETTER_AUTH_SECRET` (unused by the Rust service; its removal is a
+  follow-up), `NODE_ENV=production`.
 - Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY` (a missing key
   disables its job and logs a warning), `LOG_FORMAT`.
 - Platform: `PORT`.
@@ -854,12 +888,19 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
 
    - The snapshot differs only by the Rust migrations that production
      already has, and by the objects of the extension `pg_stat_statements`.
-     Through migration 3, the migrations add `app_sessions` and drop three
-     indexes (§5). The precheck prints
-     `typescript_migrations|1,2,3,4,5,6,7`, the server version, and `0` for
-     each `user_settings_invalid_*` count. A non-zero count is a user for
-     whom the Rust service answers 500. It blocks the merge until the owner
-     decides how to correct the row.
+     Through migration 4, the migrations add `app_sessions` and
+     `contract_terms` and drop three indexes (§5). The precheck prints
+     `typescript_migrations|1,2,3,4,5,6,7`, the server version, `0` for
+     each `user_settings_invalid_*` count,
+     `contract_terms_invalid_night_hours|0`, and
+     `user_settings_without_contract_terms|0`. Before migration 4, the last
+     two lines end with `not migrated` in place of the count. A non-zero
+     count is a user for whom the Rust service answers 500. It blocks the
+     merge until the owner decides how to correct the row. After a release,
+     a non-zero `user_settings_without_contract_terms` is a user that the
+     previous release created during the deploy (§5). A non-zero
+     `user_settings_invalid_night_hours` also makes migration 4 fail: the
+     deploy stops at `migrate`, and the active deployment stays in service.
    - `DATABASE_URL` of the service uses the direct Neon endpoint (no
      `-pooler` in the host name) with `sslmode=verify-full` (§5).
    - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`: no trailing
@@ -887,14 +928,15 @@ and an API key.
   every applied migration stops at `migrate` (`migrate_version`). A failed
   build or a failed start leaves the active deployment in service.
 - **Code:** `git revert -m 1 <merge commit>` on a branch, then merge. A
-  revert of the port removes `railpack.json`, so Railpack detects the Node
-  service again. A revert of a later change keeps its migration files.
-- **Data:** a revert needs no data change (docs/adr/0001). A revert to a
-  180-day vintage retention, including a revert to the TypeScript service,
-  deletes every Fingrid forecast vintage older than 180 days at its first
-  Fingrid run. That deletion cannot be undone. Sessions created
-  by the Rust service end at a revert; users sign in again. `_sqlx_migrations` and `app_sessions` stay and are
-  harmless.
+  revert keeps the migration files of the reverted change. The revert path
+  to the TypeScript service ended on 2026-11-17 (docs/adr/0010).
+- **Data:** a revert of the contract terms versions keeps `contract_terms`.
+  The reverted service reads the term columns of `user_settings`. They hold
+  the terms at the time of migration 4: a terms version that a user saved
+  later is not in them. The owner then enters the current terms again in
+  the setup UI. A revert to a 180-day vintage retention deletes every
+  Fingrid forecast vintage older than 180 days at its first Fingrid run.
+  That deletion cannot be undone.
 - **Database:** no rollback database exists. The owner removed the Railway
   service `Postgres spot-price` and its volume on 2026-11-17, after a
   `pg_dump` of the Neon database (22.6 MB, 15 tables), which the owner
@@ -936,5 +978,4 @@ and an API key.
 
 Review toolchain and dependency upgrades with the same evidence. After a
 query or migration change, run `mise run sqlx:prepare` and commit `.sqlx`.
-After a Railpack change, compare the plan again. Keep the TypeScript revert
-path until the owner ends it.
+After a Railpack change, compare the plan again.

@@ -9,12 +9,22 @@
 --   user_settings_invalid_timezone|0
 --   user_settings_invalid_area|0
 --   user_settings_invalid_night_hours|0
+--   contract_terms_invalid_night_hours|0
+--   user_settings_without_contract_terms|0
+--
+-- Before migration 4 creates the table `contract_terms`, the last two lines
+-- end with `not migrated` in place of the count.
 --
 -- The statement fails when the table `_migrations` does not exist.
 
--- A count is the number of `user_settings` rows that the Rust service
--- rejects; each such user gets 500 from the price routes. Print counts only,
+-- A count is the number of rows that the Rust service rejects; each such
+-- user gets 500 from the price routes. A `user_settings` row with an invalid
+-- night hour also makes migration 4 fail. A `user_settings` row without a
+-- `contract_terms` row is a user without a terms version. Print counts only,
 -- never a user id or a stored value.
+
+-- `query_to_xml` runs a count on `contract_terms` only when the table
+-- exists: a direct reference fails the whole statement before migration 4.
 
 -- The lists must equal the time zones and area codes of
 -- crates/domain/src/areas.rs.
@@ -51,5 +61,30 @@ lines(position, line) AS (
   FROM user_settings
   WHERE night_start_hour NOT BETWEEN 0 AND 23
      OR night_end_hour NOT BETWEEN 0 AND 23
+  UNION ALL
+  SELECT 6, 'contract_terms_invalid_night_hours|' || CASE
+    WHEN to_regclass('contract_terms') IS NULL THEN 'not migrated'
+    ELSE coalesce(substring(
+      query_to_xml(
+        'SELECT count(*) AS n FROM contract_terms
+         WHERE night_start_hour NOT BETWEEN 0 AND 23
+            OR night_end_hour NOT BETWEEN 0 AND 23',
+        false, true, ''
+      )::text
+      FROM '<n>([0-9]+)</n>'
+    ), 'unreadable')
+  END
+  UNION ALL
+  SELECT 7, 'user_settings_without_contract_terms|' || CASE
+    WHEN to_regclass('contract_terms') IS NULL THEN 'not migrated'
+    ELSE coalesce(substring(
+      query_to_xml(
+        'SELECT count(*) AS n FROM user_settings s
+         WHERE NOT EXISTS (SELECT 1 FROM contract_terms t WHERE t.user_id = s.user_id)',
+        false, true, ''
+      )::text
+      FROM '<n>([0-9]+)</n>'
+    ), 'unreadable')
+  END
 )
 SELECT line FROM lines ORDER BY position;

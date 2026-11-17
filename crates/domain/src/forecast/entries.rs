@@ -51,6 +51,25 @@ pub fn to_forecast_entries<F>(
 where
     F: Fn(f64, i8) -> f64,
 {
+    to_forecast_entries_at(result, time_zone, |_, spot, hour| {
+        total_cents_kwh(spot, hour)
+    })
+}
+
+/// [`to_forecast_entries`] where `total_cents_kwh(start, spot, local_hour)`
+/// also gets the quarter start, so the contract terms can depend on it.
+///
+/// # Errors
+///
+/// Returns [`ForecastError::OutOfRange`] when a quarter leaves the Jiff range.
+pub fn to_forecast_entries_at<F>(
+    result: &ForecastResult,
+    time_zone: &TimeZone,
+    total_cents_kwh: F,
+) -> Result<Vec<ForecastEntry>, ForecastError>
+where
+    F: Fn(Timestamp, f64, i8) -> f64,
+{
     result
         .series
         .iter()
@@ -67,12 +86,12 @@ where
                 local_start: local(start, time_zone),
                 local_end: local(end, time_zone),
                 estimated_spot_cents_kwh: spot,
-                estimated_total_cents_kwh: total_cents_kwh(spot, hour),
+                estimated_total_cents_kwh: total_cents_kwh(start, spot, hour),
                 band: point.band.map(|band| EntryBand {
                     spot_low_cents_kwh: band.low,
                     spot_high_cents_kwh: band.high,
-                    total_low_cents_kwh: total_cents_kwh(band.low, hour),
-                    total_high_cents_kwh: total_cents_kwh(band.high, hour),
+                    total_low_cents_kwh: total_cents_kwh(start, band.low, hour),
+                    total_high_cents_kwh: total_cents_kwh(start, band.high, hour),
                 }),
             })
         })

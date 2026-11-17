@@ -2,6 +2,8 @@
 
 use jiff::Timestamp;
 use spot_price_domain::areas::Area;
+use spot_price_domain::settings::{Hour, SettingsUpdate};
+use spot_price_domain::time::UserTimeZone;
 use spot_price_server::store::fingrid::{
     DATASET_CONSUMPTION_ACTUAL, DATASET_CONSUMPTION_FORECAST, DATASET_WIND_ACTUAL,
     DATASET_WIND_FORECAST, FingridRecord, VINTAGE_BACKFILL_HOURS,
@@ -14,7 +16,8 @@ use spot_price_server::store::prices::{
     get_prices_by_range, store_prices,
 };
 use spot_price_server::store::user_settings::{
-    UserSettingsRow, ensure_user_settings, get_user_settings, upsert_user_settings,
+    ContractTermsRow, DeleteOutcome, SaveError, UserSettingsRow, delete_version,
+    ensure_user_settings, get_user_settings, save_settings,
 };
 use spot_price_server::store::weather::{
     WeatherDailyRecord, WeatherRecord, get_weather_records_by_range,
@@ -697,20 +700,46 @@ async fn stores_a_daily_row_without_solar_bounds(pool: PgPool) {
 // --- User settings ---------------------------------------------------------
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
-async fn ensure_creates_the_defaults_once(pool: PgPool) {
+async fn ensure_creates_the_defaults_and_the_first_version_once(pool: PgPool) {
     let now = ts(NOW);
     assert_eq!(get_user_settings(&pool, "u1").await.unwrap(), None);
     let created = ensure_user_settings(&pool, "u1", now).await.unwrap();
-    assert_eq!(created, UserSettingsRow::defaults("u1".to_owned()));
+    assert_eq!(
+        created,
+        UserSettingsRow {
+            user_id: "u1".to_owned(),
+            timezone: "Europe/Helsinki".to_owned(),
+            area: "FI".to_owned(),
+            versions: vec![ContractTermsRow::defaults()],
+        }
+    );
+    assert_eq!(
+        ContractTermsRow::defaults().valid_from,
+        jiff::civil::date(1970, 1, 1)
+    );
 
-    let custom = UserSettingsRow {
-        margin_cents_kwh: 1.5,
-        area: "SE3".to_owned(),
-        timezone: "Europe/Stockholm".to_owned(),
-        night_start_hour: 23,
-        ..created
+    let update = SettingsUpdate {
+        margin_cents_kwh: Some(1.5),
+        night_start_hour: Some(Hour::new(23).unwrap()),
+        timezone: Some(UserTimeZone::parse("Europe/Stockholm").unwrap()),
+        area: Some(Area::Se3),
+        ..SettingsUpdate::default()
     };
-    upsert_user_settings(&pool, &custom, now).await.unwrap();
+    let first = Some(jiff::civil::date(1970, 1, 1));
+    save_settings(&pool, "u1", &update, first, now)
+        .await
+        .unwrap();
+    let custom = UserSettingsRow {
+        user_id: "u1".to_owned(),
+        timezone: "Europe/Stockholm".to_owned(),
+        area: "SE3".to_owned(),
+        versions: vec![ContractTermsRow {
+            margin_cents_kwh: 1.5,
+            night_start_hour: 23,
+            ..ContractTermsRow::defaults()
+        }],
+    };
+    // A second ensure keeps the saved settings.
     assert_eq!(
         ensure_user_settings(&pool, "u1", now).await.unwrap(),
         custom
@@ -719,9 +748,10 @@ async fn ensure_creates_the_defaults_once(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
-async fn upsert_sets_updated_at_from_the_given_clock(pool: PgPool) {
+async fn a_save_sets_updated_at_from_the_given_clock(pool: PgPool) {
+    ensure_user_settings(&pool, "u2", ts(NOW)).await.unwrap();
     let now = ts("2026-05-01T08:30:00Z");
-    upsert_user_settings(&pool, &UserSettingsRow::defaults("u2".to_owned()), now)
+    save_settings(&pool, "u2", &SettingsUpdate::default(), None, now)
         .await
         .unwrap();
     let updated_at: String = sqlx::query_scalar(
@@ -731,6 +761,65 @@ async fn upsert_sets_updated_at_from_the_given_clock(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(updated_at, "2026-05-01T08:30:00Z");
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_save_for_a_user_without_a_version_writes_nothing(pool: PgPool) {
+    sqlx::query("INSERT INTO user_settings (user_id) VALUES ('u3')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let update = SettingsUpdate {
+        area: Some(Area::Se3),
+        ..SettingsUpdate::default()
+    };
+    assert_eq!(
+        save_settings(&pool, "u3", &update, None, ts(NOW)).await,
+        Err(SaveError::NoVersion)
+    );
+    let stored = get_user_settings(&pool, "u3").await.unwrap().unwrap();
+    assert_eq!((stored.area.as_str(), stored.versions.len()), ("FI", 0));
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_delete_never_removes_the_only_version(pool: PgPool) {
+    let now = ts(NOW);
+    ensure_user_settings(&pool, "u4", now).await.unwrap();
+    let first = jiff::civil::date(1970, 1, 1);
+    let later = jiff::civil::date(2026, 12, 1);
+    assert_eq!(
+        delete_version(&pool, "u4", first).await.unwrap(),
+        DeleteOutcome::LastVersion
+    );
+    assert_eq!(
+        delete_version(&pool, "u4", later).await.unwrap(),
+        DeleteOutcome::NotFound
+    );
+    assert_eq!(
+        delete_version(&pool, "nobody", first).await.unwrap(),
+        DeleteOutcome::NotFound
+    );
+    let update = SettingsUpdate {
+        margin_cents_kwh: Some(0.6),
+        ..SettingsUpdate::default()
+    };
+    save_settings(&pool, "u4", &update, Some(later), now)
+        .await
+        .unwrap();
+    // The first version can go when another version remains.
+    let remaining = ContractTermsRow {
+        valid_from: later,
+        margin_cents_kwh: 0.6,
+        ..ContractTermsRow::defaults()
+    };
+    assert_eq!(
+        delete_version(&pool, "u4", first).await.unwrap(),
+        DeleteOutcome::Deleted(vec![remaining])
+    );
+    assert_eq!(
+        delete_version(&pool, "u4", later).await.unwrap(),
+        DeleteOutcome::LastVersion
+    );
 }
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]

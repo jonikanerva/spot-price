@@ -18,7 +18,7 @@ page is a short checklist.
 - `DATABASE_URL` (the direct Neon URL; set it with `railway variables --set`
   from the shell, so the value never appears in a log or a chat)
 - `BETTER_AUTH_URL=https://spot.calmdonut.com` (the public origin)
-- `BETTER_AUTH_SECRET=<32+ char random secret>` (kept for the revert path)
+- `BETTER_AUTH_SECRET=<32+ char random secret>` (unused by the service; its removal is a follow-up)
 - Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY`, `LOG_FORMAT`
 
 Railway sets `PORT`.
@@ -46,10 +46,11 @@ pgc "$NEON" -X -q -A -t -f - <scripts/release-precheck.sql
 
 - The snapshot differs only by the Rust migrations that production already
   has, and by the objects of the extension `pg_stat_statements`. Through
-  migration 3, the migrations add `app_sessions` and drop three indexes
-  (`STACK.md` §5).
-- The precheck prints `typescript_migrations|1,2,3,4,5,6,7` and `0` for each
-  `user_settings_invalid_*` count.
+  migration 4, the migrations add `app_sessions` and `contract_terms` and
+  drop three indexes (`STACK.md` §5).
+- The precheck prints `typescript_migrations|1,2,3,4,5,6,7`, `0` for each
+  `user_settings_invalid_*` count, and two `contract_terms` lines
+  (`STACK.md` §15).
 - `DATABASE_URL` uses the direct Neon endpoint (no `-pooler` in the host
   name) with `sslmode=verify-full`.
 - `BETTER_AUTH_URL` is exactly `https://spot.calmdonut.com`, with no trailing

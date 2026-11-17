@@ -102,6 +102,19 @@
       .settings-grid label { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); gap: 10px; }
       .settings-grid label.stacked { flex-direction: column; align-items: stretch; gap: 4px; }
       .settings-grid label input { width: 100px; text-align: right; }
+      .settings-grid label input[type="date"] { width: 160px; }
+      button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn-small { padding: 6px 10px; font-size: 12px; min-height: 28px; }
+      .version-list { list-style: none; display: grid; gap: 8px; margin-top: 8px; }
+      .version-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+      .version-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .version-date { font-size: 13px; color: var(--text); }
+      .version-actions { display: flex; gap: 6px; }
+      .version-terms { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
 
       .api-panel { display: none; }
       .api-sections { display: grid; gap: 18px; }
@@ -215,13 +228,14 @@
           <aside class="card">
             <h2>Settings</h2>
             <div class="settings-grid">
-              <label>Margin c/kWh <input id="margin" type="number" step="0.01" /></label>
+              <label>Margin c/kWh (excl. VAT) <input id="margin" type="number" step="0.01" /></label>
               <label>Day transfer c/kWh <input id="dayTransfer" type="number" step="0.01" /></label>
               <label>Night transfer c/kWh <input id="nightTransfer" type="number" step="0.01" /></label>
               <label>Tax c/kWh <input id="tax" type="number" step="0.01" /></label>
               <label>VAT % <input id="vat" type="number" step="0.1" /></label>
               <label>Night start hour <input id="nightStart" type="number" min="0" max="23" /></label>
               <label>Night end hour <input id="nightEnd" type="number" min="0" max="23" /></label>
+              <label>Valid from <input id="validFrom" type="date" min="1970-01-01" /></label>
               <label class="stacked">Delivery area
                 <select id="area">
                   <option value="FI">Finland (FI)</option>
@@ -265,8 +279,12 @@
                 </select>
               </label>
               <button id="saveBtn" class="btn btn-primary" style="margin-top:6px">Save settings</button>
-              <div id="settingsStatus" class="status"></div>
+              <div id="settingsStatus" class="status" role="status"></div>
             </div>
+            <h2 style="margin-top:16px">Contract terms versions</h2>
+            <p class="muted">Each version applies from its date in your timezone, until the next version starts.</p>
+            <ul id="versionList" class="version-list" role="list"></ul>
+            <div id="versionStatus" class="status" role="status"></div>
           </aside>
         </div>
 
@@ -325,7 +343,7 @@
     <script>
       const $ = (id) => document.getElementById(id)
 
-      const state = { session: null, apiKey: '' }
+      const state = { session: null, apiKey: '', timezone: '', versions: [] }
       const areaTimezoneMap = { "FI": "Europe/Helsinki", "SE1": "Europe/Stockholm", "SE2": "Europe/Stockholm", "SE3": "Europe/Stockholm", "SE4": "Europe/Stockholm", "NO1": "Europe/Oslo", "NO2": "Europe/Oslo", "NO3": "Europe/Oslo", "NO4": "Europe/Oslo", "NO5": "Europe/Oslo", "DK1": "Europe/Copenhagen", "DK2": "Europe/Copenhagen", "EE": "Europe/Tallinn", "LT": "Europe/Vilnius", "LV": "Europe/Riga", "AT": "Europe/Vienna", "BE": "Europe/Brussels", "FR": "Europe/Paris", "GER": "Europe/Berlin", "NL": "Europe/Amsterdam", "PL": "Europe/Warsaw" }
 
       const setStatus = (id, type, msg) => {
@@ -775,6 +793,28 @@
         return true
       }
 
+      // YYYY-MM-DD of today in timeZone, not in the time zone of the browser.
+      const todayInZone = (timeZone) => {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).formatToParts(new Date())
+        const part = (type) => (parts.find((item) => item.type === type) || { value: '' }).value
+        return part('year') + '-' + part('month') + '-' + part('day')
+      }
+
+      const fillTerms = (terms) => {
+        $('margin').value = terms.marginCentsKwh
+        $('dayTransfer').value = terms.transferDayCentsKwh
+        $('nightTransfer').value = terms.transferNightCentsKwh
+        $('tax').value = terms.taxCentsKwh
+        $('vat').value = terms.vatPercent
+        $('nightStart').value = terms.nightStartHour
+        $('nightEnd').value = terms.nightEndHour
+      }
+
       const loadSettings = async () => {
         const response = await json('/api/v1/me/settings')
         if (!response.ok) {
@@ -783,16 +823,97 @@
         }
 
         const settings = response.data
-        $('margin').value = settings.marginCentsKwh
-        $('dayTransfer').value = settings.transferDayCentsKwh
-        $('nightTransfer').value = settings.transferNightCentsKwh
-        $('tax').value = settings.taxCentsKwh
-        $('vat').value = settings.vatPercent
-        $('nightStart').value = settings.nightStartHour
-        $('nightEnd').value = settings.nightEndHour
+        fillTerms(settings)
         $('area').value = settings.area
         $('timezone').value = settings.timezone
+        state.timezone = settings.timezone
+        $('validFrom').value = todayInZone(settings.timezone)
         setStatus('settingsStatus', 'ok', 'Settings loaded')
+      }
+
+      const versionButton = (label, className, version) => {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'btn btn-small ' + className
+        button.textContent = label
+        button.setAttribute('aria-label', label + ' the version from ' + version.validFrom)
+        return button
+      }
+
+      // The version that applies on date (YYYY-MM-DD): the latest that has
+      // started, else the first. The server uses the same rule.
+      const versionOn = (versions, date) => {
+        const started = versions.filter((version) => version.validFrom <= date)
+        return started.length > 0 ? started[started.length - 1] : versions[0]
+      }
+
+      const renderVersions = (versions) => {
+        state.versions = versions
+        const list = $('versionList')
+        const current = versionOn(versions, todayInZone(state.timezone))
+        list.replaceChildren(...versions.map((version) => {
+          const item = document.createElement('li')
+          item.className = 'version-item'
+          item.setAttribute('data-valid-from', version.validFrom)
+
+          const head = document.createElement('div')
+          head.className = 'version-head'
+          const date = document.createElement('span')
+          date.className = 'version-date'
+          date.textContent = 'From ' + version.validFrom + (version === current ? ' (applies today)' : '')
+          const actions = document.createElement('span')
+          actions.className = 'version-actions'
+          const edit = versionButton('Edit', 'btn-secondary', version)
+          edit.onclick = () => {
+            fillTerms(version)
+            $('validFrom').value = version.validFrom
+            setStatus('settingsStatus', 'ok', 'Editing the version from ' + version.validFrom + '. Save to replace it.')
+            $('margin').focus()
+          }
+          const remove = versionButton('Delete', 'btn-danger', version)
+          remove.disabled = versions.length < 2
+          if (remove.disabled) {
+            remove.title = 'The only version cannot be deleted'
+          }
+          remove.onclick = () => deleteVersion(version.validFrom)
+          actions.append(edit, remove)
+          head.append(date, actions)
+
+          const terms = document.createElement('div')
+          terms.className = 'version-terms'
+          terms.textContent =
+            'Margin ' + version.marginCentsKwh +
+            ' · Transfer day ' + version.transferDayCentsKwh +
+            ' / night ' + version.transferNightCentsKwh +
+            ' · Tax ' + version.taxCentsKwh +
+            ' · VAT ' + version.vatPercent + ' %' +
+            ' · Night ' + version.nightStartHour + '-' + version.nightEndHour
+          item.append(head, terms)
+          return item
+        }))
+      }
+
+      const loadVersions = async () => {
+        const response = await json('/api/v1/me/settings/versions')
+        if (!response.ok) {
+          setStatus('versionStatus', 'err', response.data.error || 'Failed')
+          return
+        }
+        renderVersions(response.data.versions || [])
+      }
+
+      const deleteVersion = async (validFrom) => {
+        if (!window.confirm('Delete the contract terms version from ' + validFrom + '?')) return
+        const response = await json('/api/v1/me/settings/versions/' + encodeURIComponent(validFrom), {
+          method: 'DELETE',
+        })
+        if (!response.ok) {
+          setStatus('versionStatus', 'err', response.data.error || 'Delete failed')
+          return
+        }
+        renderVersions(response.data.versions || [])
+        setStatus('versionStatus', 'ok', 'Deleted the version from ' + validFrom)
+        await loadTotalChart()
       }
 
       const loadTotalChart = async () => {
@@ -838,6 +959,18 @@
         $('dashboard').style.display = 'block'
         switchView('dash')
         await Promise.all([loadSettings(), loadTotalChart()])
+        await loadVersions()
+      }
+
+      // A save sends every term of the form. A new date therefore replaces
+      // the terms of the form with the terms that apply on that date, so a
+      // save never carries the terms of another date.
+      $('validFrom').onchange = () => {
+        const date = $('validFrom').value
+        const version = date ? versionOn(state.versions, date) : null
+        if (!version) return
+        fillTerms(version)
+        setStatus('settingsStatus', 'ok', 'Loaded the terms that apply on ' + date + '. Change them and save.')
       }
 
       $('area').onchange = () => {
@@ -898,6 +1031,10 @@
           area: $('area').value,
           timezone: $('timezone').value,
         }
+        // Without a date, the server uses today in the saved time zone.
+        if ($('validFrom').value) {
+          payload.validFrom = $('validFrom').value
+        }
 
         const response = await json('/api/v1/me/settings', {
           method: 'PUT',
@@ -910,8 +1047,10 @@
           return
         }
 
-        setStatus('settingsStatus', 'ok', 'Settings saved')
-        await loadTotalChart()
+        state.timezone = response.data.timezone
+        setStatus('settingsStatus', 'ok', 'Settings saved. These terms apply from ' + response.data.validFrom + '.')
+        setStatus('versionStatus', '', '')
+        await Promise.all([loadVersions(), loadTotalChart()])
       })
 
       $('navDash').onclick = () => switchView('dash')

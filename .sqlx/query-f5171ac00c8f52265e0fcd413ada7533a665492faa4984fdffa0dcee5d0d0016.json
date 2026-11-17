@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH created AS (\n          INSERT INTO user_settings (user_id, timezone, area, updated_at)\n          VALUES ($1, $2, $3, $4)\n          ON CONFLICT (user_id) DO NOTHING\n          RETURNING user_id\n        )\n        INSERT INTO contract_terms\n          (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh,\n           transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)\n        SELECT user_id, $5, $6, $7, $8, $9, $10, $11, $12 FROM created\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Date",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f5171ac00c8f52265e0fcd413ada7533a665492faa4984fdffa0dcee5d0d0016"
+}

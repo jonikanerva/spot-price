@@ -1,7 +1,8 @@
 //! The setup page `GET /` and the API reference page `GET /api/docs`.
 //!
-//! `ui/index.html` and `ui/client.js` are the bytes of the TypeScript page
-//! with placeholders for the generated parts, except the chart drawing.
+//! `ui/index.html` and `ui/client.js` are the TypeScript page with
+//! placeholders for the generated parts. The chart drawing and the contract
+//! terms versions of the settings form differ from that page.
 //! Prettier must not format them (`.prettierignore`): a test compares the
 //! rendered page byte for byte with `tests/fixtures/ui-home.html`.
 

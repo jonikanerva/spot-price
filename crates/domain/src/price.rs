@@ -5,7 +5,7 @@ use jiff::Timestamp;
 
 use crate::areas::Area;
 use crate::js::{max_zero, round3};
-use crate::settings::UserSettings;
+use crate::settings::{ContractSchedule, UserSettings};
 use crate::time::{format_date_time_in_time_zone, local_hour, truncate_to_millisecond};
 
 /// A delivery interval `[start, end)` with `start < end`.
@@ -231,6 +231,19 @@ pub fn calculate_total_prices(
     prices
         .iter()
         .map(|price| calculate_total_price(price, settings))
+        .collect()
+}
+
+/// [`calculate_total_price`] for each interval, in order. Each interval
+/// uses the settings that `schedule` gives for its start.
+#[must_use]
+pub fn calculate_scheduled_total_prices(
+    prices: &[PriceInterval],
+    schedule: &ContractSchedule,
+) -> Vec<TotalPrice> {
+    prices
+        .iter()
+        .map(|price| calculate_total_price(price, schedule.settings_at(price.period.start())))
         .collect()
 }
 

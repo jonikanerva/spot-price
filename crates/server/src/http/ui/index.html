@@ -102,6 +102,19 @@
       .settings-grid label { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); gap: 10px; }
       .settings-grid label.stacked { flex-direction: column; align-items: stretch; gap: 4px; }
       .settings-grid label input { width: 100px; text-align: right; }
+      .settings-grid label input[type="date"] { width: 160px; }
+      button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+      .btn-small { padding: 6px 10px; font-size: 12px; min-height: 28px; }
+      .version-list { list-style: none; display: grid; gap: 8px; margin-top: 8px; }
+      .version-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+      .version-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .version-date { font-size: 13px; color: var(--text); }
+      .version-actions { display: flex; gap: 6px; }
+      .version-terms { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
 
       .api-panel { display: none; }
       .api-sections { display: grid; gap: 18px; }
@@ -215,13 +228,14 @@
           <aside class="card">
             <h2>Settings</h2>
             <div class="settings-grid">
-              <label>Margin c/kWh <input id="margin" type="number" step="0.01" /></label>
+              <label>Margin c/kWh (excl. VAT) <input id="margin" type="number" step="0.01" /></label>
               <label>Day transfer c/kWh <input id="dayTransfer" type="number" step="0.01" /></label>
               <label>Night transfer c/kWh <input id="nightTransfer" type="number" step="0.01" /></label>
               <label>Tax c/kWh <input id="tax" type="number" step="0.01" /></label>
               <label>VAT % <input id="vat" type="number" step="0.1" /></label>
               <label>Night start hour <input id="nightStart" type="number" min="0" max="23" /></label>
               <label>Night end hour <input id="nightEnd" type="number" min="0" max="23" /></label>
+              <label>Valid from <input id="validFrom" type="date" min="1970-01-01" /></label>
               <label class="stacked">Delivery area
                 <select id="area">
                   {{AREA_OPTIONS}}
@@ -233,8 +247,12 @@
                 </select>
               </label>
               <button id="saveBtn" class="btn btn-primary" style="margin-top:6px">Save settings</button>
-              <div id="settingsStatus" class="status"></div>
+              <div id="settingsStatus" class="status" role="status"></div>
             </div>
+            <h2 style="margin-top:16px">Contract terms versions</h2>
+            <p class="muted">Each version applies from its date in your timezone, until the next version starts.</p>
+            <ul id="versionList" class="version-list" role="list"></ul>
+            <div id="versionStatus" class="status" role="status"></div>
           </aside>
         </div>
 

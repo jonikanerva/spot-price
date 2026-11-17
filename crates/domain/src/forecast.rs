@@ -29,7 +29,7 @@ pub use correction::{
     CorrectionExamples, Decomposition, HOLIDAY_FEATURE_NAME, QuarterCorrection,
     build_correction_examples, correction_feature_names,
 };
-pub use entries::{EntryBand, ForecastEntry, to_forecast_entries};
+pub use entries::{EntryBand, ForecastEntry, to_forecast_entries, to_forecast_entries_at};
 pub use features::{
     BuiltTraining, FEATURE_COUNT, FEATURE_NAMES, FeatureContext, LatestPublishedRule,
     NEIGHBOR_AREAS, NeighborPrices, PrevDayBasis, PriceIndex, TRAINING_HISTORY_DAYS,
