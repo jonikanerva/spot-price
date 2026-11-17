@@ -46,7 +46,10 @@ Issue #188 records the facts, the procedure, and the evidence.
    every table must match. After Railway removes the previous deployment,
    the source checksums must still match, so no write is lost.
 8. The Railway service `Postgres spot-price` stays unchanged as the
-   rollback database. The owner decides when to remove it.
+   rollback database. The owner decides when to remove it. Update of
+   2026-11-17: the owner removed the service and its volume, after a
+   `pg_dump` of the Neon database. No service referred to the Railway
+   database, and it held the data of 2026-11-16 11:17 UTC only.
 
 ## Alternatives
 
@@ -77,15 +80,14 @@ Issue #188 records the facts, the procedure, and the evidence.
 - The Neon history window of 6 hours adds a short restore path that
   Railway Hobby did not have.
 - The cost moves from the Railway database service to Neon only after the
-  owner removes `Postgres spot-price`. A paid Neon plan adds a monthly cost
+  owner removes `Postgres spot-price` (done on 2026-11-17). A paid Neon plan adds a monthly cost
   for storage above the Free plan.
 
 ## Cost of reversal
 
-Low while `Postgres spot-price` exists: set `DATABASE_URL` back to that
-service (`STACK.md` §15). The rows written to Neon after the switch do not
-reach Railway; the vintage and weather rows of that period are lost. After
-the owner removes that service, a reversal is a data move to a new database.
+Medium. The owner removed `Postgres spot-price` on 2026-11-17, so a
+reversal is a data move to a new database (`STACK.md` §5 Data move), then a
+change of `DATABASE_URL`. No code change is necessary.
 
 ## Reassessment condition
 

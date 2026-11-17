@@ -420,8 +420,8 @@ connection.
   database `neondb`, role `neondb_owner`), on the Neon Free plan (owner
   decision 2026-11-16, docs/adr/0009). The service stays on Railway. Until
   2026-11-16 the database was the Railway service `Postgres spot-price`.
-  That service stays unchanged as the rollback database until the owner
-  removes it (§15). The schema is the schema of the TypeScript migrations
+  The owner removed that service and its volume on 2026-11-17 (§15). The
+  schema is the schema of the TypeScript migrations
   `001`–`007` plus `app_sessions`. The schema `public` also holds the
   extension `pg_stat_statements`; the copy brought it from the Railway
   database.
@@ -895,13 +895,12 @@ and an API key.
   Fingrid run. That deletion cannot be undone. Sessions created
   by the Rust service end at a revert; users sign in again. `_sqlx_migrations` and `app_sessions` stay and are
   harmless.
-- **Database:** the Railway service `Postgres spot-price` holds the data of
-  2026-11-16 and stays unchanged until the owner removes it. A switch
-  back sets `DATABASE_URL` to the reference
-  `${{Postgres spot-price.DATABASE_URL}}`. Rows written to Neon after the
-  switch to Neon do not reach Railway: the jobs fetch prices and grid
-  actuals again, but the vintage and weather rows of those hours are lost.
-  Only the owner decides a switch back.
+- **Database:** no rollback database exists. The owner removed the Railway
+  service `Postgres spot-price` and its volume on 2026-11-17, after a
+  `pg_dump` of the Neon database (22.6 MB, 15 tables), which the owner
+  keeps outside the repository. To leave Neon, create a new PostgreSQL
+  database, copy the data with the data move procedure (§5), and set
+  `DATABASE_URL` to the new database. Only the owner decides a move.
 - **Database loss:** the Neon history window of 6 hours is the only
   restore path (§5).
 

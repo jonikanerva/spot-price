@@ -62,9 +62,9 @@ pgc "$NEON" -X -q -A -t -f - <scripts/release-precheck.sql
 - The Neon history window of 6 hours is the only restore path for the
   database. Older data cannot be restored; the owner accepts this risk
   (`STACK.md` §5).
-- The Railway service `Postgres spot-price` holds the data of 2026-11-16. It
-  is the rollback database. Only the owner decides a switch back
-  (`STACK.md` §15).
+- No rollback database exists. The owner removed the Railway service
+  `Postgres spot-price` and its volume on 2026-11-17. A move away from Neon
+  is a data move to a new database (`STACK.md` §5 and §15).
 
 ## Start and health check
 
