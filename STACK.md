@@ -473,8 +473,11 @@ connection.
   `-pooler`): the pooler runs PgBouncer in transaction mode, the SQLx
   migrator holds a session advisory lock, and the pool sends
   `statement_timeout` as a startup parameter. Pool of 10 connections,
-  acquire timeout 10 s, `statement_timeout` 30 s, `min_connections` 0. The
-  other pool options are the SQLx defaults: `idle_timeout` 10 min,
+  acquire timeout 10 s, `statement_timeout` 30 s, `min_connections` 0.
+  SQLx logs a warning for a statement that takes 5 s or longer
+  (`SLOW_STATEMENT_THRESHOLD`; the SQLx default is 1 s). The value is
+  provisional: above the usual latency to Neon, below `statement_timeout`.
+  The other pool options are the SQLx defaults: `idle_timeout` 10 min,
   `max_lifetime` 30 min, and a ping before each acquire. An unused
   connection closes 10–20 min after its last use.
 - **Compute time:** an idle connection does not keep the Neon compute
@@ -593,6 +596,7 @@ Exact versions are pinned in `Cargo.toml`. The lead approved the set on
 | jiff / jiff-sqlx             | 0.2.46 / 0.2.2     | Time values with the bundled tzdb, and their SQLx encoding                                                   |
 | croner                       | 4.0.3              | Cron schedules with Jiff types                                                                               |
 | sqlx                         | 0.9.0              | PostgreSQL, checked macros, migrations, `#[sqlx::test]`, TLS (rustls, aws-lc-rs)                             |
+| log                          | 0.4.35             | The level type of the SQLx statement log settings; already in the graph                                      |
 | reqwest                      | 0.13.5             | Upstream requests; rustls, gzip                                                                              |
 | futures-util                 | 0.3.34             | `catch_unwind` for jobs; already in the graph                                                                |
 | tracing / tracing-subscriber | 0.1.44 / 0.3.23    | Structured logs; the formatter is first-party (§8)                                                           |
@@ -655,6 +659,9 @@ change makes it wrong.
 - A user id is logged only for the `invalid_settings` diagnosis (§2.2).
 - `www_authenticate` is a boolean of a refused Fingrid response (§2.3). The
   value of a response header is never logged.
+- The SQLx slow statement warning keeps only `elapsed_secs`, the duration
+  in seconds. Its fields with statement text (`summary`, `db.statement`)
+  are never allowed.
 - The panic hook logs only the source location.
 - `Config` debug output redacts `DATABASE_URL` and the upstream keys. A
   configuration error names the setting, never the value.

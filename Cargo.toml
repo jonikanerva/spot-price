@@ -22,6 +22,9 @@ croner = { version = "=4.0.3", default-features = false, features = ["jiff"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 jiff = { version = "=0.2.46", default-features = false, features = ["std", "tz-system", "tzdb-bundle-always"] }
 jiff-sqlx = { version = "=0.2.2", default-features = false, features = ["postgres"] }
+# The level type of the SQLx statement log settings. Already in the graph
+# through sqlx.
+log = { version = "=0.4.35", default-features = false }
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "gzip", "query"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 # `float_roundtrip` parses each number to the nearest double, like JavaScript.
