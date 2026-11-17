@@ -5,11 +5,11 @@ use jiff::Timestamp;
 
 use crate::js::number_to_string;
 use crate::price::{
-    PriceInterval, PriceWindow, TotalPrice, build_price_window, calculate_total_prices,
-    find_cheapest_window,
+    PriceInterval, PriceWindow, TotalPrice, build_price_window, calculate_scheduled_total_prices,
+    calculate_total_prices, find_cheapest_window,
 };
 use crate::query::CheapestQuery;
-use crate::settings::UserSettings;
+use crate::settings::{ContractSchedule, UserSettings};
 use crate::time::truncate_to_millisecond;
 
 /// The `expectedAt` hint of an unpublished `/price/tomorrow`.
@@ -117,11 +117,38 @@ pub fn cheapest_window(
     query: &CheapestQuery,
     now: Timestamp,
 ) -> Result<PriceWindow, CheapestError> {
+    cheapest_window_of(prices, query, now, |candidates| {
+        calculate_total_prices(candidates, settings)
+    })
+}
+
+/// [`cheapest_window`] where each interval uses the settings that
+/// `schedule` gives for its start. The `max_price` filter uses those totals.
+///
+/// # Errors
+/// [`CheapestError`] when no interval is in range or no window is long enough.
+pub fn cheapest_scheduled_window(
+    prices: &[PriceInterval],
+    schedule: &ContractSchedule,
+    query: &CheapestQuery,
+    now: Timestamp,
+) -> Result<PriceWindow, CheapestError> {
+    cheapest_window_of(prices, query, now, |candidates| {
+        calculate_scheduled_total_prices(candidates, schedule)
+    })
+}
+
+fn cheapest_window_of(
+    prices: &[PriceInterval],
+    query: &CheapestQuery,
+    now: Timestamp,
+    totals_of: impl FnOnce(&[PriceInterval]) -> Vec<TotalPrice>,
+) -> Result<PriceWindow, CheapestError> {
     let candidates = cheapest_candidates(prices, now, query.start_time, query.end_time);
     if candidates.is_empty() {
         return Err(CheapestError::NoPriceData);
     }
-    let mut totals = calculate_total_prices(&candidates, settings);
+    let mut totals = totals_of(&candidates);
     if let Some(max) = query.max_price {
         totals.retain(|total| total.breakdown.total_cents_kwh <= max);
     }
@@ -236,6 +263,117 @@ mod tests {
             }
             .to_string(),
             "Not enough contiguous price data at or below 1e+21 c/kWh to form a 60-minute window"
+        );
+    }
+
+    /// Helsinki versions: zero terms until 2026-02-24, then a margin of
+    /// `margin` c/kWh. 2026-02-24 starts at 2026-02-23T22:00Z.
+    fn two_versions(margin: f64) -> ContractSchedule {
+        use crate::settings::{ContractTerms, TermsVersion};
+        let base = settings();
+        let terms = |margin| ContractTerms {
+            margin_cents_kwh: margin,
+            transfer_day_cents_kwh: 0.0,
+            transfer_night_cents_kwh: 0.0,
+            tax_cents_kwh: 0.0,
+            vat_percent: 0.0,
+            night_start_hour: base.night_start_hour,
+            night_end_hour: base.night_end_hour,
+        };
+        ContractSchedule::new(
+            &base.user_id,
+            &base.timezone,
+            base.area,
+            vec![
+                TermsVersion {
+                    valid_from: jiff::civil::date(1970, 1, 1),
+                    terms: terms(0.0),
+                },
+                TermsVersion {
+                    valid_from: jiff::civil::date(2026, 2, 24),
+                    terms: terms(margin),
+                },
+            ],
+        )
+        .unwrap()
+    }
+
+    /// Quarter-hours from 2026-02-23T21:00Z: four on the local date
+    /// 2026-02-23 and then the local date 2026-02-24.
+    fn quarters_across_midnight(eur_mwh: &[f64]) -> Vec<PriceInterval> {
+        let shift = jiff::SignedDuration::from_hours(-3);
+        quarters(eur_mwh)
+            .into_iter()
+            .map(|price| PriceInterval {
+                period: DeliveryPeriod::new(
+                    price.period.start().checked_add(shift).unwrap(),
+                    price.period.end().checked_add(shift).unwrap(),
+                )
+                .unwrap(),
+                ..price
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_scheduled_window_prices_each_interval_with_its_own_version() {
+        // Spot: 3 c/kWh before midnight, 1 c/kWh after it.
+        let prices = quarters_across_midnight(&[30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 10.0, 10.0]);
+        let now = ts("2026-02-23T21:00:00Z");
+        // A margin of 1 keeps the next day cheaper: 2 against 3.
+        let window =
+            cheapest_scheduled_window(&prices, &two_versions(1.0), &query(30), now).unwrap();
+        assert_eq!(window.start(), ts("2026-02-23T22:00:00Z"));
+        assert_eq!(
+            window.average_total_cents_kwh().to_bits(),
+            2.0_f64.to_bits()
+        );
+        // A margin of 5 makes the next day dearer: 6 against 3.
+        let window =
+            cheapest_scheduled_window(&prices, &two_versions(5.0), &query(30), now).unwrap();
+        assert_eq!(window.start(), ts("2026-02-23T21:00:00Z"));
+        assert_eq!(
+            window.average_total_cents_kwh().to_bits(),
+            3.0_f64.to_bits()
+        );
+        let margins: Vec<f64> = calculate_scheduled_total_prices(&prices, &two_versions(5.0))
+            .iter()
+            .map(|total| total.breakdown.margin_cents_kwh)
+            .collect();
+        assert_eq!(margins, [0.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0, 5.0]);
+    }
+
+    #[test]
+    fn max_price_uses_the_total_of_the_version_of_each_interval() {
+        let prices = quarters_across_midnight(&[30.0, 30.0, 30.0, 30.0, 10.0, 10.0, 10.0, 10.0]);
+        let now = ts("2026-02-23T21:00:00Z");
+        let mut limited = query(30);
+        // The next day costs 1 + 5 = 6, above the limit; the old terms give 3.
+        limited.max_price = Some(4.0);
+        let window = cheapest_scheduled_window(&prices, &two_versions(5.0), &limited, now).unwrap();
+        assert_eq!(window.start(), ts("2026-02-23T21:00:00Z"));
+        assert_eq!(window.end(), ts("2026-02-23T21:30:00Z"));
+        limited.max_price = Some(2.5);
+        let error =
+            cheapest_scheduled_window(&prices, &two_versions(5.0), &limited, now).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Not enough contiguous price data at or below 2.5 c/kWh to form a 30-minute window"
+        );
+    }
+
+    #[test]
+    fn a_single_version_gives_the_window_of_the_settings() {
+        let prices = quarters(&[10.0, 90.0, 10.0, 10.0]);
+        let now = ts("2026-02-24T00:00:00Z");
+        let schedule = ContractSchedule::single(settings());
+        assert_eq!(
+            cheapest_scheduled_window(&prices, &schedule, &query(30), now),
+            cheapest_window(&prices, &settings(), &query(30), now)
+        );
+        assert_eq!(
+            calculate_scheduled_total_prices(&prices, &schedule),
+            calculate_total_prices(&prices, &settings())
         );
     }
 
