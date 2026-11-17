@@ -523,7 +523,7 @@ const TOMORROW_ROUTE_COMPLETE_DAY: &str = "/api/v1/price/tomorrow is available o
 /// The body of `/api/v1/price/tomorrow` before the next day is complete.
 const UNPUBLISHED_TOMORROW: &str = r#"{"start":"","end":"","startLocal":"","endLocal":"","minTotalCentsKwh":0,"maxTotalCentsKwh":0,"averageTotalCentsKwh":0,"prices":[],"available":false,"expectedAt":"12:00 UTC"}"#;
 
-const ROOT_HTML: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels. The owner's versioned contract terms (2026-11-17, docs/adr/0010): the settings form has a valid-from date and a list of the terms versions with edit and delete";
+const ROOT_HTML: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels. The owner's versioned contract terms (2026-11-17, docs/adr/0010): the settings form has a valid-from date and a list of the terms versions with edit and delete. The owner's dashboard layout (2026-11-17): three full-width cards in the order settings, chart, versions; each settings label is above its field; the terms versions are a table";
 
 /// The reason of each `settings-valid-from` entry.
 const SETTINGS_VALID_FROM: &str = "the settings body ends with validFrom, the date of the contract terms version that holds the returned terms; the TypeScript service had one set of terms without a date; owner decision of 2026-11-17, docs/adr/0010";
