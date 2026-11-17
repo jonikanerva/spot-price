@@ -18,7 +18,6 @@ page is a short checklist.
 - `DATABASE_URL` (the direct Neon URL; set it with `railway variables --set`
   from the shell, so the value never appears in a log or a chat)
 - `BETTER_AUTH_URL=https://spot.calmdonut.com` (the public origin)
-- `BETTER_AUTH_SECRET=<32+ char random secret>` (unused by the service; its removal is a follow-up)
 - Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY`, `LOG_FORMAT`
 
 Railway sets `PORT`.

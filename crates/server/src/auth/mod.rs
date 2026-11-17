@@ -1,8 +1,8 @@
 //! Accounts, passwords, sessions, and API keys of the setup UI.
 //!
 //! The `"user"`, `"account"`, and `usernames` rows have the Better Auth
-//! format of the TypeScript service, so that service can sign these users in
-//! again after a revert. Sessions live in `app_sessions` only.
+//! format of the TypeScript service, like the rows of the existing accounts.
+//! Sessions live in `app_sessions`.
 
 pub mod password;
 pub mod random;

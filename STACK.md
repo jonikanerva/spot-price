@@ -611,7 +611,8 @@ The profile list applies. In addition:
 - A change of a v1 response, status, header, or error text without a matching
   golden change, an `INTENTIONAL` entry in `golden_http.rs`, and an owner
   decision. A breaking change needs `/api/v2`.
-- A password hash, user row, or account row that Better Auth cannot read
+- A change of the password hash format or of the `"user"` and `"account"`
+  row shapes that stops an existing account from signing in
   (docs/adr/0002).
 - `DISTINCT ON` in the live latest-vintage read (§5).
 - A log field outside `ALLOWED_FIELDS`, added only to see a value.
@@ -647,8 +648,8 @@ change makes it wrong.
   and IP addresses are never logged.
 - A user id is logged only for the `invalid_settings` diagnosis (§2.2).
 - The panic hook logs only the source location.
-- `Config` debug output redacts `DATABASE_URL`, `BETTER_AUTH_SECRET`, and the
-  upstream keys. A configuration error names the setting, never the value.
+- `Config` debug output redacts `DATABASE_URL` and the upstream keys. A
+  configuration error names the setting, never the value.
 - No crash reporter, analytics, or telemetry exporter.
 
 ---
@@ -766,11 +767,11 @@ versions with edit and delete. It must be usable without a pointer.
 
 ## 13. Scoped exceptions
 
-| Rule / scope                                                                                                                                                                                          | Reason and consequences                                                                                                                                                                                                                                                                                                                             | Compensating evidence                                                                                                          | Lead / reviewer / approval                                                             | Expiry or reassessment                                                                      |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Profile §15 build isolation: Railpack gives every Railway service variable, including `DATABASE_URL`, `BETTER_AUTH_SECRET`, and the upstream keys, to every build command and dependency build script | `railpack.json` sets `"secrets": []` for the install and build steps. The Railpack documentation says that this limits the secrets of a step, but the owner's other services found that it limits only cache invalidation. This file assumes that every build step can see every variable. The same applies to the owner's other Railpack services. | Committed `Cargo.lock` with `--locked`; cargo-deny (sources, bans, advisories); a small dependency set with a reason each (§6) | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When a dependency with a build script or proc macro is added, or on a supply-chain advisory |
-| Profile §15 dependency-aware readiness: `/health` checks only `SELECT 1`                                                                                                                              | The TypeScript contract of `/health` stays. The start command runs `migrate` first, so a broken database stops the deploy before traffic moves.                                                                                                                                                                                                     | Migration and health tests; §15 healthcheck                                                                                    | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the service gets another dependency that a deploy must check                           |
-| Forecast parity: values before rounding differ from V8 by a few ULPs                                                                                                                                  | Rust uses the platform maths library for `asinh`, `sinh`, `exp`, `sin`, `cos`. A residual exactly on a band edge can flip the observed band coverage of the offline regeneration.                                                                                                                                                                   | Golden tests: relative tolerance 1e-9 before rounding, exact after rounding; the band-edge count is asserted                   | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the bands are calibrated and shipped                                                   |
+| Rule / scope                                                                                                                                                                   | Reason and consequences                                                                                                                                                                                                                                                                                                                             | Compensating evidence                                                                                                          | Lead / reviewer / approval                                                             | Expiry or reassessment                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Profile §15 build isolation: Railpack gives every Railway service variable, including `DATABASE_URL` and the upstream keys, to every build command and dependency build script | `railpack.json` sets `"secrets": []` for the install and build steps. The Railpack documentation says that this limits the secrets of a step, but the owner's other services found that it limits only cache invalidation. This file assumes that every build step can see every variable. The same applies to the owner's other Railpack services. | Committed `Cargo.lock` with `--locked`; cargo-deny (sources, bans, advisories); a small dependency set with a reason each (§6) | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When a dependency with a build script or proc macro is added, or on a supply-chain advisory |
+| Profile §15 dependency-aware readiness: `/health` checks only `SELECT 1`                                                                                                       | The TypeScript contract of `/health` stays. The start command runs `migrate` first, so a broken database stops the deploy before traffic moves.                                                                                                                                                                                                     | Migration and health tests; §15 healthcheck                                                                                    | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the service gets another dependency that a deploy must check                           |
+| Forecast parity: values before rounding differ from V8 by a few ULPs                                                                                                           | Rust uses the platform maths library for `asinh`, `sinh`, `exp`, `sin`, `cos`. A residual exactly on a band edge can flip the observed band coverage of the offline regeneration.                                                                                                                                                                   | Golden tests: relative tolerance 1e-9 before rounding, exact after rounding; the band-edge count is asserted                   | Lead; approved by the independent reviewer of the port PR (2026-10-14, review round 2) | When the bands are calibrated and shipped                                                   |
 
 ---
 
@@ -860,11 +861,12 @@ info --show-plan .` after a change to a manifest or to `railpack.json`.
   `railway variables --set` from the shell, so the value never appears in
   a log or a chat), `BETTER_AUTH_URL` (the public
   origin; it sets the cookie security and the `Origin` check),
-  `BETTER_AUTH_SECRET` (unused by the Rust service; its removal is a
-  follow-up), `NODE_ENV=production`.
+  `NODE_ENV=production`.
 - Optional: `FINGRID_API_KEY`, `OPENWEATHERMAP_API_KEY` (a missing key
   disables its job and logs a warning), `LOG_FORMAT`.
 - Platform: `PORT`.
+- The service does not read `BETTER_AUTH_SECRET`, the secret of the
+  TypeScript service. A set value has no effect.
 - An invalid value stops the start with exit code 2. The message names the
   setting, never its value.
 

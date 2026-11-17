@@ -188,9 +188,8 @@ There is no CI. Run `mise run verify` before pushing. A material change also get
 | ------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `PORT`                   | `3000`                  | Server port                                                                                                         |
 | `DATABASE_URL`           | —                       | PostgreSQL connection string (required)                                                                             |
-| `NODE_ENV`               | `development`           | `production` makes `BETTER_AUTH_URL` and `BETTER_AUTH_SECRET` required                                              |
+| `NODE_ENV`               | `development`           | `production` makes `BETTER_AUTH_URL` required                                                                       |
 | `BETTER_AUTH_URL`        | `http://localhost:3000` | Public origin. It sets the cookie security and the allowed `Origin` of session requests                             |
-| `BETTER_AUTH_SECRET`     | —                       | Required in production. The Rust service does not use it; its removal is a follow-up                                |
 | `FINGRID_API_KEY`        | —                       | Fingrid Open Data key. Without it the Fingrid job does not run and the forecast returns `available: false`          |
 | `OPENWEATHERMAP_API_KEY` | —                       | OpenWeatherMap One Call 3.0 key. Without it the weather job does not run                                            |
 | `LOG_FORMAT`             | `json`                  | `text` gives readable logs                                                                                          |
