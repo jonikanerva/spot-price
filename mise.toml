@@ -22,7 +22,7 @@ pnpm = "12.21.0"
 # Keep the options equal to the pin of the owner's other projects; a different
 # option set makes mise reinstall the tool on every project switch.
 "cargo:sqlx-cli" = { version = "0.9.0", default-features = false, features = "postgres,rustls", locked = true }
-cargo-deny = "0.20.2"
+cargo-deny = "0.21.0"
 "aqua:nextest-rs/nextest/cargo-nextest" = "0.9.152"
 "github:Boshen/cargo-shear" = "1.14.1"
 gitleaks = "8.30.1"
