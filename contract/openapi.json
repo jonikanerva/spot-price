@@ -40,7 +40,8 @@
       },
       "ContractTermsVersion": {
         "properties": {
-          "marginCentsKwh": {
+          "marginInclVatCentsKwh": {
+            "description": "Retailer margin (c/kWh), VAT included, as on the electricity sales invoice.",
             "example": 0.5,
             "type": "number"
           },
@@ -52,16 +53,19 @@
             "example": 22,
             "type": "integer"
           },
-          "taxCentsKwh": {
-            "example": 2.79372,
+          "taxInclVatCentsKwh": {
+            "description": "Electricity tax plus the security of supply fee (c/kWh), VAT included, as on the grid invoice.",
+            "example": 2.9179,
             "type": "number"
           },
-          "transferDayCentsKwh": {
-            "example": 2.5,
+          "transferDayInclVatCentsKwh": {
+            "description": "Day transfer price (c/kWh), VAT included, as on the grid invoice.",
+            "example": 2.96,
             "type": "number"
           },
-          "transferNightCentsKwh": {
-            "example": 1.2,
+          "transferNightInclVatCentsKwh": {
+            "description": "Night transfer price (c/kWh), VAT included, as on the grid invoice.",
+            "example": 1.56,
             "type": "number"
           },
           "validFrom": {
@@ -70,16 +74,17 @@
             "type": "string"
           },
           "vatPercent": {
+            "description": "VAT percentage of the spot price. The other prices already include it.",
             "example": 25.5,
             "type": "number"
           }
         },
         "required": [
           "validFrom",
-          "marginCentsKwh",
-          "transferDayCentsKwh",
-          "transferNightCentsKwh",
-          "taxCentsKwh",
+          "marginInclVatCentsKwh",
+          "transferDayInclVatCentsKwh",
+          "transferNightInclVatCentsKwh",
+          "taxInclVatCentsKwh",
           "vatPercent",
           "nightStartHour",
           "nightEndHour"
@@ -452,6 +457,7 @@
             "type": "string"
           },
           "marginCentsKwh": {
+            "description": "Retailer margin (c/kWh) without VAT.",
             "example": 0.5,
             "type": "number"
           },
@@ -460,6 +466,7 @@
             "type": "number"
           },
           "taxCentsKwh": {
+            "description": "Electricity tax plus the security of supply fee (c/kWh) without VAT.",
             "example": 2.79372,
             "type": "number"
           },
@@ -469,10 +476,12 @@
             "type": "number"
           },
           "transferCentsKwh": {
+            "description": "Transfer price of the interval (c/kWh) without VAT.",
             "example": 2.5,
             "type": "number"
           },
           "vatCentsKwh": {
+            "description": "VAT (c/kWh) on the spot price, the margin, the transfer price, and the tax.",
             "example": 2.81,
             "type": "number"
           }
@@ -498,7 +507,8 @@
             "example": "FI",
             "type": "string"
           },
-          "marginCentsKwh": {
+          "marginInclVatCentsKwh": {
+            "description": "Retailer margin (c/kWh), VAT included, as on the electricity sales invoice.",
             "example": 0.5,
             "type": "number"
           },
@@ -510,20 +520,23 @@
             "example": 22,
             "type": "integer"
           },
-          "taxCentsKwh": {
-            "example": 2.79372,
+          "taxInclVatCentsKwh": {
+            "description": "Electricity tax plus the security of supply fee (c/kWh), VAT included, as on the grid invoice.",
+            "example": 2.9179,
             "type": "number"
           },
           "timezone": {
             "example": "Europe/Helsinki",
             "type": "string"
           },
-          "transferDayCentsKwh": {
-            "example": 2.5,
+          "transferDayInclVatCentsKwh": {
+            "description": "Day transfer price (c/kWh), VAT included, as on the grid invoice.",
+            "example": 2.96,
             "type": "number"
           },
-          "transferNightCentsKwh": {
-            "example": 1.2,
+          "transferNightInclVatCentsKwh": {
+            "description": "Night transfer price (c/kWh), VAT included, as on the grid invoice.",
+            "example": 1.56,
             "type": "number"
           },
           "userId": {
@@ -536,16 +549,17 @@
             "type": "string"
           },
           "vatPercent": {
+            "description": "VAT percentage of the spot price. The other prices already include it.",
             "example": 25.5,
             "type": "number"
           }
         },
         "required": [
           "userId",
-          "marginCentsKwh",
-          "transferDayCentsKwh",
-          "transferNightCentsKwh",
-          "taxCentsKwh",
+          "marginInclVatCentsKwh",
+          "transferDayInclVatCentsKwh",
+          "transferNightInclVatCentsKwh",
+          "taxInclVatCentsKwh",
           "vatPercent",
           "nightStartHour",
           "nightEndHour",
@@ -652,7 +666,7 @@
     },
     "/api/v1/me/settings": {
       "get": {
-        "description": "Returns the authenticated user's electricity contract settings: the timezone, the area, and the contract terms that apply today. validFrom is the date of the terms version that holds those terms.",
+        "description": "Returns the authenticated user's electricity contract settings: the timezone, the area, and the contract terms that apply today. The margin, the transfer prices, and the tax include VAT, as on an invoice; the price routes return them without VAT. validFrom is the date of the terms version that holds those terms.",
         "responses": {
           "200": {
             "content": {
@@ -671,7 +685,7 @@
         ]
       },
       "put": {
-        "description": "Update one or more electricity contract settings. Only provided fields are changed. The timezone and the area have one current value. The contract terms are versioned: the request saves the terms version that applies from validFrom (default: today in the user's timezone). A term that the request does not give keeps the value that applies on validFrom. A version with the same validFrom is replaced. No version is created when the terms equal the terms that already apply on validFrom. The response has the terms that apply on validFrom and the validFrom of their version. A user can hold at most 100 versions.",
+        "description": "Update one or more electricity contract settings. Only provided fields are changed. The margin, the transfer prices, and the tax include VAT, as on an invoice; vatPercent applies to the spot price only. The timezone and the area have one current value. The contract terms are versioned: the request saves the terms version that applies from validFrom (default: today in the user's timezone). A term that the request does not give keeps the value that applies on validFrom. A version with the same validFrom is replaced. No version is created when the terms equal the terms that already apply on validFrom. The response has the terms that apply on validFrom and the validFrom of their version. A user can hold at most 100 versions.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -704,7 +718,8 @@
                     "example": "FI",
                     "type": "string"
                   },
-                  "marginCentsKwh": {
+                  "marginInclVatCentsKwh": {
+                    "description": "Retailer margin (c/kWh), VAT included, as on the electricity sales invoice.",
                     "example": 0.5,
                     "minimum": 0,
                     "type": "number"
@@ -723,8 +738,9 @@
                     "minimum": 0,
                     "type": "integer"
                   },
-                  "taxCentsKwh": {
-                    "example": 2.79372,
+                  "taxInclVatCentsKwh": {
+                    "description": "Electricity tax plus the security of supply fee (c/kWh), VAT included, as on the grid invoice.",
+                    "example": 2.9179,
                     "minimum": 0,
                     "type": "number"
                   },
@@ -747,13 +763,15 @@
                     "example": "Europe/Helsinki",
                     "type": "string"
                   },
-                  "transferDayCentsKwh": {
-                    "example": 2.5,
+                  "transferDayInclVatCentsKwh": {
+                    "description": "Day transfer price (c/kWh), VAT included, as on the grid invoice.",
+                    "example": 2.96,
                     "minimum": 0,
                     "type": "number"
                   },
-                  "transferNightCentsKwh": {
-                    "example": 1.2,
+                  "transferNightInclVatCentsKwh": {
+                    "description": "Night transfer price (c/kWh), VAT included, as on the grid invoice.",
+                    "example": 1.56,
                     "minimum": 0,
                     "type": "number"
                   },
@@ -764,7 +782,7 @@
                     "type": "string"
                   },
                   "vatPercent": {
-                    "description": "VAT percentage (0-100)",
+                    "description": "VAT percentage (0-100) of the spot price. The other prices already include it.",
                     "example": 25.5,
                     "maximum": 100,
                     "minimum": 0,

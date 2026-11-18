@@ -35,10 +35,10 @@ pub enum Field {
     MaxPrice,
     From,
     To,
-    MarginCentsKwh,
-    TransferDayCentsKwh,
-    TransferNightCentsKwh,
-    TaxCentsKwh,
+    MarginInclVatCentsKwh,
+    TransferDayInclVatCentsKwh,
+    TransferNightInclVatCentsKwh,
+    TaxInclVatCentsKwh,
     VatPercent,
     NightStartHour,
     NightEndHour,
@@ -57,10 +57,10 @@ impl Field {
             Self::MaxPrice => "maxPrice",
             Self::From => "from",
             Self::To => "to",
-            Self::MarginCentsKwh => "marginCentsKwh",
-            Self::TransferDayCentsKwh => "transferDayCentsKwh",
-            Self::TransferNightCentsKwh => "transferNightCentsKwh",
-            Self::TaxCentsKwh => "taxCentsKwh",
+            Self::MarginInclVatCentsKwh => "marginInclVatCentsKwh",
+            Self::TransferDayInclVatCentsKwh => "transferDayInclVatCentsKwh",
+            Self::TransferNightInclVatCentsKwh => "transferNightInclVatCentsKwh",
+            Self::TaxInclVatCentsKwh => "taxInclVatCentsKwh",
             Self::VatPercent => "vatPercent",
             Self::NightStartHour => "nightStartHour",
             Self::NightEndHour => "nightEndHour",
@@ -479,10 +479,10 @@ fn inclusive_day_span(from: &str, to: &str) -> f64 {
 /// The values of a settings update body. `None` is an absent field.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SettingsUpdateInput<'a> {
-    pub margin_cents_kwh: Option<f64>,
-    pub transfer_day_cents_kwh: Option<f64>,
-    pub transfer_night_cents_kwh: Option<f64>,
-    pub tax_cents_kwh: Option<f64>,
+    pub margin_incl_vat_cents_kwh: Option<f64>,
+    pub transfer_day_incl_vat_cents_kwh: Option<f64>,
+    pub transfer_night_incl_vat_cents_kwh: Option<f64>,
+    pub tax_incl_vat_cents_kwh: Option<f64>,
     pub vat_percent: Option<f64>,
     pub night_start_hour: Option<f64>,
     pub night_end_hour: Option<f64>,
@@ -505,18 +505,26 @@ pub fn validate_settings_update(
         }
         value
     };
-    let margin_cents_kwh = money(Field::MarginCentsKwh, input.margin_cents_kwh, None);
-    let transfer_day_cents_kwh = money(
-        Field::TransferDayCentsKwh,
-        input.transfer_day_cents_kwh,
+    let margin_incl_vat_cents_kwh = money(
+        Field::MarginInclVatCentsKwh,
+        input.margin_incl_vat_cents_kwh,
         None,
     );
-    let transfer_night_cents_kwh = money(
-        Field::TransferNightCentsKwh,
-        input.transfer_night_cents_kwh,
+    let transfer_day_incl_vat_cents_kwh = money(
+        Field::TransferDayInclVatCentsKwh,
+        input.transfer_day_incl_vat_cents_kwh,
         None,
     );
-    let tax_cents_kwh = money(Field::TaxCentsKwh, input.tax_cents_kwh, None);
+    let transfer_night_incl_vat_cents_kwh = money(
+        Field::TransferNightInclVatCentsKwh,
+        input.transfer_night_incl_vat_cents_kwh,
+        None,
+    );
+    let tax_incl_vat_cents_kwh = money(
+        Field::TaxInclVatCentsKwh,
+        input.tax_incl_vat_cents_kwh,
+        None,
+    );
     let vat_percent = money(Field::VatPercent, input.vat_percent, Some(100));
 
     let mut hour = |field, value: Option<f64>| {
@@ -553,10 +561,10 @@ pub fn validate_settings_update(
 
     finish(issues, || {
         Some(SettingsUpdate {
-            margin_cents_kwh,
-            transfer_day_cents_kwh,
-            transfer_night_cents_kwh,
-            tax_cents_kwh,
+            margin_incl_vat_cents_kwh,
+            transfer_day_incl_vat_cents_kwh,
+            transfer_night_incl_vat_cents_kwh,
+            tax_incl_vat_cents_kwh,
             vat_percent,
             night_start_hour: night_start_hour.transpose().ok()?,
             night_end_hour: night_end_hour.transpose().ok()?,
@@ -691,7 +699,7 @@ mod tests {
     #[test]
     fn settings_update_reports_each_field() {
         let error = validate_settings_update(SettingsUpdateInput {
-            margin_cents_kwh: Some(-1.0),
+            margin_incl_vat_cents_kwh: Some(-1.0),
             night_start_hour: Some(1.5),
             area: Some("XX"),
             ..SettingsUpdateInput::default()
@@ -699,7 +707,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.issues.len(), 3);
         assert!(error.to_string().starts_with(
-            "marginCentsKwh: Too small: expected number to be >=0; nightStartHour: Invalid input: expected int, received number; area: Invalid option: expected one of \"FI\"|"
+            "marginInclVatCentsKwh: Too small: expected number to be >=0; nightStartHour: Invalid input: expected int, received number; area: Invalid option: expected one of \"FI\"|"
         ));
         let update = validate_settings_update(SettingsUpdateInput {
             night_end_hour: Some(-0.0),

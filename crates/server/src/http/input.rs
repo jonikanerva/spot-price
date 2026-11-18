@@ -451,10 +451,10 @@ fn type_name(value: &serde_json::Value) -> &'static str {
 /// Returns the joined zod issue text of every problem.
 pub fn settings_update(value: &serde_json::Value) -> Result<SettingsRequest, String> {
     const ORDER: [Field; 10] = [
-        Field::MarginCentsKwh,
-        Field::TransferDayCentsKwh,
-        Field::TransferNightCentsKwh,
-        Field::TaxCentsKwh,
+        Field::MarginInclVatCentsKwh,
+        Field::TransferDayInclVatCentsKwh,
+        Field::TransferNightInclVatCentsKwh,
+        Field::TaxInclVatCentsKwh,
         Field::VatPercent,
         Field::NightStartHour,
         Field::NightEndHour,
@@ -481,10 +481,10 @@ pub fn settings_update(value: &serde_json::Value) -> Result<SettingsRequest, Str
             None
         }
     };
-    let margin_cents_kwh = number(Field::MarginCentsKwh);
-    let transfer_day_cents_kwh = number(Field::TransferDayCentsKwh);
-    let transfer_night_cents_kwh = number(Field::TransferNightCentsKwh);
-    let tax_cents_kwh = number(Field::TaxCentsKwh);
+    let margin_incl_vat_cents_kwh = number(Field::MarginInclVatCentsKwh);
+    let transfer_day_incl_vat_cents_kwh = number(Field::TransferDayInclVatCentsKwh);
+    let transfer_night_incl_vat_cents_kwh = number(Field::TransferNightInclVatCentsKwh);
+    let tax_incl_vat_cents_kwh = number(Field::TaxInclVatCentsKwh);
     let vat_percent = number(Field::VatPercent);
     let night_start_hour = number(Field::NightStartHour);
     let night_end_hour = number(Field::NightEndHour);
@@ -516,10 +516,10 @@ pub fn settings_update(value: &serde_json::Value) -> Result<SettingsRequest, Str
         }
     };
     let input = SettingsUpdateInput {
-        margin_cents_kwh,
-        transfer_day_cents_kwh,
-        transfer_night_cents_kwh,
-        tax_cents_kwh,
+        margin_incl_vat_cents_kwh,
+        transfer_day_incl_vat_cents_kwh,
+        transfer_night_incl_vat_cents_kwh,
+        tax_incl_vat_cents_kwh,
         vat_percent,
         night_start_hour,
         night_end_hour,
@@ -634,9 +634,9 @@ mod tests {
         assert_eq!(
             settings_body(
                 Some("application/json"),
-                br#"{"marginCentsKwh":-1e400,"area":"1e999"}"#
+                br#"{"marginInclVatCentsKwh":-1e400,"area":"1e999"}"#
             ),
-            SettingsBody::Invalid("marginCentsKwh: Invalid input: expected number, received number; area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\"".to_owned())
+            SettingsBody::Invalid("marginInclVatCentsKwh: Invalid input: expected number, received number; area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\"".to_owned())
         );
         assert_eq!(
             parse_json("[1e400, \"a\\\"1e400\"]").unwrap()[1],
@@ -649,10 +649,10 @@ mod tests {
     fn settings_body_reads_valid_from() {
         let read = |body: &str| settings_update(&serde_json::from_str(body).unwrap());
         assert_eq!(
-            read(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.6}"#),
+            read(r#"{"validFrom":"2026-12-01","marginInclVatCentsKwh":0.6}"#),
             Ok(SettingsRequest {
                 update: SettingsUpdate {
-                    margin_cents_kwh: Some(0.6),
+                    margin_incl_vat_cents_kwh: Some(0.6),
                     ..SettingsUpdate::default()
                 },
                 valid_from: Some(jiff::civil::date(2026, 12, 1)),
@@ -679,13 +679,13 @@ mod tests {
     #[test]
     fn settings_body_reports_zod_texts() {
         let value: serde_json::Value = serde_json::from_str(
-            r#"{"nightStartHour":"1","nightEndHour":[],"taxCentsKwh":{},"transferDayCentsKwh":true,"area":null,"marginCentsKwh":-1}"#,
+            r#"{"nightStartHour":"1","nightEndHour":[],"taxInclVatCentsKwh":{},"transferDayInclVatCentsKwh":true,"area":null,"marginInclVatCentsKwh":-1}"#,
         )
         .unwrap();
         let error = settings_update(&value).unwrap_err();
         assert_eq!(
             error,
-            "marginCentsKwh: Too small: expected number to be >=0; transferDayCentsKwh: Invalid input: expected number, received boolean; taxCentsKwh: Invalid input: expected number, received object; nightStartHour: Invalid input: expected number, received string; nightEndHour: Invalid input: expected number, received array; area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
+            "marginInclVatCentsKwh: Too small: expected number to be >=0; transferDayInclVatCentsKwh: Invalid input: expected number, received boolean; taxInclVatCentsKwh: Invalid input: expected number, received object; nightStartHour: Invalid input: expected number, received string; nightEndHour: Invalid input: expected number, received array; area: Invalid option: expected one of \"FI\"|\"SE1\"|\"SE2\"|\"SE3\"|\"SE4\"|\"NO1\"|\"NO2\"|\"NO3\"|\"NO4\"|\"NO5\"|\"DK1\"|\"DK2\"|\"EE\"|\"LT\"|\"LV\"|\"AT\"|\"BE\"|\"FR\"|\"GER\"|\"NL\"|\"PL\""
         );
         for (body, expected) in [
             ("[]", "array"),

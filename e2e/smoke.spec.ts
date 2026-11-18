@@ -268,7 +268,7 @@ test.describe("Contract terms versions", () => {
     // A date before every later version loads the first version again.
     await page.fill("#validFrom", "2050-01-01");
     await expect(page.locator("#margin")).toHaveValue("0.49");
-    await expect(page.locator("#tax")).toHaveValue("2.82752");
+    await expect(page.locator("#tax")).toHaveValue("2.9179");
 
     // Delete a version with the keyboard only, while the form holds it.
     await later.getByRole("button", { name: /^Edit/ }).click();
@@ -287,7 +287,7 @@ test.describe("Contract terms versions", () => {
       todayIn("Europe/Helsinki"),
     );
     await expect(page.locator("#margin")).toHaveValue("0.49");
-    await expect(page.locator("#tax")).toHaveValue("2.82752");
+    await expect(page.locator("#tax")).toHaveValue("2.9179");
     await expect(page.locator("#settingsStatus")).toHaveText(
       "Loaded the terms that apply today.",
     );
@@ -309,6 +309,75 @@ test.describe("Contract terms versions", () => {
     await expect(items.first().getByRole("rowheader")).toContainText(
       "1970-01-01",
     );
+  });
+
+  test("invoice prices with VAT give the price of the invoices", async ({
+    page,
+  }) => {
+    // The unit prices of an electricity invoice and a grid invoice, c/kWh
+    // with 25.5 % VAT. The tax is 2.8112 + 0.1067.
+    const invoice = {
+      margin: "0.5",
+      dayTransfer: "2.96",
+      nightTransfer: "1.56",
+      tax: "2.9179",
+    };
+    const first = page.locator(
+      '#versionList .version-item[data-valid-from="1970-01-01"]',
+    );
+    await expect(first).toHaveCount(1);
+
+    // The date first, because a date change loads the terms of that date.
+    await page.fill("#validFrom", "1970-01-01");
+    for (const [id, value] of Object.entries(invoice)) {
+      await page.fill(`#${id}`, value);
+    }
+    const request = page.waitForRequest(
+      (sent) =>
+        sent.method() === "PUT" && sent.url().endsWith("/api/v1/me/settings"),
+    );
+    await page.click("#saveBtn");
+    await expect(page.locator("#settingsStatus")).toContainText(
+      "These terms apply from 1970-01-01",
+    );
+    // The page sends the numbers as typed.
+    expect((await request).postDataJSON()).toMatchObject({
+      marginInclVatCentsKwh: 0.5,
+      transferDayInclVatCentsKwh: 2.96,
+      transferNightInclVatCentsKwh: 1.56,
+      taxInclVatCentsKwh: 2.9179,
+      vatPercent: 25.5,
+    });
+
+    // The form and the table show the invoice numbers again after a reload.
+    await page.reload();
+    await expect(first).toHaveCount(1);
+    for (const [id, value] of Object.entries(invoice)) {
+      await expect(page.locator(`#${id}`)).toHaveValue(value);
+    }
+    await expect(term(first, "margin")).toHaveText("0.5");
+    await expect(term(first, "transferDay")).toHaveText("2.96");
+    await expect(term(first, "transferNight")).toHaveText("1.56");
+    await expect(term(first, "tax")).toHaveText("2.9179");
+
+    // The total has VAT on the spot price only: the other prices have it.
+    const response = await page.request.get("/api/v1/me/chart");
+    expect(response.ok()).toBe(true);
+    const chart = (await response.json()) as {
+      today: {
+        spotCentsKwh: number;
+        totalCentsKwh: number;
+        isNightRate: boolean;
+      }[];
+    };
+    expect(chart.today.length).toBeGreaterThan(0);
+    for (const price of chart.today) {
+      const transfer = price.isNightRate ? 1.56 : 2.96;
+      const expected =
+        Math.max(price.spotCentsKwh, 0) * 1.255 + 0.5 + transfer + 2.9179;
+      // The API rounds the total to 3 decimals.
+      expect(Math.abs(price.totalCentsKwh - expected)).toBeLessThan(0.00051);
+    }
   });
 });
 

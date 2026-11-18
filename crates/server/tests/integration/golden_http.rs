@@ -24,6 +24,17 @@ use tower::ServiceExt as _;
 
 const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/http");
 
+/// The reason of each `settings-incl-vat` entry.
+const SETTINGS_INCL_VAT: &str = "the margin, the transfer prices, and the tax of the settings include VAT and have InclVat in the field name (owner decision of 2026-11-18, docs/adr/0011); the TypeScript service read them without VAT";
+
+const DEFAULT_TERMS_PRICE: &str = "the terms of a new account are prices with VAT: the defaults, and in the later steps of session-signup-full-flow the margin of step 9. The total has VAT on the spot price only; the TypeScript service added VAT to the same numbers again. The default tax is also the tax of 2026";
+
+const DEFAULT_TAX: &str = "a new account has the electricity tax and the security of supply fee of 2026 with VAT, 2.9179 c/kWh; the TypeScript service had 2.82752";
+
+const VAT_CHANGE_KEEPS_TERMS: &str = "a request without a money field keeps the stored price with VAT; the TypeScript service kept the price without VAT. The body shows the seeded price with the VAT of the seed";
+
+const PRICE_OF_TERMS_WITH_VAT: &str = "the earlier requests of the case gave the terms as prices with VAT; the TypeScript service read the same numbers as prices without VAT";
+
 /// The differences from the TypeScript service, by design. Each entry is
 /// `(case, step, kind, reason)`; `kind` is the first word of the mismatch.
 const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
@@ -97,7 +108,7 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
         "openapi-and-docs",
         0,
         "contract-document",
-        "the document differs from the TypeScript one by exactly the list INTENTIONAL of contract.rs: the generatedAt description of the forecast response (owner decision: https://github.com/jonikanerva/spot-price/issues/136#issuecomment-6261547559) and the versioned contract terms (owner decision of 2026-11-17, docs/adr/0010); serde_json writes object keys in sorted order",
+        "the document differs from the TypeScript one by exactly the list INTENTIONAL of contract.rs: the generatedAt description of the forecast response (owner decision: https://github.com/jonikanerva/spot-price/issues/136#issuecomment-6261547559) and the versioned contract terms (owner decision of 2026-11-17, docs/adr/0010), and the settings prices with VAT (owner decision of 2026-11-18, docs/adr/0011); serde_json writes object keys in sorted order",
     ),
     (
         "session-signup-full-flow",
@@ -485,6 +496,236 @@ const INTENTIONAL: &[(&str, usize, &str, &str)] = &[
         "forecast-values",
         FORECAST_SHAPE_RULE,
     ),
+    ("session-signup-full-flow", 4, "body", DEFAULT_TERMS_PRICE),
+    ("session-signup-full-flow", 7, "body", DEFAULT_TERMS_PRICE),
+    (
+        "session-signup-full-flow",
+        8,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("session-signup-full-flow", 8, "body", DEFAULT_TAX),
+    (
+        "session-signup-full-flow",
+        9,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("session-signup-full-flow", 9, "body", DEFAULT_TAX),
+    (
+        "session-signup-full-flow",
+        10,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("session-signup-full-flow", 10, "body", DEFAULT_TAX),
+    ("session-signup-full-flow", 11, "body", DEFAULT_TERMS_PRICE),
+    ("session-signup-full-flow", 12, "body", DEFAULT_TERMS_PRICE),
+    ("session-signup-full-flow", 17, "body", DEFAULT_TERMS_PRICE),
+    (
+        "session-login-existing-user",
+        3,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "session-grace-defaults-created",
+        1,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("session-grace-defaults-created", 1, "body", DEFAULT_TAX),
+    (
+        "session-grace-defaults-created",
+        2,
+        "body",
+        DEFAULT_TERMS_PRICE,
+    ),
+    ("session-chart", 2, "body", DEFAULT_TERMS_PRICE),
+    (
+        "settings-put-valid",
+        0,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-valid",
+        1,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("settings-put-valid", 1, "body", VAT_CHANGE_KEEPS_TERMS),
+    (
+        "settings-put-valid",
+        2,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("settings-put-valid", 2, "body", VAT_CHANGE_KEEPS_TERMS),
+    (
+        "settings-put-valid",
+        3,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("settings-put-valid", 3, "body", VAT_CHANGE_KEEPS_TERMS),
+    (
+        "settings-put-valid",
+        4,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-valid",
+        5,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-valid",
+        6,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-valid",
+        7,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-valid",
+        8,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    ("settings-put-valid", 9, "body", PRICE_OF_TERMS_WITH_VAT),
+    (
+        "settings-put-valid",
+        10,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-valid",
+        11,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-valid",
+        12,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        0,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        1,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        2,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        3,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        15,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        16,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        18,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-validation-errors",
+        19,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        6,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        7,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        8,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        9,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        10,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        10,
+        "body",
+        VAT_CHANGE_KEEPS_TERMS,
+    ),
+    (
+        "settings-put-body-errors",
+        11,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        11,
+        "body",
+        VAT_CHANGE_KEEPS_TERMS,
+    ),
+    (
+        "settings-put-body-errors",
+        13,
+        "settings-incl-vat",
+        SETTINGS_INCL_VAT,
+    ),
+    (
+        "settings-put-body-errors",
+        13,
+        "body",
+        VAT_CHANGE_KEEPS_TERMS,
+    ),
 ];
 
 /// The reason of most `forecast-values` entries: the served forecast trains
@@ -523,7 +764,7 @@ const TOMORROW_ROUTE_COMPLETE_DAY: &str = "/api/v1/price/tomorrow is available o
 /// The body of `/api/v1/price/tomorrow` before the next day is complete.
 const UNPUBLISHED_TOMORROW: &str = r#"{"start":"","end":"","startLocal":"","endLocal":"","minTotalCentsKwh":0,"maxTotalCentsKwh":0,"averageTotalCentsKwh":0,"prices":[],"available":false,"expectedAt":"12:00 UTC"}"#;
 
-const ROOT_HTML: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels. The owner's versioned contract terms (2026-11-17, docs/adr/0010): the settings form has a valid-from date and a list of the terms versions with edit and delete. The owner's dashboard layout (2026-11-17): three full-width cards in the order settings, chart, versions; each settings label is above its field; the terms versions are a table";
+const ROOT_HTML: &str = "the owner's chart fix: the x axis of the setup page charts is time in the zone of the data, and the line continues across midnight; the TypeScript page placed points by index under fixed 00-06-12-18-00 labels. The owner's versioned contract terms (2026-11-17, docs/adr/0010): the settings form has a valid-from date and a list of the terms versions with edit and delete. The owner's dashboard layout (2026-11-17): three full-width cards in the order settings, chart, versions; each settings label is above its field; the terms versions are a table. The owner's prices with VAT (2026-11-18, docs/adr/0011): the labels and a hint say that the margin, the transfer prices, and the tax include VAT, and the page uses the InclVat field names";
 
 /// The reason of each `settings-valid-from` entry.
 const SETTINGS_VALID_FROM: &str = "the settings body ends with validFrom, the date of the contract terms version that holds the returned terms; the TypeScript service had one set of terms without a date; owner decision of 2026-11-17, docs/adr/0010";
@@ -874,7 +1115,14 @@ impl Replay<'_> {
         let body = step
             .request
             .body
-            .clone()
+            .as_deref()
+            .map(|body| {
+                if step.request.path == SETTINGS_PATH {
+                    with_incl_vat_names(body)
+                } else {
+                    body.to_owned()
+                }
+            })
             .map_or_else(Body::empty, Body::from);
         let response: Response<Body> = self
             .app
@@ -1032,6 +1280,10 @@ impl Replay<'_> {
             );
             self.mismatch(index, "generated-at", format!("want {theirs} got {mine}"));
         }
+        if let Some(recorded) = with_recorded_terms(&body, &want_body) {
+            body = recorded;
+            self.mismatch(index, "settings-incl-vat", "terms with VAT".to_owned());
+        }
         if let Some(without) = without_valid_from(&body, &want_body) {
             body = without;
             self.mismatch(index, "settings-valid-from", "extra validFrom".to_owned());
@@ -1088,6 +1340,104 @@ fn generated_at_pair(got: &str, want: &str) -> Option<(String, String)> {
     };
     let (mine, theirs) = (value(got)?, value(want)?);
     (mine != theirs).then_some((mine, theirs))
+}
+
+const SETTINGS_PATH: &str = "/api/v1/me/settings";
+
+/// The money fields of a settings body: the name in the recordings and the
+/// name in the Rust service, where the value includes VAT.
+const TERM_FIELDS: [(&str, &str); 4] = [
+    ("marginCentsKwh", "marginInclVatCentsKwh"),
+    ("transferDayCentsKwh", "transferDayInclVatCentsKwh"),
+    ("transferNightCentsKwh", "transferNightInclVatCentsKwh"),
+    ("taxCentsKwh", "taxInclVatCentsKwh"),
+];
+
+/// A recorded settings request with the field names of the Rust service.
+/// The numbers stay: the Rust service reads them as prices with VAT.
+fn with_incl_vat_names(body: &str) -> String {
+    TERM_FIELDS
+        .iter()
+        .fold(body.to_owned(), |body, (old, new)| {
+            body.replace(&format!("\"{old}\""), &format!("\"{new}\""))
+        })
+}
+
+/// The number text of the field `key` in the JSON object text `body`.
+fn number_text<'a>(body: &'a str, key: &str) -> Option<&'a str> {
+    let (_, rest) = body.split_once(&format!("\"{key}\":"))?;
+    let end = rest.find([',', '}'])?;
+    rest.get(..end)
+}
+
+/// `got` with the money field names of the recordings, when `got` is a
+/// settings body or an error body with the names of the Rust service. A money value that differs from the recorded
+/// value becomes the recorded value only when it is exactly that price with
+/// the VAT of the body added: the seed loader stores such values. Every
+/// other value stays, and the rest of the body must match byte for byte.
+fn with_recorded_terms(got: &str, want: &str) -> Option<String> {
+    let settings_body = got.starts_with(r#"{"userId":""#) || got.starts_with(r#"{"error":""#);
+    if !settings_body || !TERM_FIELDS.iter().any(|(_, new)| got.contains(new)) {
+        return None;
+    }
+    let mut body = TERM_FIELDS
+        .iter()
+        .fold(got.to_owned(), |body, (old, new)| body.replace(new, old));
+    let number = |text: &str, key: &str| number_text(text, key)?.parse::<f64>().ok();
+    let Some(vat) = number(got, "vatPercent") else {
+        return Some(body);
+    };
+    for (old, new) in TERM_FIELDS {
+        let (Some(mine), Some(theirs)) = (number_text(got, new), number_text(want, old)) else {
+            continue;
+        };
+        let (Ok(with_vat), Ok(recorded)) = (mine.parse::<f64>(), theirs.parse::<f64>()) else {
+            continue;
+        };
+        let without_vat = spot_price_domain::settings::excl_vat(with_vat, vat);
+        if mine != theirs && without_vat.map(f64::to_bits) == Some(recorded.to_bits()) {
+            body = body.replace(&format!("\"{old}\":{mine}"), &format!("\"{old}\":{theirs}"));
+        }
+    }
+    Some(body)
+}
+
+#[test]
+fn settings_incl_vat_accepts_only_new_names_and_exact_prices_with_vat() {
+    let want = r#"{"userId":"u","marginCentsKwh":0.49,"transferDayCentsKwh":2.92,"transferNightCentsKwh":1.37,"taxCentsKwh":2.82752,"vatPercent":25.5,"area":"FI"}"#;
+    // The names of the Rust service with the recorded numbers.
+    let renamed = with_incl_vat_names(want);
+    assert!(renamed.contains(r#""marginInclVatCentsKwh":0.49"#));
+    assert_eq!(with_recorded_terms(&renamed, want).as_deref(), Some(want));
+    // The numbers of the seed loader: each recorded price with 25.5 % VAT.
+    let seeded = r#"{"userId":"u","marginInclVatCentsKwh":0.61495,"transferDayInclVatCentsKwh":3.6645999999999996,"transferNightInclVatCentsKwh":1.71935,"taxInclVatCentsKwh":3.5485375999999995,"vatPercent":25.5,"area":"FI"}"#;
+    assert_eq!(with_recorded_terms(seeded, want).as_deref(), Some(want));
+    // A price that is not the recorded price with VAT stays a difference.
+    let other = seeded.replace("0.61495", "0.61496");
+    assert_ne!(with_recorded_terms(&other, want).as_deref(), Some(want));
+    // Another VAT makes the same numbers a difference.
+    let other_vat = seeded.replace("25.5", "24");
+    let want_other_vat = want.replace("25.5", "24");
+    assert_ne!(
+        with_recorded_terms(&other_vat, &want_other_vat),
+        Some(want_other_vat)
+    );
+    // A validation text has the new name too.
+    assert_eq!(
+        with_recorded_terms(
+            r#"{"error":"marginInclVatCentsKwh: Too small: expected number to be >=0"}"#,
+            ""
+        )
+        .as_deref(),
+        Some(r#"{"error":"marginCentsKwh: Too small: expected number to be >=0"}"#)
+    );
+    // A body without the new names is not a settings body of the Rust service.
+    assert_eq!(with_recorded_terms(want, want), None);
+    // Another body with the new names, for example the setup page.
+    assert_eq!(
+        with_recorded_terms("<script>terms.marginInclVatCentsKwh</script>", ""),
+        None
+    );
 }
 
 /// A settings body `got` without its last field `validFrom`, when `want` is

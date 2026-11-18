@@ -272,10 +272,10 @@ mod tests {
         use crate::settings::{ContractTerms, TermsVersion};
         let base = settings();
         let terms = |margin| ContractTerms {
-            margin_cents_kwh: margin,
-            transfer_day_cents_kwh: 0.0,
-            transfer_night_cents_kwh: 0.0,
-            tax_cents_kwh: 0.0,
+            margin_incl_vat_cents_kwh: margin,
+            transfer_day_incl_vat_cents_kwh: 0.0,
+            transfer_night_incl_vat_cents_kwh: 0.0,
+            tax_incl_vat_cents_kwh: 0.0,
             vat_percent: 0.0,
             night_start_hour: base.night_start_hour,
             night_end_hour: base.night_end_hour,

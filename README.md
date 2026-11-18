@@ -199,7 +199,7 @@ There is no CI. Run `mise run verify` before pushing. A material change also get
 
 1. An in-process **scheduled job** fetches day-ahead prices from the [Nord Pool Data Portal API](https://dataportal-api.nordpoolgroup.com) for all 21 delivery areas: every 2 hours as a baseline, plus a 10-minute burst during the publication window (12:00–13:59 CET) that pauses once tomorrow's prices are captured. A fetch also runs on startup.
 2. Prices are stored in PostgreSQL as raw spot prices in EUR/MWh; Nord Pool's current granularity is 15-minute, and the calculator handles variable interval lengths.
-3. When a user calls the API, their contract settings are applied: `total = (spot + margin + transfer + tax) * (1 + VAT%)`.
+3. When a user calls the API, their contract settings are applied: `total = (spot + margin + transfer + tax) * (1 + VAT%)`. The settings hold the margin, the transfer prices, and the tax with VAT, as an invoice shows them. The service removes that VAT before it applies the formula.
 4. The cheapest window algorithm finds the optimal contiguous time slot using a weighted sliding window over variable-length intervals.
 5. When `FINGRID_API_KEY` is set, a separate **hourly** job fetches public Fingrid grid series (wind/consumption) into PostgreSQL. The FI forecast endpoint combines those with stored price history using simple closed-form math to produce a clearly-labelled estimate for days Nord Pool has not published yet. This path is fully isolated from the authoritative price job — a Fingrid failure can never affect published prices, and the forecast degrades rather than guessing.
 

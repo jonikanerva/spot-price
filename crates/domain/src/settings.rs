@@ -81,7 +81,9 @@ impl TryFrom<i32> for Hour {
     }
 }
 
-/// The contract terms of one user. Money values are in c/kWh.
+/// The contract terms of one user for the price calculation. Money values
+/// are in c/kWh and do not include VAT; [`ContractTerms::settings`] derives
+/// them from the stored terms.
 ///
 /// The money fields have no bounds, because stored rows have none; the update
 /// path checks the bounds of the API (`validate_settings_update`).
@@ -99,13 +101,14 @@ pub struct UserSettings {
     pub area: Area,
 }
 
-/// A checked partial update. A `None` field keeps the current value.
+/// A checked partial update of the stored terms. A `None` field keeps the
+/// current value. Money values include VAT.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SettingsUpdate {
-    pub margin_cents_kwh: Option<f64>,
-    pub transfer_day_cents_kwh: Option<f64>,
-    pub transfer_night_cents_kwh: Option<f64>,
-    pub tax_cents_kwh: Option<f64>,
+    pub margin_incl_vat_cents_kwh: Option<f64>,
+    pub transfer_day_incl_vat_cents_kwh: Option<f64>,
+    pub transfer_night_incl_vat_cents_kwh: Option<f64>,
+    pub tax_incl_vat_cents_kwh: Option<f64>,
     pub vat_percent: Option<f64>,
     pub night_start_hour: Option<Hour>,
     pub night_end_hour: Option<Hour>,
@@ -113,39 +116,52 @@ pub struct SettingsUpdate {
     pub area: Option<Area>,
 }
 
-impl UserSettings {
-    /// The settings after `update`: each given field replaces the current one.
-    #[must_use]
-    pub fn with_update(self, update: SettingsUpdate) -> Self {
-        Self {
-            user_id: self.user_id,
-            margin_cents_kwh: update.margin_cents_kwh.unwrap_or(self.margin_cents_kwh),
-            transfer_day_cents_kwh: update
-                .transfer_day_cents_kwh
-                .unwrap_or(self.transfer_day_cents_kwh),
-            transfer_night_cents_kwh: update
-                .transfer_night_cents_kwh
-                .unwrap_or(self.transfer_night_cents_kwh),
-            tax_cents_kwh: update.tax_cents_kwh.unwrap_or(self.tax_cents_kwh),
-            vat_percent: update.vat_percent.unwrap_or(self.vat_percent),
-            night_start_hour: update.night_start_hour.unwrap_or(self.night_start_hour),
-            night_end_hour: update.night_end_hour.unwrap_or(self.night_end_hour),
-            timezone: update.timezone.unwrap_or(self.timezone),
-            area: update.area.unwrap_or(self.area),
-        }
-    }
-}
-
-/// The contract terms that change over time. Money values are in c/kWh.
+/// The contract terms that change over time, as the user enters them from
+/// an invoice. Money values are in c/kWh and include VAT at `vat_percent`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContractTerms {
-    pub margin_cents_kwh: f64,
-    pub transfer_day_cents_kwh: f64,
-    pub transfer_night_cents_kwh: f64,
-    pub tax_cents_kwh: f64,
+    pub margin_incl_vat_cents_kwh: f64,
+    pub transfer_day_incl_vat_cents_kwh: f64,
+    pub transfer_night_incl_vat_cents_kwh: f64,
+    pub tax_incl_vat_cents_kwh: f64,
     pub vat_percent: f64,
     pub night_start_hour: Hour,
     pub night_end_hour: Hour,
+}
+
+/// The price without VAT of a price that includes VAT at `vat_percent`.
+/// `None` when the result is not a finite number, for example at a VAT of
+/// -100 %.
+#[must_use]
+pub fn excl_vat(incl_vat_cents_kwh: f64, vat_percent: f64) -> Option<f64> {
+    let excl = incl_vat_cents_kwh * 100.0 / (100.0 + vat_percent);
+    excl.is_finite().then_some(excl)
+}
+
+impl ContractTerms {
+    /// The settings that the price calculation uses: money values without
+    /// VAT. `None` when a value has no finite price without VAT.
+    #[must_use]
+    pub fn settings(
+        &self,
+        user_id: UserId,
+        timezone: UserTimeZone,
+        area: Area,
+    ) -> Option<UserSettings> {
+        let excl = |incl_vat| excl_vat(incl_vat, self.vat_percent);
+        Some(UserSettings {
+            user_id,
+            margin_cents_kwh: excl(self.margin_incl_vat_cents_kwh)?,
+            transfer_day_cents_kwh: excl(self.transfer_day_incl_vat_cents_kwh)?,
+            transfer_night_cents_kwh: excl(self.transfer_night_incl_vat_cents_kwh)?,
+            tax_cents_kwh: excl(self.tax_incl_vat_cents_kwh)?,
+            vat_percent: self.vat_percent,
+            night_start_hour: self.night_start_hour,
+            night_end_hour: self.night_end_hour,
+            timezone,
+            area,
+        })
+    }
 }
 
 /// One version of the contract terms. It applies from the local calendar
@@ -188,6 +204,8 @@ pub enum ScheduleError {
     NoVersion,
     #[error("two contract terms versions have the same date")]
     DuplicateDate,
+    #[error("a contract terms version has no finite price without VAT")]
+    InvalidVat,
 }
 
 /// The contract of one user over time: one time zone, one area, and at
@@ -201,8 +219,8 @@ pub struct ContractSchedule {
 
 impl ContractSchedule {
     /// # Errors
-    /// [`ScheduleError`] when `versions` is empty or two versions have the
-    /// same `valid_from`.
+    /// [`ScheduleError`] when `versions` is empty, two versions have the
+    /// same `valid_from`, or a version has no finite price without VAT.
     pub fn new(
         user_id: &UserId,
         timezone: &UserTimeZone,
@@ -216,21 +234,20 @@ impl ContractSchedule {
         {
             return Err(ScheduleError::DuplicateDate);
         }
-        let mut scheduled = versions.into_iter().map(|version| ScheduledSettings {
-            valid_from: version.valid_from,
-            settings: UserSettings {
-                user_id: user_id.clone(),
-                margin_cents_kwh: version.terms.margin_cents_kwh,
-                transfer_day_cents_kwh: version.terms.transfer_day_cents_kwh,
-                transfer_night_cents_kwh: version.terms.transfer_night_cents_kwh,
-                tax_cents_kwh: version.terms.tax_cents_kwh,
-                vat_percent: version.terms.vat_percent,
-                night_start_hour: version.terms.night_start_hour,
-                night_end_hour: version.terms.night_end_hour,
-                timezone: timezone.clone(),
-                area,
-            },
-        });
+        let mut scheduled = versions
+            .into_iter()
+            .map(|version| {
+                let settings = version
+                    .terms
+                    .settings(user_id.clone(), timezone.clone(), area)
+                    .ok_or(ScheduleError::InvalidVat)?;
+                Ok(ScheduledSettings {
+                    valid_from: version.valid_from,
+                    settings,
+                })
+            })
+            .collect::<Result<Vec<_>, ScheduleError>>()?
+            .into_iter();
         let first = scheduled.next().ok_or(ScheduleError::NoVersion)?;
         Ok(Self {
             first,
@@ -308,12 +325,13 @@ mod tests {
     /// `(year, month, day, margin)` form.
     fn schedule(zone: &str, versions: &[(i16, i8, i8, f64)]) -> ContractSchedule {
         let base = settings();
+        // A VAT of 0 % keeps each margin exact in the settings.
         let terms = |margin| ContractTerms {
-            margin_cents_kwh: margin,
-            transfer_day_cents_kwh: base.transfer_day_cents_kwh,
-            transfer_night_cents_kwh: base.transfer_night_cents_kwh,
-            tax_cents_kwh: base.tax_cents_kwh,
-            vat_percent: base.vat_percent,
+            margin_incl_vat_cents_kwh: margin,
+            transfer_day_incl_vat_cents_kwh: base.transfer_day_cents_kwh,
+            transfer_night_incl_vat_cents_kwh: base.transfer_night_cents_kwh,
+            tax_incl_vat_cents_kwh: base.tax_cents_kwh,
+            vat_percent: 0.0,
             night_start_hour: base.night_start_hour,
             night_end_hour: base.night_end_hour,
         };
@@ -470,10 +488,10 @@ mod tests {
         let version = TermsVersion {
             valid_from: jiff::civil::date(2026, 1, 1),
             terms: ContractTerms {
-                margin_cents_kwh: 1.0,
-                transfer_day_cents_kwh: 0.0,
-                transfer_night_cents_kwh: 0.0,
-                tax_cents_kwh: 0.0,
+                margin_incl_vat_cents_kwh: 1.0,
+                transfer_day_incl_vat_cents_kwh: 0.0,
+                transfer_night_incl_vat_cents_kwh: 0.0,
+                tax_incl_vat_cents_kwh: 0.0,
                 vat_percent: 0.0,
                 night_start_hour: base.night_start_hour,
                 night_end_hour: base.night_end_hour,
@@ -498,27 +516,88 @@ mod tests {
         assert_eq!(Hour::try_from(-1_i64), Err(InvalidHour));
     }
 
-    #[test]
-    fn an_empty_update_keeps_every_field() {
-        assert_eq!(
-            settings().with_update(SettingsUpdate::default()),
-            settings()
-        );
+    fn close(got: f64, want: f64) {
+        assert!((got - want).abs() < 1e-12, "{got} is not {want}");
     }
 
     #[test]
-    fn an_update_replaces_only_given_fields() {
-        let update = SettingsUpdate {
-            margin_cents_kwh: Some(0.0),
-            night_end_hour: Some(Hour::new(6).unwrap()),
-            area: Some(Area::Se3),
-            ..SettingsUpdate::default()
+    fn excl_vat_removes_the_vat_of_an_invoice_price() {
+        // 2.24 c/kWh of electricity tax is 2.8112 c/kWh at 25.5 % VAT.
+        close(excl_vat(2.8112, 25.5).unwrap(), 2.24);
+        close(excl_vat(0.1067, 25.5).unwrap(), 0.085_019_920_318_725_1);
+        close(excl_vat(1.24, 24.0).unwrap(), 1.0);
+        close(excl_vat(3.0, 100.0).unwrap(), 1.5);
+    }
+
+    #[test]
+    fn excl_vat_keeps_a_price_at_zero_vat_and_a_zero_price() {
+        for price in [0.0, 0.49, 2.96, 1e-7, 12_345.678_901_234] {
+            assert_eq!(excl_vat(price, 0.0).unwrap().to_bits(), price.to_bits());
+        }
+        for vat in [0.0, 10.0, 25.5, 100.0] {
+            assert_eq!(excl_vat(0.0, vat).unwrap().to_bits(), 0.0_f64.to_bits());
+        }
+    }
+
+    #[test]
+    fn excl_vat_with_vat_added_again_gives_the_invoice_price() {
+        for vat in [10.0, 14.0, 24.0, 25.0, 25.5] {
+            for cents in 0..=2_000_u32 {
+                let incl_vat = f64::from(cents) / 100.0;
+                let excl = excl_vat(incl_vat, vat).unwrap();
+                close(excl * (1.0 + vat / 100.0), incl_vat);
+            }
+        }
+    }
+
+    #[test]
+    fn excl_vat_has_no_result_without_a_finite_price() {
+        assert_eq!(excl_vat(1.0, -100.0), None);
+        assert_eq!(excl_vat(0.0, -100.0), None);
+        assert_eq!(excl_vat(f64::NAN, 25.5), None);
+        assert_eq!(excl_vat(1.0, f64::NAN), None);
+        assert_eq!(excl_vat(f64::INFINITY, 25.5), None);
+    }
+
+    fn invoice_terms(vat_percent: f64) -> ContractTerms {
+        ContractTerms {
+            margin_incl_vat_cents_kwh: 0.5,
+            transfer_day_incl_vat_cents_kwh: 2.96,
+            transfer_night_incl_vat_cents_kwh: 1.56,
+            tax_incl_vat_cents_kwh: 2.9179,
+            vat_percent,
+            night_start_hour: Hour::new(22).unwrap(),
+            night_end_hour: Hour::new(7).unwrap(),
+        }
+    }
+
+    #[test]
+    fn the_settings_of_terms_have_every_price_without_vat() {
+        let base = settings();
+        let got = invoice_terms(25.5)
+            .settings(base.user_id.clone(), base.timezone.clone(), base.area)
+            .unwrap();
+        close(got.margin_cents_kwh, 0.5 / 1.255);
+        close(got.transfer_day_cents_kwh, 2.96 / 1.255);
+        close(got.transfer_night_cents_kwh, 1.56 / 1.255);
+        close(got.tax_cents_kwh, 2.9179 / 1.255);
+        assert_eq!(got.vat_percent.to_bits(), 25.5_f64.to_bits());
+        assert_eq!(got.night_start_hour.get(), 22);
+        assert_eq!(got.night_end_hour.get(), 7);
+        assert_eq!(got.timezone, base.timezone);
+        assert_eq!(got.area, base.area);
+    }
+
+    #[test]
+    fn a_schedule_rejects_terms_without_a_finite_price() {
+        let base = settings();
+        let version = TermsVersion {
+            valid_from: jiff::civil::date(2026, 1, 1),
+            terms: invoice_terms(-100.0),
         };
-        let next = settings().with_update(update);
-        assert_eq!(next.margin_cents_kwh.to_bits(), 0.0_f64.to_bits());
-        assert_eq!(next.night_end_hour.get(), 6);
-        assert_eq!(next.area, Area::Se3);
-        assert_eq!(next.timezone.name(), "Europe/Helsinki");
-        assert_eq!(next.vat_percent.to_bits(), 25.5_f64.to_bits());
+        assert_eq!(
+            ContractSchedule::new(&base.user_id, &base.timezone, base.area, vec![version]),
+            Err(ScheduleError::InvalidVat)
+        );
     }
 }

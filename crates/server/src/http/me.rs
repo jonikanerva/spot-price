@@ -50,7 +50,7 @@ async fn ensure(state: &AppState, user_id: &str) -> Result<UserSettingsRow, Inte
     path = "/api/v1/me/settings",
     tag = "User",
     summary = "Get user settings",
-    description = "Returns the authenticated user's electricity contract settings: the timezone, the area, and the contract terms that apply today. validFrom is the date of the terms version that holds those terms.",
+    description = "Returns the authenticated user's electricity contract settings: the timezone, the area, and the contract terms that apply today. The margin, the transfer prices, and the tax include VAT, as on an invoice; the price routes return them without VAT. validFrom is the date of the terms version that holds those terms.",
     responses((status = 200, description = "Current user settings", body = UserSettingsDto))
 )]
 pub async fn get_settings(
@@ -82,7 +82,7 @@ async fn settings_answer(state: &AppState, user_id: String) -> Result<Response, 
     path = "/api/v1/me/settings",
     tag = "User",
     summary = "Update user settings",
-    description = "Update one or more electricity contract settings. Only provided fields are changed. The timezone and the area have one current value. The contract terms are versioned: the request saves the terms version that applies from validFrom (default: today in the user's timezone). A term that the request does not give keeps the value that applies on validFrom. A version with the same validFrom is replaced. No version is created when the terms equal the terms that already apply on validFrom. The response has the terms that apply on validFrom and the validFrom of their version. A user can hold at most 100 versions.",
+    description = "Update one or more electricity contract settings. Only provided fields are changed. The margin, the transfer prices, and the tax include VAT, as on an invoice; vatPercent applies to the spot price only. The timezone and the area have one current value. The contract terms are versioned: the request saves the terms version that applies from validFrom (default: today in the user's timezone). A term that the request does not give keeps the value that applies on validFrom. A version with the same validFrom is replaced. No version is created when the terms equal the terms that already apply on validFrom. The response has the terms that apply on validFrom and the validFrom of their version. A user can hold at most 100 versions.",
     request_body(content = inline(SettingsUpdateBody), content_type = "application/json"),
     responses(
         (status = 200, description = "Updated user settings", body = UserSettingsDto),
@@ -276,15 +276,19 @@ async fn chart_answer(state: &AppState, user_id: &str) -> Result<Response, Inter
     reason = "documents the body; input::settings_body reads it"
 )]
 pub struct SettingsUpdateBody {
+    /// Retailer margin (c/kWh), VAT included, as on the electricity sales invoice.
     #[schema(minimum = 0, example = 0.5)]
-    margin_cents_kwh: Option<f64>,
-    #[schema(minimum = 0, example = 2.5)]
-    transfer_day_cents_kwh: Option<f64>,
-    #[schema(minimum = 0, example = 1.2)]
-    transfer_night_cents_kwh: Option<f64>,
-    #[schema(minimum = 0, example = 2.79372)]
-    tax_cents_kwh: Option<f64>,
-    /// VAT percentage (0-100)
+    margin_incl_vat_cents_kwh: Option<f64>,
+    /// Day transfer price (c/kWh), VAT included, as on the grid invoice.
+    #[schema(minimum = 0, example = 2.96)]
+    transfer_day_incl_vat_cents_kwh: Option<f64>,
+    /// Night transfer price (c/kWh), VAT included, as on the grid invoice.
+    #[schema(minimum = 0, example = 1.56)]
+    transfer_night_incl_vat_cents_kwh: Option<f64>,
+    /// Electricity tax plus the security of supply fee (c/kWh), VAT included, as on the grid invoice.
+    #[schema(minimum = 0, example = 2.9179)]
+    tax_incl_vat_cents_kwh: Option<f64>,
+    /// VAT percentage (0-100) of the spot price. The other prices already include it.
     #[schema(minimum = 0, maximum = 100, example = 25.5)]
     vat_percent: Option<f64>,
     /// Night rate start hour (0-23)

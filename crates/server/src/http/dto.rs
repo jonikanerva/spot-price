@@ -38,12 +38,16 @@ pub struct TotalPriceDto {
     pub local_end: String,
     #[schema(example = 5.23)]
     pub spot_cents_kwh: f64,
+    /// Retailer margin (c/kWh) without VAT.
     #[schema(example = 0.5)]
     pub margin_cents_kwh: f64,
+    /// Transfer price of the interval (c/kWh) without VAT.
     #[schema(example = 2.5)]
     pub transfer_cents_kwh: f64,
+    /// Electricity tax plus the security of supply fee (c/kWh) without VAT.
     #[schema(example = 2.79372)]
     pub tax_cents_kwh: f64,
+    /// VAT (c/kWh) on the spot price, the margin, the transfer price, and the tax.
     #[schema(example = 2.81)]
     pub vat_cents_kwh: f64,
     /// Total price (c/kWh) the household pays. Floored at the contract-cost minimum: negative spot is treated as 0 (a retailer does not credit negatives), so the total never drops below (margin + transfer + tax) × (1 + VAT). The displayed spotCentsKwh stays raw and may be negative.
@@ -206,14 +210,19 @@ pub struct PublicSpotDto {
 pub struct UserSettingsDto {
     #[schema(example = "abc123")]
     pub user_id: String,
+    /// Retailer margin (c/kWh), VAT included, as on the electricity sales invoice.
     #[schema(example = 0.5)]
-    pub margin_cents_kwh: f64,
-    #[schema(example = 2.5)]
-    pub transfer_day_cents_kwh: f64,
-    #[schema(example = 1.2)]
-    pub transfer_night_cents_kwh: f64,
-    #[schema(example = 2.79372)]
-    pub tax_cents_kwh: f64,
+    pub margin_incl_vat_cents_kwh: f64,
+    /// Day transfer price (c/kWh), VAT included, as on the grid invoice.
+    #[schema(example = 2.96)]
+    pub transfer_day_incl_vat_cents_kwh: f64,
+    /// Night transfer price (c/kWh), VAT included, as on the grid invoice.
+    #[schema(example = 1.56)]
+    pub transfer_night_incl_vat_cents_kwh: f64,
+    /// Electricity tax plus the security of supply fee (c/kWh), VAT included, as on the grid invoice.
+    #[schema(example = 2.9179)]
+    pub tax_incl_vat_cents_kwh: f64,
+    /// VAT percentage of the spot price. The other prices already include it.
     #[schema(example = 25.5)]
     pub vat_percent: f64,
     #[schema(example = 22)]
@@ -240,10 +249,10 @@ impl UserSettingsDto {
     ) -> Self {
         Self {
             user_id,
-            margin_cents_kwh: terms.margin_cents_kwh,
-            transfer_day_cents_kwh: terms.transfer_day_cents_kwh,
-            transfer_night_cents_kwh: terms.transfer_night_cents_kwh,
-            tax_cents_kwh: terms.tax_cents_kwh,
+            margin_incl_vat_cents_kwh: terms.margin_incl_vat_cents_kwh,
+            transfer_day_incl_vat_cents_kwh: terms.transfer_day_incl_vat_cents_kwh,
+            transfer_night_incl_vat_cents_kwh: terms.transfer_night_incl_vat_cents_kwh,
+            tax_incl_vat_cents_kwh: terms.tax_incl_vat_cents_kwh,
             vat_percent: terms.vat_percent,
             night_start_hour: terms.night_start_hour,
             night_end_hour: terms.night_end_hour,
@@ -261,14 +270,19 @@ pub struct ContractTermsVersionDto {
     /// The local date (YYYY-MM-DD, in the user's timezone) from which this version applies.
     #[schema(example = "2026-12-01")]
     pub valid_from: String,
+    /// Retailer margin (c/kWh), VAT included, as on the electricity sales invoice.
     #[schema(example = 0.5)]
-    pub margin_cents_kwh: f64,
-    #[schema(example = 2.5)]
-    pub transfer_day_cents_kwh: f64,
-    #[schema(example = 1.2)]
-    pub transfer_night_cents_kwh: f64,
-    #[schema(example = 2.79372)]
-    pub tax_cents_kwh: f64,
+    pub margin_incl_vat_cents_kwh: f64,
+    /// Day transfer price (c/kWh), VAT included, as on the grid invoice.
+    #[schema(example = 2.96)]
+    pub transfer_day_incl_vat_cents_kwh: f64,
+    /// Night transfer price (c/kWh), VAT included, as on the grid invoice.
+    #[schema(example = 1.56)]
+    pub transfer_night_incl_vat_cents_kwh: f64,
+    /// Electricity tax plus the security of supply fee (c/kWh), VAT included, as on the grid invoice.
+    #[schema(example = 2.9179)]
+    pub tax_incl_vat_cents_kwh: f64,
+    /// VAT percentage of the spot price. The other prices already include it.
     #[schema(example = 25.5)]
     pub vat_percent: f64,
     #[schema(example = 22)]
@@ -281,10 +295,10 @@ impl From<&crate::store::user_settings::ContractTermsRow> for ContractTermsVersi
     fn from(terms: &crate::store::user_settings::ContractTermsRow) -> Self {
         Self {
             valid_from: terms.valid_from.to_string(),
-            margin_cents_kwh: terms.margin_cents_kwh,
-            transfer_day_cents_kwh: terms.transfer_day_cents_kwh,
-            transfer_night_cents_kwh: terms.transfer_night_cents_kwh,
-            tax_cents_kwh: terms.tax_cents_kwh,
+            margin_incl_vat_cents_kwh: terms.margin_incl_vat_cents_kwh,
+            transfer_day_incl_vat_cents_kwh: terms.transfer_day_incl_vat_cents_kwh,
+            transfer_night_incl_vat_cents_kwh: terms.transfer_night_incl_vat_cents_kwh,
+            tax_incl_vat_cents_kwh: terms.tax_incl_vat_cents_kwh,
             vat_percent: terms.vat_percent,
             night_start_hour: terms.night_start_hour,
             night_end_hour: terms.night_end_hour,
