@@ -21,17 +21,42 @@ const HOME: &str = include_str!("../fixtures/ui-home.html");
 /// The differences from the TypeScript document, by design, as
 /// [`differences`] reports them. The test fails on any other difference and
 /// on a listed difference that no longer occurs. After the first entry, the
-/// entries are the versioned contract terms: `validFrom` in the settings
-/// schema and the settings body, the two version routes and their schemas,
-/// and the descriptions that state the new behaviour.
-pub const INTENTIONAL: [&str; 12] = [
+/// entries are these two changes:
+/// - The money fields of the settings include VAT and have `InclVat` in the
+///   name. The price fields of `TotalPrice` say that they have no VAT.
+/// - The versioned contract terms: `validFrom` in the settings schema and
+///   the settings body, the two version routes and their schemas, and the
+///   descriptions that state the new behaviour.
+pub const INTENTIONAL: [&str; 34] = [
     "/components/schemas/ForecastResponse/properties/generatedAt/description: extra",
+    "/components/schemas/TotalPrice/properties/marginCentsKwh/description: extra",
+    "/components/schemas/TotalPrice/properties/taxCentsKwh/description: extra",
+    "/components/schemas/TotalPrice/properties/transferCentsKwh/description: extra",
+    "/components/schemas/TotalPrice/properties/vatCentsKwh/description: extra",
+    "/components/schemas/UserSettings/properties/marginCentsKwh: missing",
+    "/components/schemas/UserSettings/properties/taxCentsKwh: missing",
+    "/components/schemas/UserSettings/properties/transferDayCentsKwh: missing",
+    "/components/schemas/UserSettings/properties/transferNightCentsKwh: missing",
+    "/components/schemas/UserSettings/properties/vatPercent/description: extra",
+    "/components/schemas/UserSettings/properties/marginInclVatCentsKwh: extra",
+    "/components/schemas/UserSettings/properties/taxInclVatCentsKwh: extra",
+    "/components/schemas/UserSettings/properties/transferDayInclVatCentsKwh: extra",
+    "/components/schemas/UserSettings/properties/transferNightInclVatCentsKwh: extra",
     "/components/schemas/UserSettings/properties/validFrom: extra",
-    r#"/components/schemas/UserSettings/required: want ["userId","marginCentsKwh","transferDayCentsKwh","transferNightCentsKwh","taxCentsKwh","vatPercent","nightStartHour","nightEndHour","timezone","area"] got ["userId","marginCentsKwh","transferDayCentsKwh","transferNightCentsKwh","taxCentsKwh","vatPercent","nightStartHour","nightEndHour","timezone","area","validFrom"]"#,
+    r#"/components/schemas/UserSettings/required: want ["userId","marginCentsKwh","transferDayCentsKwh","transferNightCentsKwh","taxCentsKwh","vatPercent","nightStartHour","nightEndHour","timezone","area"] got ["userId","marginInclVatCentsKwh","transferDayInclVatCentsKwh","transferNightInclVatCentsKwh","taxInclVatCentsKwh","vatPercent","nightStartHour","nightEndHour","timezone","area","validFrom"]"#,
     "/components/schemas/ContractTermsVersion: extra",
     "/components/schemas/ContractTermsVersions: extra",
-    r#"/paths/~1api~1v1~1me~1settings/get/description: want "Returns the authenticated user's electricity contract settings." got "Returns the authenticated user's electricity contract settings: the timezone, the area, and the contract terms that apply today. validFrom is the date of the terms version that holds those terms.""#,
-    r#"/paths/~1api~1v1~1me~1settings/put/description: want "Update one or more electricity contract settings. Only provided fields are changed." got "Update one or more electricity contract settings. Only provided fields are changed. The timezone and the area have one current value. The contract terms are versioned: the request saves the terms version that applies from validFrom (default: today in the user's timezone). A term that the request does not give keeps the value that applies on validFrom. A version with the same validFrom is replaced. No version is created when the terms equal the terms that already apply on validFrom. The response has the terms that apply on validFrom and the validFrom of their version. A user can hold at most 100 versions.""#,
+    r#"/paths/~1api~1v1~1me~1settings/get/description: want "Returns the authenticated user's electricity contract settings." got "Returns the authenticated user's electricity contract settings: the timezone, the area, and the contract terms that apply today. The margin, the transfer prices, and the tax include VAT, as on an invoice; the price routes return them without VAT. validFrom is the date of the terms version that holds those terms.""#,
+    r#"/paths/~1api~1v1~1me~1settings/put/description: want "Update one or more electricity contract settings. Only provided fields are changed." got "Update one or more electricity contract settings. Only provided fields are changed. The margin, the transfer prices, and the tax include VAT, as on an invoice; vatPercent applies to the spot price only. The timezone and the area have one current value. The contract terms are versioned: the request saves the terms version that applies from validFrom (default: today in the user's timezone). A term that the request does not give keeps the value that applies on validFrom. A version with the same validFrom is replaced. No version is created when the terms equal the terms that already apply on validFrom. The response has the terms that apply on validFrom and the validFrom of their version. A user can hold at most 100 versions.""#,
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/marginCentsKwh: missing",
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/taxCentsKwh: missing",
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/transferDayCentsKwh: missing",
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/transferNightCentsKwh: missing",
+    r#"/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/vatPercent/description: want "VAT percentage (0-100)" got "VAT percentage (0-100) of the spot price. The other prices already include it.""#,
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/marginInclVatCentsKwh: extra",
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/taxInclVatCentsKwh: extra",
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/transferDayInclVatCentsKwh: extra",
+    "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/transferNightInclVatCentsKwh: extra",
     "/paths/~1api~1v1~1me~1settings/put/requestBody/content/application~1json/schema/properties/validFrom: extra",
     r#"/paths/~1api~1v1~1me~1settings/put/responses/400/description: want "Validation error" got "Validation error, or the version limit is reached""#,
     r#"/paths/~1api~1v1~1price~1history/get/description: want "Returns all stored total prices for the inclusive local date range [from, to]. Totals apply the user's CURRENT contract settings to the historical public spot prices — there is no historical settings versioning. Dates are YYYY-MM-DD interpreted in the user's timezone; the maximum span is 31 days (inclusive). Check the 'available' field: it is false with an empty 'prices' array when no data is stored for the range." got "Returns all stored total prices for the inclusive local date range [from, to]. Each interval uses the contract terms that applied at that interval: the terms version of the local date of the interval start. Dates are YYYY-MM-DD interpreted in the user's timezone; the maximum span is 31 days (inclusive). Check the 'available' field: it is false with an empty 'prices' array when no data is stored for the range.""#,

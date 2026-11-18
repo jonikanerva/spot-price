@@ -464,10 +464,10 @@
       }
 
       const fillTerms = (terms) => {
-        $('margin').value = terms.marginCentsKwh
-        $('dayTransfer').value = terms.transferDayCentsKwh
-        $('nightTransfer').value = terms.transferNightCentsKwh
-        $('tax').value = terms.taxCentsKwh
+        $('margin').value = terms.marginInclVatCentsKwh
+        $('dayTransfer').value = terms.transferDayInclVatCentsKwh
+        $('nightTransfer').value = terms.transferNightInclVatCentsKwh
+        $('tax').value = terms.taxInclVatCentsKwh
         $('vat').value = terms.vatPercent
         $('nightStart').value = terms.nightStartHour
         $('nightEnd').value = terms.nightEndHour
@@ -551,10 +551,10 @@
 
           item.append(
             date,
-            termCell('margin', version.marginCentsKwh),
-            termCell('transferDay', version.transferDayCentsKwh),
-            termCell('transferNight', version.transferNightCentsKwh),
-            termCell('tax', version.taxCentsKwh),
+            termCell('margin', version.marginInclVatCentsKwh),
+            termCell('transferDay', version.transferDayInclVatCentsKwh),
+            termCell('transferNight', version.transferNightInclVatCentsKwh),
+            termCell('tax', version.taxInclVatCentsKwh),
             termCell('vat', version.vatPercent + ' %'),
             termCell('night', version.nightStartHour + '-' + version.nightEndHour),
             actionsCell,
@@ -705,10 +705,10 @@
         }
 
         const payload = {
-          marginCentsKwh: Number($('margin').value),
-          transferDayCentsKwh: Number($('dayTransfer').value),
-          transferNightCentsKwh: Number($('nightTransfer').value),
-          taxCentsKwh: Number($('tax').value),
+          marginInclVatCentsKwh: Number($('margin').value),
+          transferDayInclVatCentsKwh: Number($('dayTransfer').value),
+          transferNightInclVatCentsKwh: Number($('nightTransfer').value),
+          taxInclVatCentsKwh: Number($('tax').value),
           vatPercent: Number($('vat').value),
           nightStartHour: Number($('nightStart').value),
           nightEndHour: Number($('nightEnd').value),

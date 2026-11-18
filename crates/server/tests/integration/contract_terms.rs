@@ -10,7 +10,7 @@ use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 use spot_price_domain::areas::Area;
 use spot_price_domain::price::apply_contract_terms;
-use spot_price_domain::settings::{Hour, UserId, UserSettings};
+use spot_price_domain::settings::{Hour, UserId, UserSettings, excl_vat};
 use spot_price_domain::time::UserTimeZone;
 use spot_price_server::clock::FixedClock;
 use spot_price_server::http::{AppState, router};
@@ -115,7 +115,7 @@ async fn store_fi(pool: &PgPool, from: &str, to: &str) {
     .unwrap();
 }
 
-/// `(validFrom, marginCentsKwh)` of each version, in response order.
+/// `(validFrom, marginInclVatCentsKwh)` of each version, in response order.
 async fn versions(app: &Router, cookie: &str) -> Vec<(String, f64)> {
     let body = ok(app, "GET", "/api/v1/me/settings/versions", cookie, None).await;
     body["versions"]
@@ -125,7 +125,7 @@ async fn versions(app: &Router, cookie: &str) -> Vec<(String, f64)> {
         .map(|version| {
             (
                 version["validFrom"].as_str().unwrap().to_owned(),
-                version["marginCentsKwh"].as_f64().unwrap(),
+                version["marginInclVatCentsKwh"].as_f64().unwrap(),
             )
         })
         .collect()
@@ -141,10 +141,10 @@ fn pairs(list: &[(&str, f64)]) -> Vec<(String, f64)> {
 fn settings_body(user_id: &Value, margin: f64, valid_from: &str) -> Value {
     json!({
         "userId": user_id,
-        "marginCentsKwh": margin,
-        "transferDayCentsKwh": 2.92,
-        "transferNightCentsKwh": 1.37,
-        "taxCentsKwh": 2.82752,
+        "marginInclVatCentsKwh": margin,
+        "transferDayInclVatCentsKwh": 2.92,
+        "transferNightInclVatCentsKwh": 1.37,
+        "taxInclVatCentsKwh": 2.9179,
         "vatPercent": 25.5,
         "nightStartHour": 22,
         "nightEndHour": 7,
@@ -171,7 +171,7 @@ async fn a_save_for_a_new_date_adds_a_version_and_the_same_date_replaces_it(pool
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.6}"#),
+        Some(r#"{"validFrom":"2026-12-01","marginInclVatCentsKwh":0.6}"#),
     )
     .await;
     // The response has the terms of the requested date; today keeps the old terms.
@@ -190,7 +190,7 @@ async fn a_save_for_a_new_date_adds_a_version_and_the_same_date_replaces_it(pool
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.7}"#),
+        Some(r#"{"validFrom":"2026-12-01","marginInclVatCentsKwh":0.7}"#),
     )
     .await;
     assert_eq!(replaced, settings_body(&user_id, 0.7, CHANGE));
@@ -208,23 +208,23 @@ async fn a_save_of_the_terms_that_already_apply_creates_no_version(pool: PgPool)
         let (app, cookie) = (app.clone(), cookie.clone());
         async move { ok(&app, "PUT", "/api/v1/me/settings", &cookie, Some(body)).await }
     };
-    put(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.6}"#).await;
+    put(r#"{"validFrom":"2026-12-01","marginInclVatCentsKwh":0.6}"#).await;
     let two = pairs(&[("1970-01-01", 0.49), (CHANGE, 0.6)]);
 
     // Equal terms for a later date, with every term given or with none.
     let full = put(
-        r#"{"validFrom":"2027-01-01","marginCentsKwh":0.6,"transferDayCentsKwh":2.92,"transferNightCentsKwh":1.37,"taxCentsKwh":2.82752,"vatPercent":25.5,"nightStartHour":22,"nightEndHour":7}"#,
+        r#"{"validFrom":"2027-01-01","marginInclVatCentsKwh":0.6,"transferDayInclVatCentsKwh":2.92,"transferNightInclVatCentsKwh":1.37,"taxInclVatCentsKwh":2.9179,"vatPercent":25.5,"nightStartHour":22,"nightEndHour":7}"#,
     )
     .await;
     assert_eq!(full["validFrom"], CHANGE);
-    assert_eq!(full["marginCentsKwh"], 0.6);
+    assert_eq!(full["marginInclVatCentsKwh"], 0.6);
     assert_eq!(
         put(r#"{"validFrom":"2027-06-01"}"#).await["validFrom"],
         CHANGE
     );
     // Today, between the versions, and without a body.
     assert_eq!(
-        put(r#"{"marginCentsKwh":0.49}"#).await["validFrom"],
+        put(r#"{"marginInclVatCentsKwh":0.49}"#).await["validFrom"],
         "1970-01-01"
     );
     assert_eq!(put("{}").await["validFrom"], "1970-01-01");
@@ -248,7 +248,7 @@ async fn the_default_date_is_today_in_the_time_zone_after_the_update(pool: PgPoo
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"marginCentsKwh":0.6}"#),
+        Some(r#"{"marginInclVatCentsKwh":0.6}"#),
     )
     .await;
     assert_eq!(helsinki["validFrom"], "2026-11-18");
@@ -257,7 +257,7 @@ async fn the_default_date_is_today_in_the_time_zone_after_the_update(pool: PgPoo
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"marginCentsKwh":0.7,"timezone":"Europe/Stockholm"}"#),
+        Some(r#"{"marginInclVatCentsKwh":0.7,"timezone":"Europe/Stockholm"}"#),
     )
     .await;
     assert_eq!(stockholm["validFrom"], "2026-11-17");
@@ -275,7 +275,7 @@ async fn the_default_date_is_today_in_the_time_zone_after_the_update(pool: PgPoo
     assert_eq!(
         (
             today["validFrom"].as_str(),
-            today["marginCentsKwh"].as_f64()
+            today["marginInclVatCentsKwh"].as_f64()
         ),
         (Some("2026-11-17"), Some(0.7))
     );
@@ -290,7 +290,7 @@ async fn an_omitted_term_keeps_the_value_that_applies_on_the_date(pool: PgPool) 
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.6,"vatPercent":24}"#),
+        Some(r#"{"validFrom":"2026-12-01","marginInclVatCentsKwh":0.6,"vatPercent":24}"#),
     )
     .await;
     // The terms of 2026-12-15 start from the version of 2026-12-01.
@@ -299,14 +299,14 @@ async fn an_omitted_term_keeps_the_value_that_applies_on_the_date(pool: PgPool) 
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2026-12-15","taxCentsKwh":3}"#),
+        Some(r#"{"validFrom":"2026-12-15","taxInclVatCentsKwh":3}"#),
     )
     .await;
     assert_eq!(
         (
-            later["marginCentsKwh"].as_f64(),
+            later["marginInclVatCentsKwh"].as_f64(),
             later["vatPercent"].as_f64(),
-            later["taxCentsKwh"].as_f64(),
+            later["taxInclVatCentsKwh"].as_f64(),
             later["validFrom"].as_str()
         ),
         (Some(0.6), Some(24.0), Some(3.0), Some("2026-12-15"))
@@ -322,7 +322,7 @@ async fn an_omitted_term_keeps_the_value_that_applies_on_the_date(pool: PgPool) 
     .await;
     assert_eq!(
         (
-            earlier["marginCentsKwh"].as_f64(),
+            earlier["marginInclVatCentsKwh"].as_f64(),
             earlier["vatPercent"].as_f64(),
             earlier["nightEndHour"].as_i64()
         ),
@@ -351,7 +351,7 @@ async fn a_delete_removes_one_version_but_never_the_only_one(pool: PgPool) {
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.6}"#),
+        Some(r#"{"validFrom":"2026-12-01","marginInclVatCentsKwh":0.6}"#),
     )
     .await;
 
@@ -406,7 +406,7 @@ async fn a_delete_removes_one_version_but_never_the_only_one(pool: PgPool) {
     assert_eq!(
         (
             today["validFrom"].as_str(),
-            today["marginCentsKwh"].as_f64()
+            today["marginInclVatCentsKwh"].as_f64()
         ),
         (Some(CHANGE), Some(0.6))
     );
@@ -450,7 +450,7 @@ async fn a_delete_from_another_origin_is_forbidden(pool: PgPool) {
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2026-12-01","marginCentsKwh":0.6}"#),
+        Some(r#"{"validFrom":"2026-12-01","marginInclVatCentsKwh":0.6}"#),
     )
     .await;
     let delete = |origin: &'static str| {
@@ -481,7 +481,7 @@ async fn a_user_holds_at_most_100_versions(pool: PgPool) {
         "INSERT INTO contract_terms
            (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh,
             transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
-         SELECT user_id, DATE '2027-01-01' + n, n, 2.92, 1.37, 2.82752, 25.5, 22, 7
+         SELECT user_id, DATE '2027-01-01' + n, n, 2.92, 1.37, 2.9179, 25.5, 22, 7
          FROM user_settings, generate_series(0, 98) AS n",
     )
     .execute(&pool)
@@ -494,7 +494,7 @@ async fn a_user_holds_at_most_100_versions(pool: PgPool) {
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2028-01-01","marginCentsKwh":0.6,"area":"SE3"}"#),
+        Some(r#"{"validFrom":"2028-01-01","marginInclVatCentsKwh":0.6,"area":"SE3"}"#),
     )
     .await;
     assert_eq!(
@@ -515,10 +515,10 @@ async fn a_user_holds_at_most_100_versions(pool: PgPool) {
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2027-01-01","marginCentsKwh":0.6}"#),
+        Some(r#"{"validFrom":"2027-01-01","marginInclVatCentsKwh":0.6}"#),
     )
     .await;
-    assert_eq!(replaced["marginCentsKwh"], 0.6);
+    assert_eq!(replaced["marginInclVatCentsKwh"], 0.6);
     let kept = ok(
         &app,
         "PUT",
@@ -547,7 +547,7 @@ async fn a_user_holds_at_most_100_versions(pool: PgPool) {
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"2028-01-01","marginCentsKwh":0.6}"#),
+        Some(r#"{"validFrom":"2028-01-01","marginInclVatCentsKwh":0.6}"#),
     )
     .await;
     assert_eq!(versions(&app, &cookie).await.len(), 100);
@@ -559,28 +559,28 @@ async fn an_invalid_valid_from_answers_400_and_saves_nothing(pool: PgPool) {
     let cookie = sign_up(&app).await;
     for (body, text) in [
         (
-            r#"{"validFrom":"1.12.2026","marginCentsKwh":0.6}"#,
+            r#"{"validFrom":"1.12.2026","marginInclVatCentsKwh":0.6}"#,
             "validFrom: Invalid ISO date",
         ),
         (
-            r#"{"validFrom":"2026-13-01","marginCentsKwh":0.6}"#,
+            r#"{"validFrom":"2026-13-01","marginInclVatCentsKwh":0.6}"#,
             "validFrom: Invalid ISO date",
         ),
         (
-            r#"{"validFrom":"","marginCentsKwh":0.6}"#,
+            r#"{"validFrom":"","marginInclVatCentsKwh":0.6}"#,
             "validFrom: Invalid ISO date",
         ),
         (
-            r#"{"validFrom":"1969-12-31","marginCentsKwh":0.6}"#,
+            r#"{"validFrom":"1969-12-31","marginInclVatCentsKwh":0.6}"#,
             "validFrom: Too small: expected date to be >=1970-01-01",
         ),
         (
-            r#"{"validFrom":20261201,"marginCentsKwh":0.6}"#,
+            r#"{"validFrom":20261201,"marginInclVatCentsKwh":0.6}"#,
             "validFrom: Invalid input: expected string, received number",
         ),
         (
-            r#"{"validFrom":null,"marginCentsKwh":-1}"#,
-            "marginCentsKwh: Too small: expected number to be >=0; validFrom: Invalid input: expected string, received null",
+            r#"{"validFrom":null,"marginInclVatCentsKwh":-1}"#,
+            "marginInclVatCentsKwh: Too small: expected number to be >=0; validFrom: Invalid input: expected string, received null",
         ),
     ] {
         let (status, answer) = send(&app, "PUT", "/api/v1/me/settings", &cookie, Some(body)).await;
@@ -597,7 +597,7 @@ async fn an_invalid_valid_from_answers_400_and_saves_nothing(pool: PgPool) {
         "PUT",
         "/api/v1/me/settings",
         &cookie,
-        Some(r#"{"validFrom":"1970-01-01","marginCentsKwh":0.6}"#),
+        Some(r#"{"validFrom":"1970-01-01","marginInclVatCentsKwh":0.6}"#),
     )
     .await;
     assert_eq!(first["validFrom"], "1970-01-01");
@@ -629,7 +629,7 @@ async fn a_user_without_a_version_gets_the_generic_500(pool: PgPool) {
             "PUT",
             "/api/v1/me/settings",
             cookie.as_str(),
-            Some(r#"{"marginCentsKwh":0.6}"#),
+            Some(r#"{"marginInclVatCentsKwh":0.6}"#),
         ),
     ] {
         let (status, text) = send(&app, method, path, auth, body).await;
@@ -642,6 +642,12 @@ async fn a_user_without_a_version_gets_the_generic_500(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(count, 0);
+}
+
+/// The margin without VAT that a price route gives for the settings margin
+/// `incl_vat` at the default VAT of 25.5 %.
+fn margin(incl_vat: f64) -> f64 {
+    excl_vat(incl_vat, 25.5).unwrap()
 }
 
 /// `(deliveryStart, marginCentsKwh, totalCentsKwh)` of each price.
@@ -668,7 +674,7 @@ async fn across_the_change(pool: &PgPool, margin: f64) -> (String, String) {
     let app = app_at(pool.clone(), EVE);
     let cookie = sign_up(&app).await;
     let key = api_key(&app, &cookie).await;
-    let body = json!({ "validFrom": CHANGE, "marginCentsKwh": margin }).to_string();
+    let body = json!({ "validFrom": CHANGE, "marginInclVatCentsKwh": margin }).to_string();
     ok(&app, "PUT", "/api/v1/me/settings", &cookie, Some(&body)).await;
     (cookie, key)
 }
@@ -688,17 +694,18 @@ async fn history_uses_the_terms_that_applied_at_each_interval(pool: PgPool) {
     .await;
     let prices = margins(&history["prices"]);
     assert_eq!(prices.len(), 192);
-    // Spot 5 c/kWh: night transfer 1.37, day transfer 2.92, tax 2.82752, VAT 25.5 %.
+    // Spot 5 c/kWh with 25.5 % VAT is 6.275. The other prices have VAT:
+    // night transfer 1.37, day transfer 2.92, tax 2.9179, margin 0.49 or 0.6.
     let expected = |start: &str| -> (f64, f64) {
         let new = start >= "2026-11-30T22:00:00.000Z";
         let hour: u32 = start[11..13].parse().unwrap();
         // Local 22:00 to 07:00 is 20:00Z to 05:00Z.
         let night = !(5..20).contains(&hour);
         match (new, night) {
-            (false, true) => (0.49, 12.158),
-            (false, false) => (0.49, 14.103),
-            (true, true) => (0.6, 12.296),
-            (true, false) => (0.6, 14.241),
+            (false, true) => (margin(0.49), 11.053),
+            (false, false) => (margin(0.49), 12.603),
+            (true, true) => (margin(0.6), 11.163),
+            (true, false) => (margin(0.6), 12.713),
         }
     };
     for (start, margin, total) in &prices {
@@ -707,14 +714,14 @@ async fn history_uses_the_terms_that_applied_at_each_interval(pool: PgPool) {
     // The last quarter of the old day and the first quarter of the new day.
     assert_eq!(
         prices[95],
-        ("2026-11-30T21:45:00.000Z".to_owned(), 0.49, 12.158)
+        ("2026-11-30T21:45:00.000Z".to_owned(), margin(0.49), 11.053)
     );
     assert_eq!(
         prices[96],
-        ("2026-11-30T22:00:00.000Z".to_owned(), 0.6, 12.296)
+        ("2026-11-30T22:00:00.000Z".to_owned(), margin(0.6), 11.163)
     );
-    assert_eq!(history["minTotalCentsKwh"], 12.158);
-    assert_eq!(history["maxTotalCentsKwh"], 14.241);
+    assert_eq!(history["minTotalCentsKwh"], 11.053);
+    assert_eq!(history["maxTotalCentsKwh"], 12.713);
 }
 
 #[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
@@ -727,16 +734,16 @@ async fn the_lists_of_the_eve_price_the_next_day_with_the_new_terms(pool: PgPool
         found
     };
     let today = ok(&app, "GET", "/api/v1/price/today", &key, None).await;
-    assert_eq!(all_margins(&today["prices"]), [0.49]);
+    assert_eq!(all_margins(&today["prices"]), [margin(0.49)]);
     let tomorrow = ok(&app, "GET", "/api/v1/price/tomorrow", &key, None).await;
     assert_eq!(tomorrow["available"], true);
-    assert_eq!(all_margins(&tomorrow["prices"]), [0.6]);
+    assert_eq!(all_margins(&tomorrow["prices"]), [margin(0.6)]);
     assert_eq!(margins(&tomorrow["prices"]).len(), 96);
     let all = ok(&app, "GET", "/api/v1/price/all", &key, None).await;
-    assert_eq!(all_margins(&all["prices"]), [0.49, 0.6]);
+    assert_eq!(all_margins(&all["prices"]), [margin(0.49), margin(0.6)]);
     let chart = ok(&app, "GET", "/api/v1/me/chart", &cookie, None).await;
-    assert_eq!(all_margins(&chart["today"]), [0.49]);
-    assert_eq!(all_margins(&chart["tomorrow"]), [0.6]);
+    assert_eq!(all_margins(&chart["today"]), [margin(0.49)]);
+    assert_eq!(all_margins(&chart["tomorrow"]), [margin(0.6)]);
 
     let now = ok(&app, "GET", "/api/v1/price/now", &key, None).await;
     assert_eq!(
@@ -744,12 +751,12 @@ async fn the_lists_of_the_eve_price_the_next_day_with_the_new_terms(pool: PgPool
             now["marginCentsKwh"].as_f64(),
             now["totalCentsKwh"].as_f64()
         ),
-        (Some(0.49), Some(14.103))
+        (Some(margin(0.49)), Some(12.603))
     );
     // The first quarter of the new local day, and the quarter before it.
     for (clock, margin, total) in [
-        ("2026-11-30T21:59:59Z", 0.49, 12.158),
-        ("2026-11-30T22:00:00Z", 0.6, 12.296),
+        ("2026-11-30T21:59:59Z", margin(0.49), 11.053),
+        ("2026-11-30T22:00:00Z", margin(0.6), 11.163),
     ] {
         let app = app_at(pool.clone(), clock);
         let now = ok(&app, "GET", "/api/v1/price/now", &key, None).await;
@@ -780,7 +787,7 @@ async fn the_cheapest_window_compares_the_terms_of_both_days(pool: PgPool) {
     // With one set of terms for both days, the first night quarter, 20:00Z,
     // wins the tie.
     assert_eq!(window["start"], "2026-11-30T22:00:00.000Z");
-    assert_eq!(window["averageTotalCentsKwh"], 11.543);
+    assert_eq!(window["averageTotalCentsKwh"], 10.563);
     assert_eq!(
         margins(&window["prices"])
             .iter()
@@ -799,24 +806,24 @@ async fn the_cheapest_window_compares_the_terms_of_both_days(pool: PgPool) {
     )
     .await;
     assert_eq!(old["start"], "2026-11-30T20:00:00.000Z");
-    assert_eq!(old["averageTotalCentsKwh"], 12.158);
+    assert_eq!(old["averageTotalCentsKwh"], 11.053);
 
     // maxPrice filters on the total of the version of each interval: only
-    // the night of the new day (11.543) is at or below 12.
+    // the night of the new day (10.563) is at or below 11.
     let limited = ok(
         &app,
         "GET",
-        "/api/v1/price/cheapest?duration=120&maxPrice=12",
+        "/api/v1/price/cheapest?duration=120&maxPrice=11",
         &key,
         None,
     )
     .await;
     assert_eq!(limited["start"], "2026-11-30T22:00:00.000Z");
-    assert_eq!(limited["maxTotalCentsKwh"], 11.543);
+    assert_eq!(limited["maxTotalCentsKwh"], 10.563);
     let (status, body) = send(
         &app,
         "GET",
-        "/api/v1/price/cheapest?duration=60&maxPrice=12&endTime=2026-11-30T22:00:00Z",
+        "/api/v1/price/cheapest?duration=60&maxPrice=11&endTime=2026-11-30T22:00:00Z",
         &key,
         None,
     )
@@ -824,8 +831,128 @@ async fn the_cheapest_window_compares_the_terms_of_both_days(pool: PgPool) {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(
         body,
-        r#"{"error":"Not enough contiguous price data at or below 12 c/kWh to form a 60-minute window"}"#
+        r#"{"error":"Not enough contiguous price data at or below 11 c/kWh to form a 60-minute window"}"#
     );
+}
+
+/// An account with an API key and FI prices of 50 EUR/MWh for the Helsinki
+/// days 2026-11-30 and 2026-12-01.
+async fn account_with_prices(pool: &PgPool) -> (Router, String, String) {
+    store_fi(pool, "2026-11-29T22:00:00Z", "2026-12-01T22:00:00Z").await;
+    let app = app_at(pool.clone(), EVE);
+    let cookie = sign_up(&app).await;
+    let key = api_key(&app, &cookie).await;
+    (app, cookie, key)
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn invoice_prices_with_vat_give_the_price_of_the_invoices(pool: PgPool) {
+    let (app, cookie, key) = account_with_prices(&pool).await;
+    // The unit prices of an electricity invoice and a grid invoice, with
+    // 25.5 % VAT. The tax is 2.8112 + 0.1067.
+    let invoice = r#"{"validFrom":"1970-01-01","marginInclVatCentsKwh":0.5,"transferDayInclVatCentsKwh":2.96,"transferNightInclVatCentsKwh":1.56,"taxInclVatCentsKwh":2.9179,"vatPercent":25.5}"#;
+    let saved = ok(&app, "PUT", "/api/v1/me/settings", &cookie, Some(invoice)).await;
+    let read = ok(&app, "GET", "/api/v1/me/settings", &cookie, None).await;
+    assert_eq!(saved, read);
+    // The settings give the numbers of the request again, digit for digit.
+    for (field, value) in [
+        ("marginInclVatCentsKwh", 0.5),
+        ("transferDayInclVatCentsKwh", 2.96),
+        ("transferNightInclVatCentsKwh", 1.56),
+        ("taxInclVatCentsKwh", 2.9179),
+        ("vatPercent", 25.5),
+    ] {
+        assert_eq!(read[field].as_f64(), Some(value), "{field}");
+    }
+
+    // Spot 5 c/kWh with VAT is 6.275. The other prices already have VAT.
+    // Day: 6.275 + 0.5 + 2.96 + 2.9179. Night: 6.275 + 0.5 + 1.56 + 2.9179.
+    for (clock, night, total) in [
+        ("2026-11-30T12:00:00Z", false, 12.653),
+        ("2026-11-30T21:59:59Z", true, 11.253),
+    ] {
+        let app = app_at(pool.clone(), clock);
+        let now = ok(&app, "GET", "/api/v1/price/now", &key, None).await;
+        assert_eq!(now["isNightRate"], night, "{clock}");
+        assert_eq!(now["totalCentsKwh"].as_f64(), Some(total), "{clock}");
+        // The parts of the price have no VAT, and the VAT is its own part.
+        let part = |name: &str| now[name].as_f64().unwrap();
+        assert!((part("taxCentsKwh") - 2.9179 / 1.255).abs() < 1e-12);
+        assert!((part("marginCentsKwh") - 0.5 / 1.255).abs() < 1e-12);
+        let parts = part("spotCentsKwh")
+            + part("marginCentsKwh")
+            + part("transferCentsKwh")
+            + part("taxCentsKwh")
+            + part("vatCentsKwh");
+        assert!((parts - total).abs() < 0.001, "{clock}: {parts}");
+    }
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_new_vat_percent_keeps_the_prices_with_vat(pool: PgPool) {
+    let (app, cookie, key) = account_with_prices(&pool).await;
+    let saved = ok(
+        &app,
+        "PUT",
+        "/api/v1/me/settings",
+        &cookie,
+        Some(r#"{"validFrom":"1970-01-01","vatPercent":24}"#),
+    )
+    .await;
+    assert_eq!(
+        (
+            saved["marginInclVatCentsKwh"].as_f64(),
+            saved["transferDayInclVatCentsKwh"].as_f64(),
+            saved["transferNightInclVatCentsKwh"].as_f64(),
+            saved["taxInclVatCentsKwh"].as_f64(),
+            saved["vatPercent"].as_f64()
+        ),
+        (Some(0.49), Some(2.92), Some(1.37), Some(2.9179), Some(24.0))
+    );
+    // Spot 5 c/kWh with 24 % VAT is 6.2; the day total is
+    // 6.2 + 0.49 + 2.92 + 2.9179.
+    let now = ok(&app, "GET", "/api/v1/price/now", &key, None).await;
+    assert_eq!(now["totalCentsKwh"].as_f64(), Some(12.528));
+    assert_eq!(now["marginCentsKwh"].as_f64(), excl_vat(0.49, 24.0));
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_field_name_without_incl_vat_is_an_unknown_key(pool: PgPool) {
+    let app = app_at(pool, EVE);
+    let cookie = sign_up(&app).await;
+    let before = ok(&app, "GET", "/api/v1/me/settings", &cookie, None).await;
+    // The names of the settings fields before the prices had VAT.
+    let saved = ok(
+        &app,
+        "PUT",
+        "/api/v1/me/settings",
+        &cookie,
+        Some(r#"{"validFrom":"1970-01-01","marginCentsKwh":9,"transferDayCentsKwh":9,"transferNightCentsKwh":9,"taxCentsKwh":9}"#),
+    )
+    .await;
+    assert_eq!(saved, before);
+    assert_eq!(saved["marginInclVatCentsKwh"].as_f64(), Some(0.49));
+    assert!(saved.get("marginCentsKwh").is_none());
+}
+
+#[sqlx::test(migrator = "spot_price_server::db::MIGRATOR")]
+async fn a_stored_vat_without_a_finite_price_answers_the_generic_500(pool: PgPool) {
+    let (app, cookie, key) = account_with_prices(&pool).await;
+    // The API refuses a VAT below 0; only a stored row can have this value.
+    sqlx::query("UPDATE contract_terms SET vat_percent = -100")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (path, auth) in [
+        ("/api/v1/price/now", key.as_str()),
+        ("/api/v1/price/today", key.as_str()),
+        ("/api/v1/price/cheapest?duration=60", key.as_str()),
+        ("/api/v1/me/chart", cookie.as_str()),
+    ] {
+        let (status, text) = send(&app, "GET", path, auth, None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{path}");
+        assert_eq!(text, "Internal Server Error", "{path}");
+    }
 }
 
 /// The API key of alice in the golden seed, a Helsinki FI user.
@@ -869,7 +996,9 @@ async fn the_forecast_uses_the_terms_of_the_local_date_of_each_quarter(pool: PgP
         area: Area::Fi,
     };
     let old = terms(0.49, 2.92, 1.37, 2.82752, 25.5, 22, 7);
-    let new = terms(1.5, 4.0, 2.0, 3.0, 24.0, 23, 6);
+    // The stored terms of the new version include 24 % VAT.
+    let excl = |incl_vat| excl_vat(incl_vat, 24.0).unwrap();
+    let new = terms(excl(1.5), excl(4.0), excl(2.0), excl(3.0), 24.0, 23, 6);
     let mut per_date = std::collections::BTreeMap::new();
     for entry in entries {
         let local = entry["localStart"].as_str().unwrap();
@@ -952,7 +1081,9 @@ async fn the_forecast_band_totals_use_the_terms_of_each_quarter(pool: PgPool) {
         area: Area::Fi,
     };
     let old = terms(0.49, 2.92, 1.37, 2.82752, 25.5, 22, 7);
-    let new = terms(1.5, 4.0, 2.0, 3.0, 24.0, 23, 6);
+    // The stored terms of the new version include 24 % VAT.
+    let excl = |incl_vat| excl_vat(incl_vat, 24.0).unwrap();
+    let new = terms(excl(1.5), excl(4.0), excl(2.0), excl(3.0), 24.0, 23, 6);
     let mut new_quarters = 0;
     for entry in &body.entries {
         let (date, hour) = (

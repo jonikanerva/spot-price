@@ -719,7 +719,7 @@ async fn ensure_creates_the_defaults_and_the_first_version_once(pool: PgPool) {
     );
 
     let update = SettingsUpdate {
-        margin_cents_kwh: Some(1.5),
+        margin_incl_vat_cents_kwh: Some(1.5),
         night_start_hour: Some(Hour::new(23).unwrap()),
         timezone: Some(UserTimeZone::parse("Europe/Stockholm").unwrap()),
         area: Some(Area::Se3),
@@ -734,7 +734,7 @@ async fn ensure_creates_the_defaults_and_the_first_version_once(pool: PgPool) {
         timezone: "Europe/Stockholm".to_owned(),
         area: "SE3".to_owned(),
         versions: vec![ContractTermsRow {
-            margin_cents_kwh: 1.5,
+            margin_incl_vat_cents_kwh: 1.5,
             night_start_hour: 23,
             ..ContractTermsRow::defaults()
         }],
@@ -800,7 +800,7 @@ async fn a_delete_never_removes_the_only_version(pool: PgPool) {
         DeleteOutcome::NotFound
     );
     let update = SettingsUpdate {
-        margin_cents_kwh: Some(0.6),
+        margin_incl_vat_cents_kwh: Some(0.6),
         ..SettingsUpdate::default()
     };
     save_settings(&pool, "u4", &update, Some(later), now)
@@ -809,7 +809,7 @@ async fn a_delete_never_removes_the_only_version(pool: PgPool) {
     // The first version can go when another version remains.
     let remaining = ContractTermsRow {
         valid_from: later,
-        margin_cents_kwh: 0.6,
+        margin_incl_vat_cents_kwh: 0.6,
         ..ContractTermsRow::defaults()
     };
     assert_eq!(

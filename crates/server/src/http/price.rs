@@ -86,10 +86,10 @@ pub fn schedule_of(row: &UserSettingsRow) -> Result<ContractSchedule, SettingsFa
             Ok(TermsVersion {
                 valid_from: version.valid_from,
                 terms: ContractTerms {
-                    margin_cents_kwh: version.margin_cents_kwh,
-                    transfer_day_cents_kwh: version.transfer_day_cents_kwh,
-                    transfer_night_cents_kwh: version.transfer_night_cents_kwh,
-                    tax_cents_kwh: version.tax_cents_kwh,
+                    margin_incl_vat_cents_kwh: version.margin_incl_vat_cents_kwh,
+                    transfer_day_incl_vat_cents_kwh: version.transfer_day_incl_vat_cents_kwh,
+                    transfer_night_incl_vat_cents_kwh: version.transfer_night_incl_vat_cents_kwh,
+                    tax_incl_vat_cents_kwh: version.tax_incl_vat_cents_kwh,
                     vat_percent: version.vat_percent,
                     night_start_hour: Hour::try_from(version.night_start_hour).map_err(invalid)?,
                     night_end_hour: Hour::try_from(version.night_end_hour).map_err(invalid)?,

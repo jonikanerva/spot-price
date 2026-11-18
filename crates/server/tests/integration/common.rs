@@ -169,7 +169,7 @@ pub const ADD_DEFAULT_TERMS: &str = "
     INSERT INTO contract_terms
       (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
        tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
-    SELECT user_id, DATE '1970-01-01', 0.49, 2.92, 1.37, 2.82752, 25.5, 22, 7
+    SELECT user_id, DATE '1970-01-01', 0.49, 2.92, 1.37, 2.9179, 25.5, 22, 7
     FROM user_settings s
     WHERE NOT EXISTS (SELECT 1 FROM contract_terms t WHERE t.user_id = s.user_id)";
 
@@ -204,15 +204,37 @@ const TYPESCRIPT_SEED_TABLES: &str = r#"
 /// Moves the rows of the temporary tables to the schema of the service:
 /// each settings row with its terms as the first version, like migration 4,
 /// and each session with a 32-byte token as an app session of that token.
+///
+/// The seed has prices without VAT, and the service stores prices with VAT.
+/// The move adds the VAT, and it fails when the service does not get the
+/// seed price back bit for bit: the recorded price bodies depend on that.
 const MOVE_TYPESCRIPT_SEED: &str = r#"
     INSERT INTO public.user_settings (user_id, timezone, area, updated_at)
     SELECT user_id, timezone, area, updated_at FROM pg_temp.user_settings;
     INSERT INTO contract_terms
       (user_id, valid_from, margin_cents_kwh, transfer_day_cents_kwh, transfer_night_cents_kwh,
        tax_cents_kwh, vat_percent, night_start_hour, night_end_hour)
-    SELECT user_id, DATE '1970-01-01', margin_cents_kwh, transfer_day_cents_kwh,
-           transfer_night_cents_kwh, tax_cents_kwh, vat_percent, night_start_hour, night_end_hour
+    SELECT user_id, DATE '1970-01-01',
+           margin_cents_kwh * (100 + vat_percent) / 100,
+           transfer_day_cents_kwh * (100 + vat_percent) / 100,
+           transfer_night_cents_kwh * (100 + vat_percent) / 100,
+           tax_cents_kwh * (100 + vat_percent) / 100,
+           vat_percent, night_start_hour, night_end_hour
     FROM pg_temp.user_settings;
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM contract_terms t JOIN pg_temp.user_settings s USING (user_id)
+        WHERE t.margin_cents_kwh * 100 / (100 + t.vat_percent) <> s.margin_cents_kwh
+           OR t.transfer_day_cents_kwh * 100 / (100 + t.vat_percent) <> s.transfer_day_cents_kwh
+           OR t.transfer_night_cents_kwh * 100 / (100 + t.vat_percent)
+              <> s.transfer_night_cents_kwh
+           OR t.tax_cents_kwh * 100 / (100 + t.vat_percent) <> s.tax_cents_kwh
+      ) THEN
+        RAISE EXCEPTION 'a seed price does not survive the VAT round trip';
+      END IF;
+    END
+    $$;
     INSERT INTO app_sessions (token_hash, user_id, created_at, expires_at)
     SELECT sha256(convert_to(token, 'UTF8')), "userId", "createdAt", "expiresAt"
     FROM pg_temp."session" WHERE octet_length(token) = 32;

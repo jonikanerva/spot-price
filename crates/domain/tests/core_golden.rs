@@ -495,10 +495,10 @@ mod golden {
             let value = case.get("value").and_then(Value::as_str).map(num);
             let label = case.get("text").and_then(Value::as_str);
             match case["field"].as_str().unwrap() {
-                "marginCentsKwh" => input.margin_cents_kwh = value,
-                "transferDayCentsKwh" => input.transfer_day_cents_kwh = value,
-                "transferNightCentsKwh" => input.transfer_night_cents_kwh = value,
-                "taxCentsKwh" => input.tax_cents_kwh = value,
+                "marginCentsKwh" => input.margin_incl_vat_cents_kwh = value,
+                "transferDayCentsKwh" => input.transfer_day_incl_vat_cents_kwh = value,
+                "transferNightCentsKwh" => input.transfer_night_incl_vat_cents_kwh = value,
+                "taxCentsKwh" => input.tax_incl_vat_cents_kwh = value,
                 "vatPercent" => input.vat_percent = value,
                 "nightStartHour" => input.night_start_hour = value,
                 "nightEndHour" => input.night_end_hour = value,
@@ -506,7 +506,7 @@ mod golden {
                 "area" => input.area = label,
                 "*" => {
                     input = SettingsUpdateInput {
-                        margin_cents_kwh: Some(-1.0),
+                        margin_incl_vat_cents_kwh: Some(-1.0),
                         vat_percent: Some(101.0),
                         night_start_hour: Some(1.5),
                         night_end_hour: Some(24.0),
@@ -520,7 +520,14 @@ mod golden {
             let got = validate_settings_update(input)
                 .err()
                 .map(|error| error.to_string());
-            let want = case["error"].as_str().map(str::to_owned);
+            // The recorded texts have the field names of the TypeScript
+            // service. The money fields now include VAT and say so.
+            let want = case["error"].as_str().map(|text| {
+                text.replace("marginCentsKwh", "marginInclVatCentsKwh")
+                    .replace("transferDayCentsKwh", "transferDayInclVatCentsKwh")
+                    .replace("transferNightCentsKwh", "transferNightInclVatCentsKwh")
+                    .replace("taxCentsKwh", "taxInclVatCentsKwh")
+            });
             assert_eq!(got, want, "{case}");
         }
     }

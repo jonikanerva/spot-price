@@ -173,6 +173,15 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   settings body before the other body checks, when the value is a
   `YYYY-MM-DD` date and the recorded body has no such field. The settings
   routes answer the terms of one contract terms version and its date (§5).
+  The `settings-incl-vat` kind gives the money fields of a settings body
+  the names of the recordings before the other body checks. A value that
+  differs from the recorded value becomes the recorded value only when it
+  is exactly that value with the VAT of the body added. The replay also
+  gives the money fields of a recorded settings request the names of the
+  Rust service. The Rust service reads and stores these prices with VAT
+  (§5); the TypeScript service read them without VAT. The seed loader adds
+  the VAT to each seeded price and fails when the service does not derive
+  the seeded price again bit for bit, so the price bodies stay equal.
   The seed has the TypeScript schema. The replay loads it through
   temporary tables and gives each seeded `user_settings` row its first
   terms version, like migration 4.
@@ -184,12 +193,16 @@ cargo-deny, cargo-nextest, cargo-shear, and Gitleaks.
   TypeScript document field by field. Its list `INTENTIONAL` holds the
   intentional differences: the `description` of `generatedAt` in the
   forecast response schema, and the contract terms versions (`validFrom`,
-  the two version routes, and the descriptions of the changed routes). The
+  the two version routes, and the descriptions of the changed routes), and
+  the settings prices with VAT (the `InclVat` field names and the
+  descriptions that say which prices have VAT). The
   golden kind `contract-document` accepts exactly that list in the recorded
   OpenAPI body.
 - `/api/docs` serves the Scalar reference page of the TypeScript service. It
   loads Scalar from the jsDelivr CDN in the browser.
-- A breaking change needs `/api/v2` (`VISION.md`).
+- A breaking change needs `/api/v2` (`VISION.md`). The owner decided one
+  exception: the settings fields with `InclVat` in the name replaced the
+  fields without it in v1 (docs/adr/0011).
 
 ### 2.2 Errors and failure containment
 
@@ -570,6 +583,15 @@ connection.
   delete locks the settings row first. A save writes the time zone, the
   area, and the version in one transaction. Migration 5 dropped the term
   columns that `user_settings` had in the TypeScript schema.
+  The margin, the transfer prices, and the tax of a version include VAT at
+  the VAT percent of that version, as an invoice shows them. The column
+  names do not say so. The settings routes read and write these values
+  unchanged, in fields with `InclVat` in the name. The price calculation
+  uses prices without VAT: `ContractTerms::settings` derives each one as
+  `price × 100 / (100 + VAT)`. A version without a finite derived price
+  gives 500 `invalid_settings`. The VAT percent adds VAT to the spot price
+  only. The TypeScript service stored prices without VAT in the same
+  columns (owner decision 2026-11-18, docs/adr/0011).
 - **Recovery:** the Neon history window of 6 hours gives a point-in-time
   restore of the branch in the Neon Console. Older data has no restore
   path. The owner accepts the data-loss risk (2026-10-19). After a loss,
@@ -620,7 +642,8 @@ The profile list applies. In addition:
 
 - A change of a v1 response, status, header, or error text without a matching
   golden change, an `INTENTIONAL` entry in `golden_http.rs`, and an owner
-  decision. A breaking change needs `/api/v2`.
+  decision. A breaking change needs `/api/v2`, or an owner decision in an
+  ADR that it does not.
 - A change of the password hash format or of the `"user"` and `"account"`
   row shapes that stops an existing account from signing in
   (docs/adr/0002).
@@ -754,7 +777,9 @@ entry here.
 The web UI is a setup surface only (`VISION.md`). It is the page of the
 TypeScript service, except the chart drawing, the contract terms
 versions, and the dashboard layout. The settings form has a valid-from
-date. The dashboard has three full-width cards in this order: settings,
+date. The margin, the transfer prices, and the tax of the form are prices
+with VAT, as an invoice shows them. The page sends and shows these numbers
+unchanged; it does no price calculation. The dashboard has three full-width cards in this order: settings,
 chart, and a table of the versions with edit and delete. It must be usable
 without a pointer.
 

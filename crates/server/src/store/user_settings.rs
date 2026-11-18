@@ -14,14 +14,15 @@ use sqlx::PgPool;
 use crate::db::StoreError;
 
 /// One stored version of the contract terms. It applies from the local
-/// calendar date `valid_from`.
+/// calendar date `valid_from`. The money values include VAT at
+/// `vat_percent`; the columns have the same names without `incl_vat`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContractTermsRow {
     pub valid_from: Date,
-    pub margin_cents_kwh: f64,
-    pub transfer_day_cents_kwh: f64,
-    pub transfer_night_cents_kwh: f64,
-    pub tax_cents_kwh: f64,
+    pub margin_incl_vat_cents_kwh: f64,
+    pub transfer_day_incl_vat_cents_kwh: f64,
+    pub transfer_night_incl_vat_cents_kwh: f64,
+    pub tax_incl_vat_cents_kwh: f64,
     pub vat_percent: f64,
     pub night_start_hour: i32,
     pub night_end_hour: i32,
@@ -33,10 +34,10 @@ impl ContractTermsRow {
     pub const fn defaults() -> Self {
         Self {
             valid_from: EARLIEST_VALID_FROM,
-            margin_cents_kwh: 0.49,
-            transfer_day_cents_kwh: 2.92,
-            transfer_night_cents_kwh: 1.37,
-            tax_cents_kwh: 2.82752,
+            margin_incl_vat_cents_kwh: 0.49,
+            transfer_day_incl_vat_cents_kwh: 2.92,
+            transfer_night_incl_vat_cents_kwh: 1.37,
+            tax_incl_vat_cents_kwh: 2.9179,
             vat_percent: 25.5,
             night_start_hour: 22,
             night_end_hour: 7,
@@ -47,14 +48,18 @@ impl ContractTermsRow {
     fn with_update(&self, update: &SettingsUpdate) -> Self {
         Self {
             valid_from: self.valid_from,
-            margin_cents_kwh: update.margin_cents_kwh.unwrap_or(self.margin_cents_kwh),
-            transfer_day_cents_kwh: update
-                .transfer_day_cents_kwh
-                .unwrap_or(self.transfer_day_cents_kwh),
-            transfer_night_cents_kwh: update
-                .transfer_night_cents_kwh
-                .unwrap_or(self.transfer_night_cents_kwh),
-            tax_cents_kwh: update.tax_cents_kwh.unwrap_or(self.tax_cents_kwh),
+            margin_incl_vat_cents_kwh: update
+                .margin_incl_vat_cents_kwh
+                .unwrap_or(self.margin_incl_vat_cents_kwh),
+            transfer_day_incl_vat_cents_kwh: update
+                .transfer_day_incl_vat_cents_kwh
+                .unwrap_or(self.transfer_day_incl_vat_cents_kwh),
+            transfer_night_incl_vat_cents_kwh: update
+                .transfer_night_incl_vat_cents_kwh
+                .unwrap_or(self.transfer_night_incl_vat_cents_kwh),
+            tax_incl_vat_cents_kwh: update
+                .tax_incl_vat_cents_kwh
+                .unwrap_or(self.tax_incl_vat_cents_kwh),
             vat_percent: update.vat_percent.unwrap_or(self.vat_percent),
             night_start_hour: update
                 .night_start_hour
@@ -119,10 +124,10 @@ pub async fn get_user_settings(
         .filter_map(|row| {
             Some(ContractTermsRow {
                 valid_from: row.valid_from?.to_jiff(),
-                margin_cents_kwh: row.margin_cents_kwh?,
-                transfer_day_cents_kwh: row.transfer_day_cents_kwh?,
-                transfer_night_cents_kwh: row.transfer_night_cents_kwh?,
-                tax_cents_kwh: row.tax_cents_kwh?,
+                margin_incl_vat_cents_kwh: row.margin_cents_kwh?,
+                transfer_day_incl_vat_cents_kwh: row.transfer_day_cents_kwh?,
+                transfer_night_incl_vat_cents_kwh: row.transfer_night_cents_kwh?,
+                tax_incl_vat_cents_kwh: row.tax_cents_kwh?,
                 vat_percent: row.vat_percent?,
                 night_start_hour: row.night_start_hour?,
                 night_end_hour: row.night_end_hour?,
@@ -167,10 +172,10 @@ pub async fn insert_default_settings(
         DEFAULT_AREA,
         now.to_sqlx(),
         terms.valid_from.to_sqlx() as jiff_sqlx::Date,
-        terms.margin_cents_kwh,
-        terms.transfer_day_cents_kwh,
-        terms.transfer_night_cents_kwh,
-        terms.tax_cents_kwh,
+        terms.margin_incl_vat_cents_kwh,
+        terms.transfer_day_incl_vat_cents_kwh,
+        terms.transfer_night_incl_vat_cents_kwh,
+        terms.tax_incl_vat_cents_kwh,
         terms.vat_percent,
         terms.night_start_hour,
         terms.night_end_hour,
@@ -249,10 +254,10 @@ async fn versions_of(
         .into_iter()
         .map(|row| ContractTermsRow {
             valid_from: row.valid_from.to_jiff(),
-            margin_cents_kwh: row.margin_cents_kwh,
-            transfer_day_cents_kwh: row.transfer_day_cents_kwh,
-            transfer_night_cents_kwh: row.transfer_night_cents_kwh,
-            tax_cents_kwh: row.tax_cents_kwh,
+            margin_incl_vat_cents_kwh: row.margin_cents_kwh,
+            transfer_day_incl_vat_cents_kwh: row.transfer_day_cents_kwh,
+            transfer_night_incl_vat_cents_kwh: row.transfer_night_cents_kwh,
+            tax_incl_vat_cents_kwh: row.tax_cents_kwh,
             vat_percent: row.vat_percent,
             night_start_hour: row.night_start_hour,
             night_end_hour: row.night_end_hour,
@@ -330,10 +335,10 @@ pub async fn save_settings(
             "#,
             user_id,
             version.valid_from.to_sqlx() as jiff_sqlx::Date,
-            version.margin_cents_kwh,
-            version.transfer_day_cents_kwh,
-            version.transfer_night_cents_kwh,
-            version.tax_cents_kwh,
+            version.margin_incl_vat_cents_kwh,
+            version.transfer_day_incl_vat_cents_kwh,
+            version.transfer_night_incl_vat_cents_kwh,
+            version.tax_incl_vat_cents_kwh,
             version.vat_percent,
             version.night_start_hour,
             version.night_end_hour,
